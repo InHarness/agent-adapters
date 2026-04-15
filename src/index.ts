@@ -1,0 +1,41 @@
+// @inharness/agent-adapters — main entry point
+
+// Types
+export type {
+  ContentBlock,
+  NormalizedMessage,
+  UsageStats,
+  UnifiedEvent,
+  BuiltinArchitecture,
+  Architecture,
+  McpServerConfig,
+  RuntimeExecuteParams,
+  RuntimeAdapter,
+  AdapterFactory,
+  ContractAssertion,
+  ContractResult,
+} from './types.js';
+
+// Errors
+export {
+  AdapterError,
+  AdapterInitError,
+  AdapterTimeoutError,
+  AdapterAbortError,
+} from './types.js';
+
+// Adapters
+export { ClaudeCodeAdapter } from './adapters/claude-code.js';
+export { CodexAdapter } from './adapters/codex.js';
+export { OpencodeAdapter, isOpencodeAvailable } from './adapters/opencode.js';
+export { GeminiAdapter } from './adapters/gemini.js';
+
+// Factory
+export { createAdapter, registerAdapter, listArchitectures } from './factory.js';
+
+// Observer
+export type { StreamObserver } from './observer.js';
+export { dispatchEvent, observeStream } from './observer.js';
+
+// Utilities
+export { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from './utils.js';

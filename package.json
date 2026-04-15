@@ -1,0 +1,126 @@
+{
+  "name": "@inharness/agent-adapters",
+  "version": "0.1.0",
+  "description": "Unified TypeScript interface for AI agent SDKs — Claude Code, Codex, OpenCode, Gemini",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./claude-code": {
+      "import": {
+        "types": "./dist/adapters/claude-code.d.ts",
+        "default": "./dist/adapters/claude-code.js"
+      },
+      "require": {
+        "types": "./dist/adapters/claude-code.d.cts",
+        "default": "./dist/adapters/claude-code.cjs"
+      }
+    },
+    "./codex": {
+      "import": {
+        "types": "./dist/adapters/codex.d.ts",
+        "default": "./dist/adapters/codex.js"
+      },
+      "require": {
+        "types": "./dist/adapters/codex.d.cts",
+        "default": "./dist/adapters/codex.cjs"
+      }
+    },
+    "./opencode": {
+      "import": {
+        "types": "./dist/adapters/opencode.d.ts",
+        "default": "./dist/adapters/opencode.js"
+      },
+      "require": {
+        "types": "./dist/adapters/opencode.d.cts",
+        "default": "./dist/adapters/opencode.cjs"
+      }
+    },
+    "./gemini": {
+      "import": {
+        "types": "./dist/adapters/gemini.d.ts",
+        "default": "./dist/adapters/gemini.js"
+      },
+      "require": {
+        "types": "./dist/adapters/gemini.d.cts",
+        "default": "./dist/adapters/gemini.cjs"
+      }
+    },
+    "./testing": {
+      "import": {
+        "types": "./dist/testing/index.d.ts",
+        "default": "./dist/testing/index.js"
+      },
+      "require": {
+        "types": "./dist/testing/index.d.cts",
+        "default": "./dist/testing/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:claude": "vitest run claude-code",
+    "test:codex": "vitest run codex",
+    "test:opencode": "vitest run opencode",
+    "test:gemini": "vitest run gemini",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": ">=0.2.0",
+    "@openai/codex-sdk": ">=0.120.0",
+    "@opencode-ai/sdk": ">=1.4.0",
+    "@google/gemini-cli-core": ">=0.38.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/claude-agent-sdk": { "optional": true },
+    "@openai/codex-sdk": { "optional": true },
+    "@opencode-ai/sdk": { "optional": true },
+    "@google/gemini-cli-core": { "optional": true }
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.109",
+    "@openai/codex-sdk": "^0.120.0",
+    "@opencode-ai/sdk": "^1.4.6",
+    "@google/gemini-cli-core": "^0.38.0",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "adapter",
+    "claude",
+    "codex",
+    "opencode",
+    "gemini",
+    "unified",
+    "streaming",
+    "sdk"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/inharness/agent-adapters"
+  },
+  "author": "InHarness"
+}
