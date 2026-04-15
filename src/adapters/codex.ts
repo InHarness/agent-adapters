@@ -1,6 +1,12 @@
 // Codex adapter — sandbox-based adapter for OpenAI models
 // SDK: @openai/codex-sdk
 // Auth: OPENAI_API_KEY env var
+//
+// MCP limitations: The Codex SDK does not support dynamic MCP server configuration.
+// MCP servers must be pre-configured via `codex mcp add` CLI command or ~/.codex/config.toml.
+// The Codex CLI has full MCP support (add/list/remove), but the SDK's ThreadOptions
+// do not expose MCP configuration. Incoming mcp_tool_call events from pre-configured
+// servers are normalized to UnifiedEvent.
 
 import { Codex } from '@openai/codex-sdk';
 import type { ThreadItem } from '@openai/codex-sdk';
@@ -11,7 +17,7 @@ import type {
   NormalizedMessage,
   ContentBlock,
 } from '../types.js';
-import { AdapterInitError } from '../types.js';
+import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 
 // --- Adapter ---
 
@@ -28,6 +34,14 @@ export class CodexAdapter implements RuntimeAdapter {
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new AdapterInitError('codex', new Error('OPENAI_API_KEY env var is required'));
+
+    // Warn if MCP servers are provided — Codex SDK does not support dynamic MCP configuration
+    if (params.mcpServers && Object.keys(params.mcpServers).length > 0) {
+      console.warn(
+        '[agent-adapters] codex: mcpServers ignored — Codex SDK does not support dynamic MCP server configuration. ' +
+        'Pre-configure servers via `codex mcp add` or ~/.codex/config.toml.',
+      );
+    }
 
     const config = params.architectureConfig ?? {};
     const sandboxMode = (config.codex_sandboxMode as string) ?? 'workspace-write';
@@ -64,9 +78,11 @@ export class CodexAdapter implements RuntimeAdapter {
     let threadId: string | undefined;
 
     // Timeout handling
+    let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
+        timedOut = true;
         this.abortController?.abort();
       }, params.timeoutMs);
     }
@@ -77,7 +93,14 @@ export class CodexAdapter implements RuntimeAdapter {
       });
 
       for await (const event of events) {
-        if (this.abortController.signal.aborted) return;
+        if (this.abortController.signal.aborted) {
+          if (timedOut) {
+            yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!) };
+          } else {
+            yield { type: 'error', error: new AdapterAbortError('codex') };
+          }
+          return;
+        }
 
         switch (event.type) {
           case 'item.completed': {
@@ -187,7 +210,14 @@ export class CodexAdapter implements RuntimeAdapter {
         }
       }
     } catch (err) {
-      if (this.abortController.signal.aborted) return;
+      if (this.abortController.signal.aborted) {
+        if (timedOut) {
+          yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!) };
+        } else {
+          yield { type: 'error', error: new AdapterAbortError('codex') };
+        }
+        return;
+      }
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
     } finally {
       clearTimeout(timeoutId);

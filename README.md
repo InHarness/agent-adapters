@@ -32,20 +32,21 @@ npm install @inharness/agent-adapters
 npm install @anthropic-ai/claude-agent-sdk   # for claude-code
 npm install @openai/codex-sdk                 # for codex
 npm install @opencode-ai/sdk                  # for opencode
-npm install @google/gemini-cli-core           # for gemini (experimental)
+npm install @google/gemini-cli-core           # for gemini
+
+# For in-process MCP servers (optional):
+npm install @modelcontextprotocol/sdk zod
 ```
 
 ## Adapters
 
 | Architecture | SDK | Streaming | Thinking | MCP | Session Resume | Subagents |
 |---|---|---|---|---|---|---|
-| `claude-code` | @anthropic-ai/claude-agent-sdk | Native deltas | Native streaming | Full (stdio) | Yes (sessionId) | Native (Agent tool) |
-| `claude-code-ollama` | Same + Ollama backend | Native deltas | Model-dependent | Full (stdio) | Model-dependent | Model-dependent |
-| `codex` | @openai/codex-sdk | Synthesized (full text) | Post-hoc summary | Native (McpToolCallItem) | Yes (resumeThread) | No |
-| `opencode` | @opencode-ai/sdk | Native SSE | Native (reasoning) | Stdio bridge | No | Native (task tool) |
-| `gemini` | @google/gemini-cli-core | Native | Native (thought) | CLI-level | No | Via threadId |
-
-> **Gemini is experimental.** The `@google/gemini-cli-core` package is the core of Gemini CLI, not a standalone SDK. It requires full CLI infrastructure. Consider wrapping the `gemini` CLI binary for production use.
+| `claude-code` | @anthropic-ai/claude-agent-sdk | Native deltas | Native streaming | Full (stdio, SSE, HTTP, in-process) | Yes (sessionId) | Native (Agent tool) |
+| `claude-code-ollama` | Same + Ollama backend | Native deltas | Model-dependent | Full (stdio, SSE, HTTP, in-process) | Model-dependent | Model-dependent |
+| `codex` | @openai/codex-sdk | Synthesized (full text) | Post-hoc summary | Pre-configured only | Yes (resumeThread) | No |
+| `opencode` | @opencode-ai/sdk | Native SSE | Native (reasoning) | Stdio only | No | Native (task tool) |
+| `gemini` | @google/gemini-cli-core | Native | Native (thought) | Full (stdio, SSE, HTTP) | No | Via threadId |
 
 ## UnifiedEvent
 
@@ -64,6 +65,151 @@ All adapters produce the same 11 event types:
 | `result` | Terminal event — output, rawMessages, usage |
 | `error` | Error event |
 | `flush` | Context compaction boundary |
+
+## MCP servers
+
+The library supports four MCP server transport types, matching the Model Context Protocol spec:
+
+| Type | Config | Supported adapters |
+|---|---|---|
+| **Stdio** | `{ command, args, env }` | claude-code, opencode, gemini |
+| **SSE** | `{ type: 'sse', url, headers }` | claude-code, gemini |
+| **HTTP** | `{ type: 'http', url, headers }` | claude-code, gemini |
+| **In-process (SDK)** | `{ type: 'sdk', name, instance }` | claude-code |
+
+### Stdio MCP servers
+
+External MCP servers that run as subprocesses — works across most adapters:
+
+```ts
+const adapter = createAdapter('claude-code');
+
+for await (const event of adapter.execute({
+  prompt: 'List files in /tmp using the filesystem server.',
+  systemPrompt: 'Be concise.',
+  model: 'claude-sonnet-4-20250514',
+  mcpServers: {
+    filesystem: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
+    },
+  },
+})) {
+  // handle events...
+}
+```
+
+### In-process MCP servers
+
+Create custom MCP tools that run in the same process — no subprocess spawning, direct access to your application state:
+
+```ts
+import { z } from 'zod';
+import { createAdapter, createMcpServer, mcpTool } from '@inharness/agent-adapters';
+
+// Define tools with Zod schemas
+const tools = [
+  mcpTool('get_user', 'Look up a user by ID', { userId: z.string() }, async (args) => {
+    const user = await db.users.find(args.userId);
+    return { content: [{ type: 'text', text: JSON.stringify(user) }] };
+  }),
+
+  mcpTool('list_orders', 'List recent orders', { limit: z.number().default(10) }, async (args) => {
+    const orders = await db.orders.recent(args.limit);
+    return { content: [{ type: 'text', text: JSON.stringify(orders) }] };
+  }),
+];
+
+// Create server — returns a config for RuntimeExecuteParams
+const { config } = createMcpServer({ name: 'my-app', tools });
+
+const adapter = createAdapter('claude-code');
+
+for await (const event of adapter.execute({
+  prompt: 'Look up user U123 and list their recent orders.',
+  systemPrompt: 'Use the available tools.',
+  model: 'claude-sonnet-4-20250514',
+  mcpServers: { 'my-app': config },
+})) {
+  // handle events...
+}
+```
+
+`createMcpServer` requires `@modelcontextprotocol/sdk` and `zod` as peer dependencies. Input schemas must be Zod raw shapes (e.g. `{ name: z.string() }`).
+
+### Claude Code SDK tools
+
+For Claude Code specifically, you can also use the SDK's native `createSdkMcpServer` and `tool` helpers (re-exported from the claude-code subpath):
+
+```ts
+import { z } from 'zod';
+import { ClaudeCodeAdapter, createSdkMcpServer, tool } from '@inharness/agent-adapters/claude-code';
+
+const server = createSdkMcpServer({
+  name: 'notes',
+  tools: [
+    tool('add_note', 'Add a note', { text: z.string() }, async (args) => {
+      return { content: [{ type: 'text', text: `Added: ${args.text}` }] };
+    }),
+  ],
+});
+
+const adapter = new ClaudeCodeAdapter();
+
+for await (const event of adapter.execute({
+  prompt: 'Add a note saying hello.',
+  systemPrompt: 'Use the notes tools.',
+  model: 'claude-sonnet-4-20250514',
+  mcpServers: { notes: server },
+})) {
+  // handle events...
+}
+```
+
+### Mixing server types
+
+You can combine different server types in a single execution:
+
+```ts
+import { createMcpServer, mcpTool } from '@inharness/agent-adapters';
+
+const { config: appTools } = createMcpServer({
+  name: 'app',
+  tools: [/* your in-process tools */],
+});
+
+adapter.execute({
+  prompt: '...',
+  systemPrompt: '...',
+  model: 'claude-sonnet-4-20250514',
+  mcpServers: {
+    app: appTools,                                           // in-process
+    filesystem: { command: 'npx', args: ['...'] },           // stdio
+    remote: { type: 'sse', url: 'https://mcp.example.com' }, // SSE
+  },
+});
+```
+
+### MCP per adapter
+
+| Adapter | Behavior |
+|---|---|
+| **claude-code** | Full support — all 4 transport types. SDK handles connections natively. |
+| **gemini** | Stdio, SSE, HTTP — mapped to gemini-cli-core's `MCPServerConfig`. In-process (SDK) servers are skipped. |
+| **opencode** | Stdio only — other types are silently skipped. |
+| **codex** | No dynamic MCP configuration. The SDK does not expose MCP setup. Pre-configure servers via `codex mcp add` CLI or `~/.codex/config.toml`. A warning is logged if `mcpServers` is provided. |
+
+### McpServerConfig types
+
+```ts
+import type {
+  McpServerConfig,        // union of all 4 types
+  McpStdioServerConfig,   // { command, args?, env? }
+  McpSseServerConfig,     // { type: 'sse', url, headers? }
+  McpHttpServerConfig,    // { type: 'http', url, headers? }
+  McpSdkServerConfig,     // { type: 'sdk', name, instance }
+} from '@inharness/agent-adapters';
+```
 
 ## Tree-shakeable imports
 
@@ -169,9 +315,9 @@ interface RuntimeExecuteParams {
   systemPrompt: string;                        // system prompt
   model: string;                               // model ID
   allowedTools?: string[];                     // builtin SDK tools
-  builtinMCPServers?: string[];                // builtin MCP server names
-  allowedMCPTools?: string[];                  // allowed MCP tools
-  mcpServers?: Record<string, McpServerConfig>; // external MCP servers
+  builtinMCPServers?: string[];                // builtin MCP server names (consumer hint)
+  allowedMCPTools?: string[];                  // allowed MCP tools (consumer hint)
+  mcpServers?: Record<string, McpServerConfig>; // MCP servers — adapters read this
   cwd?: string;                                // working directory
   resumeSessionId?: string;                    // session resumption
   maxTurns?: number;                           // max conversation turns
@@ -180,12 +326,15 @@ interface RuntimeExecuteParams {
 }
 ```
 
+`builtinMCPServers` and `allowedMCPTools` are consumer-level hints — the consumer (e.g. orchestrator) resolves them into concrete `mcpServers` entries before calling the adapter. Adapters only read `mcpServers`.
+
 ### Architecture-specific config
 
 | Key | Adapter | Description |
 |---|---|---|
 | `claude_thinking` | claude-code | `{ type: 'enabled', budgetTokens?: number }` |
 | `claude_effort` | claude-code | `'low' \| 'medium' \| 'high' \| 'max'` |
+| `claude_usePreset` | claude-code | `true \| 'claude_code' \| string` — use SDK preset system prompt; `systemPrompt` becomes `append` |
 | `ollama_baseUrl` | claude-code-ollama | Ollama API base URL |
 | `codex_sandboxMode` | codex | `'read-only' \| 'workspace-write'` |
 | `codex_reasoningEffort` | codex | `'minimal' \| 'low' \| 'medium' \| 'high' \| 'xhigh'` |
@@ -193,6 +342,32 @@ interface RuntimeExecuteParams {
 | `opencode_topP` | opencode | Top-P sampling |
 | `gemini_thinkingBudget` | gemini | Thinking token budget |
 | `gemini_temperature` | gemini | Temperature (0-2) |
+
+## Examples
+
+```
+examples/
+  claude-code/
+    simple.ts              # Basic prompt → stream
+    thinking.ts            # Extended thinking
+    ollama-local.ts        # Local Ollama backend
+    mcp-sdk-tools.ts       # SDK's createSdkMcpServer + tool()
+  codex/
+    sandbox.ts             # Sandboxed execution
+  opencode/
+    openrouter.ts          # OpenRouter integration
+  gemini/
+    thinking.ts            # Gemini thinking config
+  advanced/
+    mcp-servers.ts         # Stdio MCP servers across adapters
+    mcp-in-process.ts      # In-process MCP server with createMcpServer
+    mcp-mixed-servers.ts   # Mixing stdio + in-process servers
+    swap-adapter.ts        # Same prompt, different adapters
+    observer-pattern.ts    # Stream observers
+    session-resumption.ts  # Session resume
+    streaming-utilities.ts # collectEvents, filterByType, etc.
+    timeout-and-abort.ts   # Timeout and manual abort
+```
 
 ## License
 

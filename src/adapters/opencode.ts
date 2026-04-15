@@ -13,7 +13,7 @@ import type {
   ContentBlock,
   UsageStats,
 } from '../types.js';
-import { AdapterInitError } from '../types.js';
+import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { execSync } from 'node:child_process';
 
 /** Check if the opencode CLI is available in PATH */
@@ -55,14 +55,19 @@ export class OpencodeAdapter implements RuntimeAdapter {
     const config = params.architectureConfig ?? {};
     const port = getAvailablePort();
 
-    // Build MCP config from params
+    // Build MCP config from params — OpenCode only supports stdio-based servers
     const mcpConfig: Record<string, unknown> = {};
     if (params.mcpServers) {
       for (const [name, serverConfig] of Object.entries(params.mcpServers)) {
+        if (serverConfig.type && serverConfig.type !== 'stdio') {
+          // SSE, HTTP, and SDK server types are not supported by OpenCode
+          continue;
+        }
+        const stdioConfig = serverConfig as { command: string; args?: string[]; env?: Record<string, string> };
         mcpConfig[name] = {
-          command: serverConfig.command,
-          args: serverConfig.args,
-          env: serverConfig.env,
+          command: stdioConfig.command,
+          args: stdioConfig.args,
+          env: stdioConfig.env,
         };
       }
     }
@@ -104,9 +109,11 @@ export class OpencodeAdapter implements RuntimeAdapter {
     let sessionId: string | undefined;
 
     // Timeout handling
+    let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
+        timedOut = true;
         this.abortController?.abort();
       }, params.timeoutMs);
     }
@@ -150,7 +157,14 @@ export class OpencodeAdapter implements RuntimeAdapter {
       let lastMessageId: string | undefined;
 
       for await (const event of sseResult.stream) {
-        if (signal.aborted) return;
+        if (signal.aborted) {
+          if (timedOut) {
+            yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!) };
+          } else {
+            yield { type: 'error', error: new AdapterAbortError('opencode') };
+          }
+          return;
+        }
 
         const evt = event as { type: string; properties?: Record<string, unknown> };
 
@@ -321,7 +335,14 @@ export class OpencodeAdapter implements RuntimeAdapter {
         }
       }
     } catch (err) {
-      if (signal.aborted) return;
+      if (signal.aborted) {
+        if (timedOut) {
+          yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!) };
+        } else {
+          yield { type: 'error', error: new AdapterAbortError('opencode') };
+        }
+        return;
+      }
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
     } finally {
       clearTimeout(timeoutId);

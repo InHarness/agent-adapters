@@ -10,8 +10,22 @@ import type {
   UnifiedEvent,
   NormalizedMessage,
   ContentBlock,
+  McpSdkServerConfig,
 } from '../types.js';
-import { AdapterInitError } from '../types.js';
+import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+
+// Re-export SDK MCP primitives for consumers building in-process MCP servers
+export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+
+// Re-export generic MCP builder from the library
+export { createMcpServer, mcpTool } from '../mcp.js';
+export type {
+  McpToolDefinition,
+  McpToolHandler,
+  McpToolResult,
+  CreateMcpServerOptions,
+  McpServerInstance,
+} from '../mcp.js';
 
 // --- Normalization helpers ---
 
@@ -93,6 +107,25 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       options.effort = config.claude_effort as Options['effort'];
     }
 
+    // Preset-based system prompt
+    if (config.claude_usePreset) {
+      const presetName =
+        config.claude_usePreset === true || config.claude_usePreset === 'claude_code'
+          ? 'claude_code'
+          : (config.claude_usePreset as string);
+
+      const presetObj: Record<string, unknown> = {
+        type: 'preset',
+        preset: presetName,
+      };
+
+      if (params.systemPrompt) {
+        presetObj.append = params.systemPrompt;
+      }
+
+      (options as Record<string, unknown>).systemPrompt = presetObj;
+    }
+
     // Ollama variant: set base URL
     if (config.ollama_baseUrl) {
       options.env = {
@@ -101,9 +134,21 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       };
     }
 
-    // MCP servers — SDK accepts Record<string, McpServer> but our McpServerConfig is compatible
+    // MCP servers — SDK accepts all config types: stdio, SSE, HTTP, and SDK (in-process).
+    // Our McpServerConfig union matches the SDK's McpServerConfig type.
     if (params.mcpServers && Object.keys(params.mcpServers).length > 0) {
-      (options as Record<string, unknown>).mcpServers = params.mcpServers;
+      const sdkServers: Record<string, unknown> = {};
+      for (const [name, serverConfig] of Object.entries(params.mcpServers)) {
+        if ((serverConfig as McpSdkServerConfig).type === 'sdk') {
+          // In-process SDK server — pass the instance directly
+          const sdkConfig = serverConfig as McpSdkServerConfig;
+          sdkServers[name] = { type: 'sdk', name: sdkConfig.name, instance: sdkConfig.instance };
+        } else {
+          // Stdio, SSE, HTTP — pass through as-is
+          sdkServers[name] = serverConfig;
+        }
+      }
+      (options as Record<string, unknown>).mcpServers = sdkServers;
     }
 
     // Allowed tools
@@ -120,9 +165,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     let sessionId: string | undefined;
 
     // Timeout handling
+    let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
+        timedOut = true;
         this.abortController?.abort();
       }, params.timeoutMs);
     }
@@ -137,7 +184,14 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
     try {
       for await (const event of q) {
-        if (this.abortController.signal.aborted) return;
+        if (this.abortController.signal.aborted) {
+          if (timedOut) {
+            yield { type: 'error', error: new AdapterTimeoutError('claude-code', params.timeoutMs!) };
+          } else {
+            yield { type: 'error', error: new AdapterAbortError('claude-code') };
+          }
+          return;
+        }
 
         sessionId = (event as Record<string, unknown>).session_id as string | undefined ?? sessionId;
 
@@ -267,6 +321,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       }
     } catch (err) {
       if (this.abortController.signal.aborted) {
+        if (timedOut) {
+          yield { type: 'error', error: new AdapterTimeoutError('claude-code', params.timeoutMs!) };
+        } else {
+          yield { type: 'error', error: new AdapterAbortError('claude-code') };
+        }
         return;
       }
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };

@@ -1,10 +1,8 @@
-// Gemini adapter — EXPERIMENTAL
-// SDK: @google/gemini-cli-core (NOT a standalone SDK — requires full CLI infrastructure)
+// Gemini adapter — uses @google/gemini-cli-core
 // Auth: GOOGLE_API_KEY or GEMINI_API_KEY env var
 //
-// This adapter documents the AgentEvent → UnifiedEvent mapping discovered during Spike 3.
-// The SDK requires Config + GeminiClient + Scheduler infrastructure from the full Gemini CLI.
-// For production use, consider wrapping the `gemini` CLI binary or using Gemini REST API directly.
+// MCP: Full support via gemini-cli-core's Config.mcpServers (stdio, SSE, HTTP transports).
+// The SDK handles tool discovery, transport management, and connection lifecycle internally.
 
 import type {
   RuntimeAdapter,
@@ -13,8 +11,9 @@ import type {
   NormalizedMessage,
   ContentBlock,
   UsageStats,
+  McpServerConfig,
 } from '../types.js';
-import { AdapterInitError } from '../types.js';
+import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 
 // Dynamic type — SDK structure may change
 type AgentEvent = {
@@ -25,6 +24,57 @@ type AgentEvent = {
   timestamp: string;
   [key: string]: unknown;
 };
+
+/**
+ * Map our McpServerConfig entries to gemini-cli-core MCPServerConfig instances.
+ * Gemini supports stdio, SSE, and HTTP transports natively.
+ */
+function mapMcpServersToGemini(
+  mcpServers: Record<string, McpServerConfig>,
+  GeminiMCPServerConfig: new (...args: unknown[]) => unknown,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [name, config] of Object.entries(mcpServers)) {
+    const type = config.type;
+    if (type === 'sdk') {
+      // In-process SDK servers are not supported by Gemini CLI — skip
+      continue;
+    }
+    if (!type || type === 'stdio') {
+      const stdio = config as { command: string; args?: string[]; env?: Record<string, string> };
+      result[name] = new GeminiMCPServerConfig(
+        stdio.command,  // command
+        stdio.args,     // args
+        stdio.env,      // env
+      );
+    } else if (type === 'sse') {
+      const sse = config as { url: string; headers?: Record<string, string> };
+      result[name] = new GeminiMCPServerConfig(
+        undefined,      // command
+        undefined,      // args
+        undefined,      // env
+        undefined,      // cwd
+        sse.url,        // url
+        undefined,      // httpUrl
+        sse.headers,    // headers
+      );
+    } else if (type === 'http') {
+      const http = config as { url: string; headers?: Record<string, string> };
+      result[name] = new GeminiMCPServerConfig(
+        undefined,      // command
+        undefined,      // args
+        undefined,      // env
+        undefined,      // cwd
+        undefined,      // url
+        http.url,       // httpUrl
+        http.headers,   // headers
+        undefined,      // tcp
+        'http',         // type
+      );
+    }
+  }
+  return result;
+}
 
 // --- Normalization helpers ---
 
@@ -67,8 +117,10 @@ function contentPartsToBlocks(parts: Array<Record<string, unknown>>): ContentBlo
 export class GeminiAdapter implements RuntimeAdapter {
   architecture = 'gemini' as const;
   private abortFn: (() => Promise<void>) | null = null;
+  private aborted = false;
 
   abort(): void {
+    this.aborted = true;
     this.abortFn?.();
   }
 
@@ -94,7 +146,7 @@ export class GeminiAdapter implements RuntimeAdapter {
       return;
     }
 
-    const config = params.architectureConfig ?? {};
+    const archConfig = params.architectureConfig ?? {};
     let session: { sendStream(payload: Record<string, unknown>): AsyncIterable<AgentEvent>; abort(): Promise<void> };
 
     try {
@@ -105,6 +157,8 @@ export class GeminiAdapter implements RuntimeAdapter {
         | ((config: Record<string, unknown>) => Record<string, unknown>)
         | undefined;
       const GeminiClient = sdk.GeminiClient as (new (opts: Record<string, unknown>) => Record<string, unknown>) | undefined;
+      const GeminiConfig = sdk.Config as (new (configParams: Record<string, unknown>) => Record<string, unknown>) | undefined;
+      const GeminiMCPServerConfig = sdk.MCPServerConfig as (new (...args: unknown[]) => unknown) | undefined;
 
       if (!GeminiClient || !createContentGeneratorConfig || !createContentGenerator) {
         yield {
@@ -123,21 +177,34 @@ export class GeminiAdapter implements RuntimeAdapter {
       const genConfig = createContentGeneratorConfig({
         model: params.model,
         apiKey,
-        thinkingConfig: config.gemini_thinkingBudget
-          ? { thinkingBudget: config.gemini_thinkingBudget as number }
-          : config.gemini_thinkingLevel
-            ? { thinkingLevel: config.gemini_thinkingLevel as string }
+        thinkingConfig: archConfig.gemini_thinkingBudget
+          ? { thinkingBudget: archConfig.gemini_thinkingBudget as number }
+          : archConfig.gemini_thinkingLevel
+            ? { thinkingLevel: archConfig.gemini_thinkingLevel as string }
             : undefined,
-        temperature: config.gemini_temperature as number | undefined,
-        topP: config.gemini_topP as number | undefined,
-        topK: config.gemini_topK as number | undefined,
+        temperature: archConfig.gemini_temperature as number | undefined,
+        topP: archConfig.gemini_topP as number | undefined,
+        topK: archConfig.gemini_topK as number | undefined,
       });
 
       const generator = createContentGenerator(genConfig);
       const client = new GeminiClient({ contentGenerator: generator });
 
+      // Build config — with MCP servers if provided and Config class is available
+      let geminiConfig: Record<string, unknown>;
+      if (GeminiConfig && params.mcpServers && Object.keys(params.mcpServers).length > 0 && GeminiMCPServerConfig) {
+        const mcpServers = mapMcpServersToGemini(params.mcpServers, GeminiMCPServerConfig);
+        geminiConfig = new GeminiConfig({
+          model: params.model,
+          cwd: params.cwd ?? process.cwd(),
+          mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
+        });
+      } else {
+        geminiConfig = { model: params.model } as Record<string, unknown>;
+      }
+
       session = new LegacyAgentSession({
-        config: { model: params.model },
+        config: geminiConfig,
         client,
       });
       this.abortFn = () => session.abort();
@@ -160,9 +227,13 @@ export class GeminiAdapter implements RuntimeAdapter {
     let totalUsage: UsageStats = { inputTokens: 0, outputTokens: 0 };
 
     // Timeout handling
+    let timedOut = false;
+    this.aborted = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
+        timedOut = true;
+        this.aborted = true;
         this.abortFn?.();
       }, params.timeoutMs);
     }
@@ -305,6 +376,14 @@ export class GeminiAdapter implements RuntimeAdapter {
         }
       }
     } catch (err) {
+      if (this.aborted) {
+        if (timedOut) {
+          yield { type: 'error', error: new AdapterTimeoutError('gemini', params.timeoutMs!) };
+        } else {
+          yield { type: 'error', error: new AdapterAbortError('gemini') };
+        }
+        return;
+      }
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
     } finally {
       clearTimeout(timeoutId);

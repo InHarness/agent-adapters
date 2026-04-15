@@ -49,13 +49,47 @@ export type UnifiedEvent =
 export type BuiltinArchitecture = 'claude-code' | 'claude-code-ollama' | 'codex' | 'opencode' | 'gemini';
 export type Architecture = BuiltinArchitecture | (string & {});
 
-// --- MCP ---
+// --- MCP Server Config ---
 
-export interface McpServerConfig {
+/** Stdio-based MCP server — spawns a subprocess. */
+export interface McpStdioServerConfig {
+  type?: 'stdio';
   command: string;
   args?: string[];
   env?: Record<string, string>;
 }
+
+/** SSE-based MCP server — connects via Server-Sent Events. */
+export interface McpSseServerConfig {
+  type: 'sse';
+  url: string;
+  headers?: Record<string, string>;
+}
+
+/** HTTP streaming MCP server — connects via streamable HTTP. */
+export interface McpHttpServerConfig {
+  type: 'http';
+  url: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * In-process MCP server — created via `createMcpServer()`.
+ * The `instance` is an `McpServer` from `@modelcontextprotocol/sdk`.
+ * Not serializable — contains a live server object.
+ */
+export interface McpSdkServerConfig {
+  type: 'sdk';
+  name: string;
+  instance: unknown;
+}
+
+/** Union of all MCP server config types. */
+export type McpServerConfig =
+  | McpStdioServerConfig
+  | McpSseServerConfig
+  | McpHttpServerConfig
+  | McpSdkServerConfig;
 
 // --- Runtime Adapter ---
 
@@ -64,8 +98,22 @@ export interface RuntimeExecuteParams {
   systemPrompt: string;
   model: string;
   allowedTools?: string[];
+
+  /**
+   * Names of builtin MCP servers to instantiate.
+   * Consumer (e.g. InHarness CLI) should resolve these into concrete `mcpServers`
+   * entries before calling the adapter. Adapters do not read this field directly.
+   */
   builtinMCPServers?: string[];
+
+  /**
+   * Final filtered list of allowed MCP tool names.
+   * Consumer should use this to filter tools when building MCP servers.
+   * Adapters do not read this field directly — they receive pre-built servers via `mcpServers`.
+   */
   allowedMCPTools?: string[];
+
+  /** MCP servers to connect — adapters read this field. */
   mcpServers?: Record<string, McpServerConfig>;
   cwd?: string;
   resumeSessionId?: string;

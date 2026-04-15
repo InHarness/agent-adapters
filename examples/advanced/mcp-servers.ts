@@ -1,5 +1,5 @@
 // MCP server configuration across adapters
-// Shows: mcpServers param with filesystem MCP server, tool events
+// Shows: stdio MCP servers via mcpServers param, tool_use/tool_result events
 // Usage: npx tsx examples/advanced/mcp-servers.ts [claude-code|codex|opencode]
 // Auth: depends on chosen architecture
 
@@ -19,6 +19,8 @@ async function main() {
 
   const adapter = createAdapter(architecture);
 
+  // Stdio MCP server — works with claude-code and opencode.
+  // Codex will warn that MCP servers are not supported via SDK.
   for await (const event of adapter.execute({
     prompt: 'Use the filesystem MCP server to list files in /tmp. Summarize what you find.',
     systemPrompt: 'Be concise.',
@@ -26,6 +28,7 @@ async function main() {
     maxTurns: 5,
     mcpServers: {
       filesystem: {
+        // McpStdioServerConfig — spawns a subprocess
         command: 'npx',
         args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
       },

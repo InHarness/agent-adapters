@@ -9,6 +9,10 @@ export type {
   BuiltinArchitecture,
   Architecture,
   McpServerConfig,
+  McpStdioServerConfig,
+  McpSseServerConfig,
+  McpHttpServerConfig,
+  McpSdkServerConfig,
   RuntimeExecuteParams,
   RuntimeAdapter,
   AdapterFactory,
@@ -36,6 +40,16 @@ export { createAdapter, registerAdapter, listArchitectures } from './factory.js'
 // Observer
 export type { StreamObserver } from './observer.js';
 export { dispatchEvent, observeStream } from './observer.js';
+
+// MCP server builder
+export { createMcpServer, mcpTool } from './mcp.js';
+export type {
+  McpToolDefinition,
+  McpToolHandler,
+  McpToolResult,
+  CreateMcpServerOptions,
+  McpServerInstance,
+} from './mcp.js';
 
 // Utilities
 export { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from './utils.js';
