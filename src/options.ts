@@ -39,6 +39,7 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     key: 'claude_usePreset',
     label: 'Use Claude Code preset',
     type: 'boolean',
+    default: true,
     description: 'Use the built-in claude_code system-prompt preset (System prompt field is appended).',
   },
 ];
