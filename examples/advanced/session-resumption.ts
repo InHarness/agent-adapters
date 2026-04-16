@@ -17,7 +17,7 @@ async function main() {
   for await (const event of adapter.execute({
     prompt: 'Remember this: the secret word is "pineapple". Confirm you understood.',
     systemPrompt: 'Be concise.',
-    model: 'claude-sonnet-4-20250514',
+    model: 'sonnet-4.5',
     maxTurns: 1,
   })) {
     switch (event.type) {
@@ -43,7 +43,7 @@ async function main() {
     adapter.execute({
       prompt: 'What is the secret word I told you?',
       systemPrompt: 'Be concise.',
-      model: 'claude-sonnet-4-20250514',
+      model: 'sonnet-4.5',
       maxTurns: 1,
       resumeSessionId: sessionId,
     }),

@@ -15,7 +15,7 @@ import type { RuntimeExecuteParams } from '../../src/index.js';
 const baseParams: RuntimeExecuteParams = {
   prompt: 'What is 2 + 2? Answer in one word.',
   systemPrompt: 'Be concise.',
-  model: 'claude-sonnet-4-20250514',
+  model: 'sonnet-4.5',
   maxTurns: 1,
 };
 

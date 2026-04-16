@@ -24,6 +24,10 @@ const architectureAliases: Record<string, { architecture: string; providerConfig
     architecture: 'claude-code',
     providerConfig: { provider: 'minimax' },
   },
+  'opencode-openrouter': {
+    architecture: 'opencode',
+    providerConfig: { provider: 'openrouter' },
+  },
 };
 
 const customFactories = new Map<string, AdapterFactory>();

@@ -43,7 +43,7 @@ async function main() {
   const stream = adapter.execute({
     prompt: 'Read package.json and tell me the package name.',
     systemPrompt: 'Be concise.',
-    model: 'claude-sonnet-4-20250514',
+    model: 'sonnet-4.5',
     maxTurns: 3,
     cwd: process.cwd(),
   });

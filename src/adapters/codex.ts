@@ -18,6 +18,7 @@ import type {
   ContentBlock,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+import { resolveModel } from '../models.js';
 
 // --- Adapter ---
 
@@ -62,9 +63,11 @@ export class CodexAdapter implements RuntimeAdapter {
       throw new AdapterInitError('codex', err);
     }
 
+    const resolvedModel = resolveModel(this.architecture, params.model);
+
     // Session resumption: resumeThread if sessionId provided
     const threadOptions = {
-      model: params.model,
+      model: resolvedModel,
       sandboxMode: sandboxMode as 'read-only' | 'workspace-write',
       workingDirectory: params.cwd ?? process.cwd(),
       approvalPolicy: 'never' as const,

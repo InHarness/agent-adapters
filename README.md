@@ -10,7 +10,7 @@ const adapter = createAdapter('claude-code');
 for await (const event of adapter.execute({
   prompt: 'Read package.json and summarize it.',
   systemPrompt: 'Be concise.',
-  model: 'claude-sonnet-4-20250514',
+  model: 'sonnet-4.5', // alias → 'claude-sonnet-4-5-20250514'
 })) {
   if (event.type === 'text_delta') process.stdout.write(event.text);
   if (event.type === 'result') console.log('\n\nDone. Tokens:', event.usage);
@@ -55,6 +55,7 @@ Adapters can run against alternative API backends via **providers**. A provider 
 |---|---|---|
 | `minimax` | claude-code, opencode, codex | [MiniMax API](https://platform.minimax.io) (Anthropic + OpenAI compatible) |
 | `ollama` | claude-code | Local [Ollama](https://ollama.com) inference |
+| `openrouter` | opencode | [OpenRouter](https://openrouter.ai) multi-provider gateway |
 
 ```ts
 import { createAdapter } from '@inharness/agent-adapters';
@@ -89,6 +90,7 @@ These convenience aliases create an adapter with a pre-configured provider:
 |---|---|
 | `claude-code-ollama` | `createAdapter('claude-code', { provider: 'ollama' })` |
 | `claude-code-minimax` | `createAdapter('claude-code', { provider: 'minimax' })` |
+| `opencode-openrouter` | `createAdapter('opencode', { provider: 'openrouter' })` |
 
 ### Custom providers
 
@@ -123,6 +125,58 @@ registerProvider({
 
 const adapter = createAdapter('claude-code', { provider: 'openrouter', apiKey: '...' });
 ```
+
+## Model aliases
+
+Each architecture has a set of short aliases for popular models. Use an alias instead of the full model ID — the adapter resolves it at runtime. You can also pass the full model ID directly.
+
+| Architecture | Alias | Full model ID |
+|---|---|---|
+| `claude-code` | `sonnet-4.7` | `claude-sonnet-4-7-20250219` |
+| | `sonnet-4.5` | `claude-sonnet-4-5-20250514` |
+| | `opus-4.6` | `claude-opus-4-6-20260401` |
+| | `opus-4.5` | `claude-opus-4-5-20250514` |
+| | `haiku-4.5` | `claude-haiku-4-5-20251001` |
+| `claude-code-ollama` | `qwen-coder-32b` | `qwen2.5-coder:32b` |
+| | `deepseek-coder` | `deepseek-coder-v2:latest` |
+| | `codellama-70b` | `codellama:70b` |
+| | `llama-3.1-70b` | `llama3.1:70b` |
+| `claude-code-minimax` | `minimax-m2.7` | `MiniMax-M2.7` |
+| `codex` | `o4-mini` | `o4-mini` |
+| | `o3` | `o3` |
+| | `codex-mini` | `codex-mini-latest` |
+| `opencode-openrouter` | `claude-sonnet-4` | `anthropic/claude-sonnet-4` |
+| | `claude-opus-4` | `anthropic/claude-opus-4` |
+| | `gemini-2.5-pro` | `google/gemini-2.5-pro` |
+| | `deepseek-r1` | `deepseek/deepseek-r1` |
+| `gemini` | `gemini-2.5-pro` | `gemini-2.5-pro` |
+| | `gemini-2.5-flash` | `gemini-2.5-flash` |
+| | `gemini-2.0-flash` | `gemini-2.0-flash` |
+
+```ts
+import { createAdapter, resolveModel, getModelsForArchitecture, MODEL_ALIASES } from '@inharness/agent-adapters';
+
+// Use aliases — resolved automatically by the adapter
+const adapter = createAdapter('claude-code');
+adapter.execute({ model: 'sonnet-4.7', ... });
+
+// Full model ID also works (pass-through)
+adapter.execute({ model: 'claude-sonnet-4-7-20250219', ... });
+
+// Resolve manually
+resolveModel('claude-code', 'opus-4.6');
+// → 'claude-opus-4-6-20260401'
+
+// List available models for an architecture
+getModelsForArchitecture('claude-code');
+// → [{ alias: 'sonnet-4.7', fullId: 'claude-sonnet-4-7-20250219' }, ...]
+
+// Access the full catalog
+MODEL_ALIASES['claude-code'];
+// → { 'sonnet-4.7': 'claude-sonnet-4-7-20250219', ... }
+```
+
+Unknown aliases throw an `AdapterError` with the list of available aliases for that architecture. TypeScript also provides compile-time autocomplete for known aliases when the architecture generic is specified.
 
 ## UnifiedEvent
 
@@ -163,7 +217,7 @@ const adapter = createAdapter('claude-code');
 for await (const event of adapter.execute({
   prompt: 'List files in /tmp using the filesystem server.',
   systemPrompt: 'Be concise.',
-  model: 'claude-sonnet-4-20250514',
+  model: 'sonnet-4.5',
   mcpServers: {
     filesystem: {
       command: 'npx',
@@ -204,7 +258,7 @@ const adapter = createAdapter('claude-code');
 for await (const event of adapter.execute({
   prompt: 'Look up user U123 and list their recent orders.',
   systemPrompt: 'Use the available tools.',
-  model: 'claude-sonnet-4-20250514',
+  model: 'sonnet-4.5',
   mcpServers: { 'my-app': config },
 })) {
   // handle events...
@@ -235,7 +289,7 @@ const adapter = new ClaudeCodeAdapter();
 for await (const event of adapter.execute({
   prompt: 'Add a note saying hello.',
   systemPrompt: 'Use the notes tools.',
-  model: 'claude-sonnet-4-20250514',
+  model: 'sonnet-4.5',
   mcpServers: { notes: server },
 })) {
   // handle events...
@@ -257,7 +311,7 @@ const { config: appTools } = createMcpServer({
 adapter.execute({
   prompt: '...',
   systemPrompt: '...',
-  model: 'claude-sonnet-4-20250514',
+  model: 'sonnet-4.5',
   mcpServers: {
     app: appTools,                                           // in-process
     filesystem: { command: 'npx', args: ['...'] },           // stdio
@@ -434,7 +488,7 @@ console.log(result.assertions); // detailed per-assertion results
 interface RuntimeExecuteParams {
   prompt: string;                              // conversation prompt
   systemPrompt: string;                        // system prompt
-  model: string;                               // model ID
+  model: string;                               // model alias or full model ID
   allowedTools?: string[];                     // builtin SDK tools
   builtinMCPServers?: string[];                // builtin MCP server names (consumer hint)
   allowedMCPTools?: string[];                  // allowed MCP tools (consumer hint)

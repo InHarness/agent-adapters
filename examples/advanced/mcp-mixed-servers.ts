@@ -48,7 +48,7 @@ async function main() {
       'Then use the filesystem server to read the package.json file. ' +
       'Compare what the project-context tool reports vs what package.json says.',
     systemPrompt: 'Be concise. Use both MCP servers.',
-    model: 'claude-sonnet-4-20250514',
+    model: 'sonnet-4.5',
     maxTurns: 10,
     mcpServers: {
       'project-context': projectServer,   // in-process (McpSdkServerConfig)

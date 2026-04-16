@@ -57,6 +57,20 @@ export type {
 export { registerProvider, resolveProvider, listProviders } from './providers/index.js';
 export { minimaxProvider } from './providers/minimax.js';
 export { ollamaProvider } from './providers/ollama.js';
+export { openrouterProvider } from './providers/openrouter.js';
+
+// Models
+export type {
+  ClaudeCodeModel,
+  ClaudeCodeOllamaModel,
+  ClaudeCodeMinimaxModel,
+  CodexModel,
+  OpencodeOpenrouterModel,
+  GeminiModel,
+  ArchitectureModelMap,
+  ArchitectureWithModels,
+} from './models.js';
+export { MODEL_ALIASES, resolveModel, getModelsForArchitecture } from './models.js';
 
 // Utilities
 export { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from './utils.js';

@@ -66,7 +66,7 @@ async function main() {
       'Add three tasks: "Write tests", "Update docs", "Deploy". ' +
       'Then list all tasks. Then complete "Write tests" and list again.',
     systemPrompt: 'Use the task manager tools. Be concise.',
-    model: 'claude-sonnet-4-20250514',
+    model: 'sonnet-4.5',
     maxTurns: 10,
     mcpServers: {
       'task-manager': config, // McpSdkServerConfig — in-process, no subprocess

@@ -14,6 +14,7 @@ import type {
   UsageStats,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+import { resolveModel } from '../models.js';
 import { execSync } from 'node:child_process';
 
 /** Check if the opencode CLI is available in PATH */
@@ -53,11 +54,14 @@ export class OpencodeAdapter implements RuntimeAdapter {
     const apiKey = (config.opencode_apiKey as string) ?? process.env.OPENROUTER_API_KEY;
     if (!apiKey) throw new AdapterInitError('opencode', new Error('OPENROUTER_API_KEY env var is required'));
 
+    // Resolve model alias to full ID before splitting into provider/model
+    const resolvedModel = resolveModel(this.architecture, params.model);
+
     // Provider ID and model can be overridden by provider config (e.g. MiniMax uses 'anthropic' provider)
     const overrideProviderID = config.opencode_providerID as string | undefined;
-    const modelParts = params.model.split('/');
+    const modelParts = resolvedModel.split('/');
     const providerID = overrideProviderID ?? (modelParts.length > 1 ? modelParts[0] : 'openrouter');
-    const modelID = modelParts.length > 1 ? modelParts.slice(1).join('/') : params.model;
+    const modelID = modelParts.length > 1 ? modelParts.slice(1).join('/') : resolvedModel;
 
     const port = getAvailablePort();
 

@@ -47,7 +47,7 @@ async function main() {
       'Add these notes: "Buy groceries", "Review PR #42", "Call dentist". ' +
       'Then search for notes about "PR". List all notes at the end.',
     systemPrompt: 'Use the notes tools. Be concise.',
-    model: 'claude-sonnet-4-20250514',
+    model: 'sonnet-4.5',
     maxTurns: 10,
     mcpServers: {
       notes: server, // McpSdkServerConfigWithInstance from SDK

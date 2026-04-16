@@ -11,7 +11,7 @@ async function main() {
   for await (const event of adapter.execute({
     prompt: 'What is TypeScript? Answer in one sentence.',
     systemPrompt: 'Be concise.',
-    model: 'claude-sonnet-4-20250514',
+    model: 'sonnet-4.5',
     maxTurns: 1,
   })) {
     switch (event.type) {

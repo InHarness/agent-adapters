@@ -13,6 +13,7 @@ import type {
   McpSdkServerConfig,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+import { resolveModel } from '../models.js';
 
 // Re-export SDK MCP primitives for consumers building in-process MCP servers
 export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -88,9 +89,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
     this.abortController = new AbortController();
 
+    const resolvedModel = resolveModel(this.architecture, params.model);
+
     const options: Options = {
       abortController: this.abortController,
-      model: params.model,
+      model: resolvedModel,
       systemPrompt: params.systemPrompt,
       maxTurns: params.maxTurns,
       permissionMode: 'bypassPermissions',

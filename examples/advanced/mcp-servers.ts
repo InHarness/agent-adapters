@@ -9,9 +9,9 @@ import type { Architecture } from '../../src/index.js';
 const architecture = (process.argv[2] ?? 'claude-code') as Architecture;
 
 const models: Record<string, string> = {
-  'claude-code': 'claude-sonnet-4-20250514',
+  'claude-code': 'sonnet-4.5',
   'codex': 'gpt-4.1',
-  'opencode': 'openrouter/anthropic/claude-sonnet-4-20250514',
+  'opencode': 'openrouter/anthropic/sonnet-4.5',
 };
 
 async function main() {
@@ -24,7 +24,7 @@ async function main() {
   for await (const event of adapter.execute({
     prompt: 'Use the filesystem MCP server to list files in /tmp. Summarize what you find.',
     systemPrompt: 'Be concise.',
-    model: models[architecture] ?? 'claude-sonnet-4-20250514',
+    model: models[architecture] ?? 'sonnet-4.5',
     maxTurns: 5,
     mcpServers: {
       filesystem: {

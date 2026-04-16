@@ -14,6 +14,7 @@ import type {
   McpServerConfig,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+import { resolveModel } from '../models.js';
 
 // Dynamic type — SDK structure may change
 type AgentEvent = {
@@ -125,6 +126,7 @@ export class GeminiAdapter implements RuntimeAdapter {
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
+    const resolvedModel = resolveModel(this.architecture, params.model);
     const apiKey = process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY;
     if (!apiKey) throw new AdapterInitError('gemini', new Error('GOOGLE_API_KEY or GEMINI_API_KEY env var is required'));
 
@@ -175,7 +177,7 @@ export class GeminiAdapter implements RuntimeAdapter {
       }
 
       const genConfig = createContentGeneratorConfig({
-        model: params.model,
+        model: resolvedModel,
         apiKey,
         thinkingConfig: archConfig.gemini_thinkingBudget
           ? { thinkingBudget: archConfig.gemini_thinkingBudget as number }
@@ -195,12 +197,12 @@ export class GeminiAdapter implements RuntimeAdapter {
       if (GeminiConfig && params.mcpServers && Object.keys(params.mcpServers).length > 0 && GeminiMCPServerConfig) {
         const mcpServers = mapMcpServersToGemini(params.mcpServers, GeminiMCPServerConfig);
         geminiConfig = new GeminiConfig({
-          model: params.model,
+          model: resolvedModel,
           cwd: params.cwd ?? process.cwd(),
           mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
         });
       } else {
-        geminiConfig = { model: params.model } as Record<string, unknown>;
+        geminiConfig = { model: resolvedModel } as Record<string, unknown>;
       }
 
       session = new LegacyAgentSession({

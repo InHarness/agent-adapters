@@ -3,10 +3,12 @@
 import type { ProviderPreset, ProviderConfig } from '../types.js';
 import { minimaxProvider } from './minimax.js';
 import { ollamaProvider } from './ollama.js';
+import { openrouterProvider } from './openrouter.js';
 
 const builtinProviders: Record<string, ProviderPreset> = {
   minimax: minimaxProvider,
   ollama: ollamaProvider,
+  openrouter: openrouterProvider,
 };
 
 const customProviders = new Map<string, ProviderPreset>();
@@ -69,3 +71,4 @@ export function resolveProviderConfig(
 // Re-export provider presets for direct use
 export { minimaxProvider } from './minimax.js';
 export { ollamaProvider } from './ollama.js';
+export { openrouterProvider } from './openrouter.js';

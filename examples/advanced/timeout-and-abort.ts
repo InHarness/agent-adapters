@@ -14,7 +14,7 @@ async function demoTimeout() {
     for await (const event of adapter.execute({
       prompt: 'Write a very detailed essay about the entire history of computing from 1800 to today.',
       systemPrompt: 'Be extremely thorough and detailed.',
-      model: 'claude-sonnet-4-20250514',
+      model: 'sonnet-4.5',
       maxTurns: 1,
       timeoutMs: 5000,
     })) {
@@ -45,7 +45,7 @@ async function demoAbort() {
     for await (const event of adapter.execute({
       prompt: 'Explain quantum computing in great detail, covering all major algorithms.',
       systemPrompt: 'Be extremely thorough.',
-      model: 'claude-sonnet-4-20250514',
+      model: 'sonnet-4.5',
       maxTurns: 1,
     })) {
       if (event.type === 'text_delta') {

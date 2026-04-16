@@ -1,6 +1,8 @@
 // @inharness/agent-adapters — Core types
 // Based on InHarness M04 spec (m04-orchestration.md)
 
+import type { ArchitectureModelMap } from './models.js';
+
 // --- Content & Messages ---
 
 export type ContentBlock =
@@ -46,7 +48,14 @@ export type UnifiedEvent =
 
 // --- Architecture ---
 
-export type BuiltinArchitecture = 'claude-code' | 'claude-code-ollama' | 'claude-code-minimax' | 'codex' | 'opencode' | 'gemini';
+export type BuiltinArchitecture =
+  | 'claude-code'
+  | 'claude-code-ollama'
+  | 'claude-code-minimax'
+  | 'codex'
+  | 'opencode'
+  | 'opencode-openrouter'
+  | 'gemini';
 export type Architecture = BuiltinArchitecture | (string & {});
 
 // --- Provider ---
@@ -121,10 +130,10 @@ export type McpServerConfig =
 
 // --- Runtime Adapter ---
 
-export interface RuntimeExecuteParams {
+export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   prompt: string;
   systemPrompt: string;
-  model: string;
+  model: A extends keyof ArchitectureModelMap ? ArchitectureModelMap[A] : string;
   allowedTools?: string[];
 
   /**

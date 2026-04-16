@@ -12,7 +12,7 @@ async function main() {
     process.exit(1);
   }
 
-  const adapter = createAdapter('opencode');
+  const adapter = createAdapter('opencode-openrouter');
 
   console.log('OpenCode via OpenRouter with creative temperature\n');
 
@@ -20,7 +20,7 @@ async function main() {
     adapter.execute({
       prompt: 'Write a haiku about TypeScript.',
       systemPrompt: 'Be creative.',
-      model: 'openrouter/anthropic/claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4', // alias → 'anthropic/claude-sonnet-4'
       maxTurns: 1,
       architectureConfig: {
         opencode_temperature: 0.7,

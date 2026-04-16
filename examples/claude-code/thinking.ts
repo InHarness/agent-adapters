@@ -13,7 +13,7 @@ async function main() {
   for await (const event of adapter.execute({
     prompt: 'What are the trade-offs between microservices and monolith architectures for a small startup?',
     systemPrompt: 'Think step by step. Be concise in your final answer.',
-    model: 'claude-sonnet-4-20250514',
+    model: 'sonnet-4.5',
     maxTurns: 1,
     architectureConfig: {
       claude_thinking: { type: 'enabled', budgetTokens: 5000 },
