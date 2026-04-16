@@ -74,3 +74,13 @@ export { MODEL_ALIASES, resolveModel, getModelsForArchitecture } from './models.
 
 // Utilities
 export { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from './utils.js';
+
+// Architecture-specific option schemas
+export type { ArchOption, ArchOptionType } from './options.js';
+export {
+  getArchitectureOptions,
+  CLAUDE_CODE_OPTIONS,
+  CODEX_OPTIONS,
+  OPENCODE_OPTIONS,
+  GEMINI_OPTIONS,
+} from './options.js';
