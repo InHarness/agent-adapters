@@ -167,3 +167,5 @@ export const TOOL_PROMPT = 'Use the echo tool with the message "hello world". Th
 export const TOOL_SYSTEM_PROMPT = 'You have access to an echo tool. Use it when asked.';
 export const THINKING_PROMPT = 'A traveler headed south. After walking 1 km he turned east and after 1 km he saw a bear ahead, so he turned north. After walking another 1 km he was back at the starting point. What color was the bear? Explain your reasoning.';
 export const THINKING_SYSTEM_PROMPT = 'Think through your reasoning step by step before answering. This is a classic lateral thinking puzzle.';
+export const SUBAGENT_PROMPT = 'Do these two tasks in parallel using subagents: (1) Use the echo tool with "task-a", (2) Use the echo tool with "task-b". Delegate each to a separate subagent.';
+export const SUBAGENT_SYSTEM_PROMPT = 'You must delegate independent tasks to subagents. Use the Task tool to spawn subagents for parallel work.';

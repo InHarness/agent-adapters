@@ -22,6 +22,8 @@ import {
   TOOL_SYSTEM_PROMPT,
   THINKING_PROMPT,
   THINKING_SYSTEM_PROMPT,
+  SUBAGENT_PROMPT,
+  SUBAGENT_SYSTEM_PROMPT,
 } from './shared.js';
 
 // Claude Code SDK manages auth internally (OAuth, cached credentials, or ANTHROPIC_API_KEY).
@@ -162,6 +164,53 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     const resultEvent = events.find((e) => e.type === 'result') as Extract<UnifiedEvent, { type: 'result' }>;
     const allRawBlocks = resultEvent.rawMessages.flatMap((m) => m.content);
     expect(allRawBlocks.some((b) => b.type === 'toolResult'), 'No toolResult content block in rawMessages').toBe(true);
+  });
+
+  it('subagent events', async () => {
+    const { config } = createE2eMcpServer();
+    const adapter = createAdapter('claude-code');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt: SUBAGENT_PROMPT,
+        systemPrompt: SUBAGENT_SYSTEM_PROMPT,
+        model: MODEL,
+        maxTurns: 5,
+        mcpServers: { 'e2e-test': config },
+      }),
+    );
+
+    assertEventTypes(events, ['text_delta', 'assistant_message', 'result']);
+
+    // Check for subagent lifecycle events
+    const started = events.filter((e) => e.type === 'subagent_started') as Extract<
+      UnifiedEvent,
+      { type: 'subagent_started' }
+    >[];
+    const completed = events.filter((e) => e.type === 'subagent_completed') as Extract<
+      UnifiedEvent,
+      { type: 'subagent_completed' }
+    >[];
+
+    // Subagent spawning is non-deterministic — model decides whether to delegate.
+    // We validate structure if subagents were spawned, but don't fail if they weren't.
+    if (started.length > 0) {
+      for (const s of started) {
+        expect(s.taskId).toBeTruthy();
+        expect(typeof s.description).toBe('string');
+      }
+
+      expect(completed.length).toBeGreaterThanOrEqual(1);
+      for (const c of completed) {
+        expect(c.taskId).toBeTruthy();
+        expect(typeof c.status).toBe('string');
+      }
+
+      // At least some events should be marked as coming from subagent
+      const hasSubagentEvents = events.some(
+        (e) => ('isSubagent' in e && e.isSubagent) || e.type.startsWith('subagent_'),
+      );
+      expect(hasSubagentEvents).toBe(true);
+    }
   });
 
   it('abort mid-stream', async () => {
