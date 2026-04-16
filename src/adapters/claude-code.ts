@@ -78,6 +78,8 @@ function normalizeAssistantMessage(msg: SDKMessage & { type: 'assistant' }): Nor
 export class ClaudeCodeAdapter implements RuntimeAdapter {
   architecture = 'claude-code' as const;
   private abortController: AbortController | null = null;
+  /** Populated by factory when a provider is configured. */
+  _providerConfig?: Record<string, unknown>;
 
   abort(): void {
     this.abortController?.abort();
@@ -97,8 +99,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       includePartialMessages: true,
     };
 
-    // Architecture-specific config
-    const config = params.architectureConfig ?? {};
+    // Architecture-specific config (merge provider-resolved config with user-supplied config)
+    const config = { ...this._providerConfig, ...params.architectureConfig };
 
     if (config.claude_thinking) {
       options.thinking = config.claude_thinking as Options['thinking'];
@@ -126,11 +128,14 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       (options as Record<string, unknown>).systemPrompt = presetObj;
     }
 
-    // Ollama variant: set base URL
-    if (config.ollama_baseUrl) {
+    // Custom environment variables — set by providers (MiniMax, Ollama, etc.)
+    // Also supports legacy ollama_baseUrl for backward compatibility
+    const customEnv = config.custom_env as Record<string, string> | undefined;
+    if (customEnv || config.ollama_baseUrl) {
       options.env = {
         ...process.env,
-        ANTHROPIC_BASE_URL: config.ollama_baseUrl as string,
+        ...(config.ollama_baseUrl ? { ANTHROPIC_BASE_URL: config.ollama_baseUrl as string } : {}),
+        ...customEnv,
       };
     }
 

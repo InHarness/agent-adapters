@@ -36,6 +36,8 @@ export class OpencodeAdapter implements RuntimeAdapter {
   architecture = 'opencode' as const;
   private abortController: AbortController | null = null;
   private serverClose: (() => void) | null = null;
+  /** Populated by factory when a provider is configured. */
+  _providerConfig?: Record<string, unknown>;
 
   abort(): void {
     this.abortController?.abort();
@@ -45,14 +47,18 @@ export class OpencodeAdapter implements RuntimeAdapter {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    // Merge provider-resolved config with user-supplied config
+    const config = { ...this._providerConfig, ...params.architectureConfig };
+
+    const apiKey = (config.opencode_apiKey as string) ?? process.env.OPENROUTER_API_KEY;
     if (!apiKey) throw new AdapterInitError('opencode', new Error('OPENROUTER_API_KEY env var is required'));
 
+    // Provider ID and model can be overridden by provider config (e.g. MiniMax uses 'anthropic' provider)
+    const overrideProviderID = config.opencode_providerID as string | undefined;
     const modelParts = params.model.split('/');
-    const providerID = modelParts.length > 1 ? modelParts[0] : 'openrouter';
+    const providerID = overrideProviderID ?? (modelParts.length > 1 ? modelParts[0] : 'openrouter');
     const modelID = modelParts.length > 1 ? modelParts.slice(1).join('/') : params.model;
 
-    const config = params.architectureConfig ?? {};
     const port = getAvailablePort();
 
     // Build MCP config from params — OpenCode only supports stdio-based servers
@@ -74,13 +80,22 @@ export class OpencodeAdapter implements RuntimeAdapter {
 
     let client: OpencodeClient;
     try {
+      // Build provider entry — may include baseURL for custom backends
+      const providerEntry: Record<string, unknown> = { api: apiKey };
+      if (config.opencode_baseUrl) {
+        providerEntry.baseURL = config.opencode_baseUrl as string;
+      }
+
+      // Model string: use override from provider config or derive from params
+      const modelString = (config.opencode_model as string) ?? `${providerID}/${modelID}`;
+
       const opencodeConfig: Record<string, unknown> = {
         provider: {
-          [providerID]: { api: apiKey },
+          [providerID]: providerEntry,
         },
         agent: {
           build: {
-            model: `${providerID}/${modelID}`,
+            model: modelString,
             temperature: config.opencode_temperature as number | undefined,
             top_p: config.opencode_topP as number | undefined,
             permission: { edit: 'allow', bash: 'allow' },

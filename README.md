@@ -43,10 +43,86 @@ npm install @modelcontextprotocol/sdk zod
 | Architecture | SDK | Streaming | Thinking | MCP | Session Resume | Subagents |
 |---|---|---|---|---|---|---|
 | `claude-code` | @anthropic-ai/claude-agent-sdk | Native deltas | Native streaming | Full (stdio, SSE, HTTP, in-process) | Yes (sessionId) | Native (Agent tool) |
-| `claude-code-ollama` | Same + Ollama backend | Native deltas | Model-dependent | Full (stdio, SSE, HTTP, in-process) | Model-dependent | Model-dependent |
 | `codex` | @openai/codex-sdk | Synthesized (full text) | Post-hoc summary | Pre-configured only | Yes (resumeThread) | No |
 | `opencode` | @opencode-ai/sdk | Native SSE | Native (reasoning) | Stdio only | No | Native (task tool) |
 | `gemini` | @google/gemini-cli-core | Native | Native (thought) | Full (stdio, SSE, HTTP) | No | Via threadId |
+
+## Providers
+
+Adapters can run against alternative API backends via **providers**. A provider knows how to configure each adapter for a given backend (env vars, base URLs, model names, etc.).
+
+| Provider | Supported adapters | Backend |
+|---|---|---|
+| `minimax` | claude-code, opencode, codex | [MiniMax API](https://platform.minimax.io) (Anthropic + OpenAI compatible) |
+| `ollama` | claude-code | Local [Ollama](https://ollama.com) inference |
+
+```ts
+import { createAdapter } from '@inharness/agent-adapters';
+
+// Convenience alias
+const adapter = createAdapter('claude-code-minimax');
+
+// Explicit provider config
+const adapter = createAdapter('claude-code', {
+  provider: 'minimax',
+  apiKey: 'sk-...',
+  region: 'global', // 'global' | 'cn'
+});
+
+// Same provider, different agent architecture
+const opencode = createAdapter('opencode', { provider: 'minimax', apiKey: 'sk-...' });
+const codex = createAdapter('codex', { provider: 'minimax', apiKey: 'sk-...' });
+
+// Ollama (local inference)
+const local = createAdapter('claude-code-ollama');
+const local2 = createAdapter('claude-code', {
+  provider: 'ollama',
+  baseUrl: 'http://localhost:11434',
+});
+```
+
+### Architecture aliases
+
+These convenience aliases create an adapter with a pre-configured provider:
+
+| Alias | Equivalent |
+|---|---|
+| `claude-code-ollama` | `createAdapter('claude-code', { provider: 'ollama' })` |
+| `claude-code-minimax` | `createAdapter('claude-code', { provider: 'minimax' })` |
+
+### Custom providers
+
+Register your own provider for any API-compatible backend:
+
+```ts
+import { registerProvider } from '@inharness/agent-adapters';
+import type { ProviderPreset } from '@inharness/agent-adapters';
+
+registerProvider({
+  name: 'openrouter',
+  architectures: ['claude-code', 'opencode'],
+  resolve(architecture, config) {
+    switch (architecture) {
+      case 'claude-code':
+        return {
+          custom_env: {
+            ANTHROPIC_BASE_URL: 'https://openrouter.ai/api/v1',
+            ANTHROPIC_AUTH_TOKEN: config.apiKey,
+          },
+        };
+      case 'opencode':
+        return {
+          opencode_providerID: 'openrouter',
+          opencode_apiKey: config.apiKey,
+        };
+      default:
+        throw new Error(`Unsupported architecture: ${architecture}`);
+    }
+  },
+});
+
+const adapter = createAdapter('claude-code', { provider: 'openrouter', apiKey: '...' });
+```
 
 ## UnifiedEvent
 
@@ -211,6 +287,33 @@ import type {
 } from '@inharness/agent-adapters';
 ```
 
+## Error handling
+
+All adapters emit typed errors via the `error` event. The error hierarchy lets you distinguish failure causes:
+
+```ts
+import {
+  AdapterError,        // base class — all adapter errors extend this
+  AdapterInitError,    // SDK initialization failed (missing API key, SDK not installed)
+  AdapterTimeoutError, // execution exceeded timeoutMs
+  AdapterAbortError,   // adapter.abort() was called manually
+} from '@inharness/agent-adapters';
+
+for await (const event of adapter.execute(params)) {
+  if (event.type === 'error') {
+    if (event.error instanceof AdapterTimeoutError) {
+      console.log('Timed out — retrying with longer timeout');
+    } else if (event.error instanceof AdapterAbortError) {
+      console.log('Aborted by user');
+    } else {
+      console.error('Adapter error:', event.error);
+    }
+  }
+}
+```
+
+When `timeoutMs` is set, the adapter emits an `AdapterTimeoutError` event and stops. When `adapter.abort()` is called manually, it emits an `AdapterAbortError` event and stops.
+
 ## Tree-shakeable imports
 
 Import only the adapter you need — no unnecessary SDK dependencies:
@@ -267,6 +370,24 @@ const { main, subagent } = await splitBySubagent(stream);
 const text = await extractText(stream);
 ```
 
+## Factory API
+
+```ts
+// Base signature
+createAdapter(architecture: string): RuntimeAdapter;
+
+// With provider backend
+createAdapter(architecture: string, providerConfig: ProviderConfig): RuntimeAdapter;
+
+interface ProviderConfig {
+  provider: string;    // provider name (e.g. 'minimax', 'ollama')
+  apiKey?: string;     // API key (falls back to env vars)
+  baseUrl?: string;    // base URL override
+  model?: string;      // model name override
+  [key: string]: unknown; // provider-specific options (e.g. region)
+}
+```
+
 ## Custom adapters
 
 Register your own adapters for any agent architecture:
@@ -300,12 +421,12 @@ console.log(result.assertions); // detailed per-assertion results
 
 ## Auth per adapter
 
-| Adapter | Auth |
-|---|---|
-| claude-code | SDK manages internally (OAuth, cached credentials, or `ANTHROPIC_API_KEY`) |
-| codex | `OPENAI_API_KEY` env var |
-| opencode | `OPENROUTER_API_KEY` env var + `opencode` CLI in PATH |
-| gemini | `GOOGLE_API_KEY` or `GEMINI_API_KEY` env var |
+| Adapter | Default auth | With provider |
+|---|---|---|
+| claude-code | SDK manages internally (OAuth, cached credentials, or `ANTHROPIC_API_KEY`) | Provider sets env vars via `custom_env` |
+| codex | `OPENAI_API_KEY` env var | `providerConfig.apiKey` or `codex_apiKey` in architectureConfig |
+| opencode | `OPENROUTER_API_KEY` env var + `opencode` CLI in PATH | `providerConfig.apiKey` or `opencode_apiKey` in architectureConfig |
+| gemini | `GOOGLE_API_KEY` or `GEMINI_API_KEY` env var | — |
 
 ## RuntimeExecuteParams
 
@@ -335,11 +456,18 @@ interface RuntimeExecuteParams {
 | `claude_thinking` | claude-code | `{ type: 'enabled', budgetTokens?: number }` |
 | `claude_effort` | claude-code | `'low' \| 'medium' \| 'high' \| 'max'` |
 | `claude_usePreset` | claude-code | `true \| 'claude_code' \| string` — use SDK preset system prompt; `systemPrompt` becomes `append` |
-| `ollama_baseUrl` | claude-code-ollama | Ollama API base URL |
+| `custom_env` | claude-code | `Record<string, string>` — custom env vars merged into SDK options (set by providers) |
+| `ollama_baseUrl` | claude-code | Ollama API base URL (legacy — prefer `provider: 'ollama'`) |
 | `codex_sandboxMode` | codex | `'read-only' \| 'workspace-write'` |
 | `codex_reasoningEffort` | codex | `'minimal' \| 'low' \| 'medium' \| 'high' \| 'xhigh'` |
+| `codex_baseUrl` | codex | Custom API base URL (set by providers) |
+| `codex_apiKey` | codex | Custom API key (set by providers) |
 | `opencode_temperature` | opencode | Temperature (0-2) |
 | `opencode_topP` | opencode | Top-P sampling |
+| `opencode_providerID` | opencode | Override provider ID (e.g. `'anthropic'` for MiniMax) |
+| `opencode_baseUrl` | opencode | Custom provider base URL |
+| `opencode_apiKey` | opencode | Custom API key |
+| `opencode_model` | opencode | Override model string (e.g. `'anthropic/MiniMax-M2.7'`) |
 | `gemini_thinkingBudget` | gemini | Thinking token budget |
 | `gemini_temperature` | gemini | Temperature (0-2) |
 

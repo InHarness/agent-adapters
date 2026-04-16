@@ -16,6 +16,8 @@ export type {
   RuntimeExecuteParams,
   RuntimeAdapter,
   AdapterFactory,
+  ProviderConfig,
+  ProviderPreset,
   ContractAssertion,
   ContractResult,
 } from './types.js';
@@ -50,6 +52,11 @@ export type {
   CreateMcpServerOptions,
   McpServerInstance,
 } from './mcp.js';
+
+// Providers
+export { registerProvider, resolveProvider, listProviders } from './providers/index.js';
+export { minimaxProvider } from './providers/minimax.js';
+export { ollamaProvider } from './providers/ollama.js';
 
 // Utilities
 export { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from './utils.js';

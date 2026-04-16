@@ -24,6 +24,8 @@ import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../typ
 export class CodexAdapter implements RuntimeAdapter {
   architecture = 'codex' as const;
   private abortController: AbortController | null = null;
+  /** Populated by factory when a provider is configured. */
+  _providerConfig?: Record<string, unknown>;
 
   abort(): void {
     this.abortController?.abort();
@@ -32,7 +34,10 @@ export class CodexAdapter implements RuntimeAdapter {
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
     this.abortController = new AbortController();
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    // Merge provider-resolved config with user-supplied config
+    const config = { ...this._providerConfig, ...params.architectureConfig };
+
+    const apiKey = (config.codex_apiKey as string) ?? process.env.OPENAI_API_KEY;
     if (!apiKey) throw new AdapterInitError('codex', new Error('OPENAI_API_KEY env var is required'));
 
     // Warn if MCP servers are provided — Codex SDK does not support dynamic MCP configuration
@@ -43,12 +48,16 @@ export class CodexAdapter implements RuntimeAdapter {
       );
     }
 
-    const config = params.architectureConfig ?? {};
     const sandboxMode = (config.codex_sandboxMode as string) ?? 'workspace-write';
+
+    const codexOptions: Record<string, unknown> = { apiKey };
+    if (config.codex_baseUrl) {
+      codexOptions.baseURL = config.codex_baseUrl as string;
+    }
 
     let codex: InstanceType<typeof Codex>;
     try {
-      codex = new Codex({ apiKey });
+      codex = new Codex(codexOptions as ConstructorParameters<typeof Codex>[0]);
     } catch (err) {
       throw new AdapterInitError('codex', err);
     }

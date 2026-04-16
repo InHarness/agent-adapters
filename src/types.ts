@@ -46,8 +46,36 @@ export type UnifiedEvent =
 
 // --- Architecture ---
 
-export type BuiltinArchitecture = 'claude-code' | 'claude-code-ollama' | 'codex' | 'opencode' | 'gemini';
+export type BuiltinArchitecture = 'claude-code' | 'claude-code-ollama' | 'claude-code-minimax' | 'codex' | 'opencode' | 'gemini';
 export type Architecture = BuiltinArchitecture | (string & {});
+
+// --- Provider ---
+
+/** Configuration for a custom API backend provider (e.g. MiniMax, Ollama, OpenRouter). */
+export interface ProviderConfig {
+  /** Provider name — used for preset resolution. */
+  provider: string;
+  /** API key for the provider. Falls back to provider-specific env vars if omitted. */
+  apiKey?: string;
+  /** Base URL override (provider presets have defaults). */
+  baseUrl?: string;
+  /** Model name override. */
+  model?: string;
+  /** Provider-specific options (e.g. region for MiniMax). */
+  [key: string]: unknown;
+}
+
+/**
+ * Provider preset — knows how to configure each adapter for a given backend.
+ * Each provider resolves its config into adapter-specific `architectureConfig` keys.
+ */
+export interface ProviderPreset {
+  name: string;
+  /** Architectures this provider supports. */
+  architectures: string[];
+  /** Resolve provider config into architectureConfig entries for the given adapter. */
+  resolve(architecture: string, config: ProviderConfig): Record<string, unknown>;
+}
 
 // --- MCP Server Config ---
 
