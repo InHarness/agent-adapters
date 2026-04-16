@@ -258,6 +258,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
                   type: 'tool_result',
                   toolUseId: callId,
                   summary: (state.output as string) ?? '',
+                  isSubagent,
                 };
                 if (isSubagent) {
                   yield {
@@ -283,6 +284,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
                   type: 'tool_result',
                   toolUseId: callId,
                   summary: (state.error as string) ?? 'Tool error',
+                  isSubagent,
                 };
                 if (isSubagent) {
                   yield {

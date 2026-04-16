@@ -314,6 +314,7 @@ export class GeminiAdapter implements RuntimeAdapter {
               type: 'tool_result',
               toolUseId: event.requestId as string,
               summary,
+              isSubagent: false,
             };
             break;
           }

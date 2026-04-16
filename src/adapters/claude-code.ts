@@ -242,6 +242,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
           case 'user': {
             const userMsg = event as Record<string, unknown>;
+            const isSubagent = (userMsg as Record<string, unknown>).parent_tool_use_id != null;
             const message = userMsg.message as Record<string, unknown>;
             if (message && Array.isArray(message.content)) {
               const normalized: NormalizedMessage = {
@@ -254,7 +255,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
               for (const block of normalized.content) {
                 if (block.type === 'toolResult') {
-                  yield { type: 'tool_result', toolUseId: block.toolUseId, summary: block.content };
+                  yield { type: 'tool_result', toolUseId: block.toolUseId, summary: block.content, isSubagent };
                 }
               }
             }
@@ -262,10 +263,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           }
 
           case 'tool_use_summary': {
+            const isSubagent = (event as Record<string, unknown>).parent_tool_use_id != null;
             yield {
               type: 'tool_result',
               toolUseId: event.preceding_tool_use_ids?.[0] ?? 'unknown',
               summary: event.summary,
+              isSubagent,
             };
             break;
           }

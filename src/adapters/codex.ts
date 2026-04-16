@@ -141,6 +141,7 @@ export class CodexAdapter implements RuntimeAdapter {
                 type: 'tool_result',
                 toolUseId: item.id,
                 summary: item.aggregated_output ?? `exit_code: ${item.exit_code}`,
+                isSubagent: false,
               };
             } else if (item.type === 'file_change') {
               yield {
@@ -154,6 +155,7 @@ export class CodexAdapter implements RuntimeAdapter {
                 type: 'tool_result',
                 toolUseId: item.id,
                 summary: item.changes.map((c) => `${c.kind}: ${c.path}`).join(', '),
+                isSubagent: false,
               };
             } else if (item.type === 'mcp_tool_call') {
               yield {
@@ -167,6 +169,7 @@ export class CodexAdapter implements RuntimeAdapter {
                 type: 'tool_result',
                 toolUseId: item.id,
                 summary: item.error?.message ?? JSON.stringify(item.result ?? ''),
+                isSubagent: false,
               };
             } else if (item.type === 'reasoning') {
               yield { type: 'thinking', text: item.text, isSubagent: false };

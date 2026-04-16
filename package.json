@@ -80,6 +80,11 @@
     "test:codex": "vitest run codex",
     "test:opencode": "vitest run opencode",
     "test:gemini": "vitest run gemini",
+    "test:e2e": "vitest run --config vitest.config.e2e.ts",
+    "test:e2e:claude": "vitest run --config vitest.config.e2e.ts claude-code",
+    "test:e2e:codex": "vitest run --config vitest.config.e2e.ts codex",
+    "test:e2e:opencode": "vitest run --config vitest.config.e2e.ts opencode",
+    "test:e2e:gemini": "vitest run --config vitest.config.e2e.ts gemini",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

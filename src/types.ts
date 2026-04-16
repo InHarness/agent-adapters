@@ -36,7 +36,7 @@ export interface UsageStats {
 export type UnifiedEvent =
   | { type: 'text_delta'; text: string; isSubagent: boolean }
   | { type: 'tool_use'; toolName: string; toolUseId: string; input: unknown; isSubagent: boolean }
-  | { type: 'tool_result'; toolUseId: string; summary: string }
+  | { type: 'tool_result'; toolUseId: string; summary: string; isSubagent: boolean }
   | { type: 'thinking'; text: string; isSubagent: boolean }
   | { type: 'assistant_message'; message: NormalizedMessage }
   | { type: 'subagent_started'; taskId: string; description: string; toolUseId: string }
