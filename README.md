@@ -134,6 +134,7 @@ Each architecture has a set of short aliases for popular models. Use an alias in
 |---|---|---|
 | `claude-code` | `sonnet-4.6` | `claude-sonnet-4-6` |
 | | `sonnet-4.5` | `claude-sonnet-4-5-20250929` |
+| | `opus-4.7` | `claude-opus-4-7` |
 | | `opus-4.6` | `claude-opus-4-6` |
 | | `opus-4.5` | `claude-opus-4-5-20251101` |
 | | `haiku-4.5` | `claude-haiku-4-5-20251001` |
