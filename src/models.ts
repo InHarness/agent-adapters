@@ -9,10 +9,10 @@ import { AdapterError } from './types.js';
 /** Map of simplified model aliases to full model IDs, per architecture. */
 export const MODEL_ALIASES = {
   'claude-code': {
-    'sonnet-4.7': 'claude-sonnet-4-7-20250219',
-    'sonnet-4.5': 'claude-sonnet-4-5-20250514',
-    'opus-4.6': 'claude-opus-4-6-20260401',
-    'opus-4.5': 'claude-opus-4-5-20250514',
+    'sonnet-4.6': 'claude-sonnet-4-6',
+    'sonnet-4.5': 'claude-sonnet-4-5-20250929',
+    'opus-4.6': 'claude-opus-4-6',
+    'opus-4.5': 'claude-opus-4-5-20251101',
     'haiku-4.5': 'claude-haiku-4-5-20251001',
   },
   'claude-code-ollama': {

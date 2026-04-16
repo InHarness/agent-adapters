@@ -10,7 +10,7 @@ const adapter = createAdapter('claude-code');
 for await (const event of adapter.execute({
   prompt: 'Read package.json and summarize it.',
   systemPrompt: 'Be concise.',
-  model: 'sonnet-4.5', // alias → 'claude-sonnet-4-5-20250514'
+  model: 'sonnet-4.6', // alias → 'claude-sonnet-4-6'
 })) {
   if (event.type === 'text_delta') process.stdout.write(event.text);
   if (event.type === 'result') console.log('\n\nDone. Tokens:', event.usage);
@@ -132,10 +132,10 @@ Each architecture has a set of short aliases for popular models. Use an alias in
 
 | Architecture | Alias | Full model ID |
 |---|---|---|
-| `claude-code` | `sonnet-4.7` | `claude-sonnet-4-7-20250219` |
-| | `sonnet-4.5` | `claude-sonnet-4-5-20250514` |
-| | `opus-4.6` | `claude-opus-4-6-20260401` |
-| | `opus-4.5` | `claude-opus-4-5-20250514` |
+| `claude-code` | `sonnet-4.6` | `claude-sonnet-4-6` |
+| | `sonnet-4.5` | `claude-sonnet-4-5-20250929` |
+| | `opus-4.6` | `claude-opus-4-6` |
+| | `opus-4.5` | `claude-opus-4-5-20251101` |
 | | `haiku-4.5` | `claude-haiku-4-5-20251001` |
 | `claude-code-ollama` | `qwen-coder-32b` | `qwen2.5-coder:32b` |
 | | `deepseek-coder` | `deepseek-coder-v2:latest` |
