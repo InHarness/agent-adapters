@@ -165,5 +165,5 @@ export const SIMPLE_PROMPT = 'What is 2+2? Answer with just the number.';
 export const SIMPLE_SYSTEM_PROMPT = 'Be concise. Answer in one word or number when possible.';
 export const TOOL_PROMPT = 'Use the echo tool with the message "hello world". Then tell me what it returned.';
 export const TOOL_SYSTEM_PROMPT = 'You have access to an echo tool. Use it when asked.';
-export const THINKING_PROMPT = 'What is the square root of 144? Think step by step.';
-export const THINKING_SYSTEM_PROMPT = 'Think through your reasoning step by step before answering.';
+export const THINKING_PROMPT = 'A traveler headed south. After walking 1 km he turned east and after 1 km he saw a bear ahead, so he turned north. After walking another 1 km he was back at the starting point. What color was the bear? Explain your reasoning.';
+export const THINKING_SYSTEM_PROMPT = 'Think through your reasoning step by step before answering. This is a classic lateral thinking puzzle.';

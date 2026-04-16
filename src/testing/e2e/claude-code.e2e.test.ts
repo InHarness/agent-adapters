@@ -1,10 +1,12 @@
 // E2E tests for claude-code adapter — real queries against Claude API
 // Requires: ANTHROPIC_API_KEY env var or Claude Code OAuth
 // Run: npm run test:e2e:claude
+// Run specific model: E2E_CLAUDE_MODEL=opus-4.7 npm run test:e2e:claude
 
 import { describe, it, expect } from 'vitest';
 import { createAdapter } from '../../factory.js';
 import { collectEvents } from '../../utils.js';
+import { resolveModel } from '../../models.js';
 import { assertSimpleText, assertToolUse, assertThinking } from '../contract.js';
 import { AdapterError, AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
@@ -26,14 +28,18 @@ import {
 // We skip only if SKIP_CLAUDE_E2E is explicitly set — otherwise we let the SDK try its auth flow.
 const SKIP = !!process.env.SKIP_CLAUDE_E2E;
 
-describe.skipIf(SKIP)('claude-code e2e', () => {
+// Model to test — override with E2E_CLAUDE_MODEL env var (alias or full ID)
+const MODEL = process.env.E2E_CLAUDE_MODEL || 'sonnet-4.6';
+const FULL_MODEL_ID = resolveModel('claude-code', MODEL);
+
+describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   it('simple text response (model alias)', async () => {
     const adapter = createAdapter('claude-code');
     const events = await collectEvents(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
-        model: 'sonnet-4.6',
+        model: MODEL,
         maxTurns: 1,
       }),
     );
@@ -47,7 +53,7 @@ describe.skipIf(SKIP)('claude-code e2e', () => {
       adapter2.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
-        model: 'sonnet-4.6',
+        model: MODEL,
         maxTurns: 1,
       }),
     );
@@ -60,7 +66,7 @@ describe.skipIf(SKIP)('claude-code e2e', () => {
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
-        model: 'claude-sonnet-4-6',
+        model: FULL_MODEL_ID,
         maxTurns: 1,
       }),
     );
@@ -70,11 +76,12 @@ describe.skipIf(SKIP)('claude-code e2e', () => {
 
   it('thinking events', async () => {
     const adapter = createAdapter('claude-code');
+    // Use 'enabled' for all models — adapter auto-converts to 'adaptive' for models that need it
     const events = await collectEvents(
       adapter.execute({
         prompt: THINKING_PROMPT,
         systemPrompt: THINKING_SYSTEM_PROMPT,
-        model: 'sonnet-4.6',
+        model: MODEL,
         maxTurns: 1,
         architectureConfig: {
           claude_thinking: { type: 'enabled', budgetTokens: 5000 },
@@ -82,31 +89,31 @@ describe.skipIf(SKIP)('claude-code e2e', () => {
       }),
     );
 
-    assertEventTypes(events, ['thinking', 'text_delta', 'assistant_message', 'result']);
+    assertEventTypes(events, ['text_delta', 'assistant_message', 'result']);
 
-    // Thinking should come before text_delta
-    const firstThinking = events.findIndex((e) => e.type === 'thinking');
-    const firstTextDelta = events.findIndex((e) => e.type === 'text_delta');
-    expect(firstThinking).toBeLessThan(firstTextDelta);
-
-    // Thinking events should have non-empty text
+    // Thinking events may or may not appear (adaptive models decide autonomously)
     const thinkingEvents = events.filter((e) => e.type === 'thinking') as Extract<
       UnifiedEvent,
       { type: 'thinking' }
     >[];
-    expect(thinkingEvents.length).toBeGreaterThanOrEqual(1);
-    for (const te of thinkingEvents) {
-      expect(typeof te.text).toBe('string');
-      expect(te.isSubagent).toBe(false);
-    }
+    if (thinkingEvents.length > 0) {
+      const firstThinking = events.findIndex((e) => e.type === 'thinking');
+      const firstTextDelta = events.findIndex((e) => e.type === 'text_delta');
+      expect(firstThinking).toBeLessThan(firstTextDelta);
 
-    // assistant_message should contain thinking content block
-    const assistantMsgs = events.filter((e) => e.type === 'assistant_message') as Extract<
-      UnifiedEvent,
-      { type: 'assistant_message' }
-    >[];
-    const hasThinkingBlock = assistantMsgs.some((am) => am.message.content.some((b) => b.type === 'thinking'));
-    expect(hasThinkingBlock, 'No assistant_message with thinking content block').toBe(true);
+      for (const te of thinkingEvents) {
+        expect(typeof te.text).toBe('string');
+        expect(te.isSubagent).toBe(false);
+      }
+
+      // assistant_message should contain thinking content block
+      const assistantMsgs = events.filter((e) => e.type === 'assistant_message') as Extract<
+        UnifiedEvent,
+        { type: 'assistant_message' }
+      >[];
+      const hasThinkingBlock = assistantMsgs.some((am) => am.message.content.some((b) => b.type === 'thinking'));
+      expect(hasThinkingBlock, 'No assistant_message with thinking content block').toBe(true);
+    }
   });
 
   it('tool use (in-process MCP)', async () => {
@@ -116,7 +123,7 @@ describe.skipIf(SKIP)('claude-code e2e', () => {
       adapter.execute({
         prompt: TOOL_PROMPT,
         systemPrompt: TOOL_SYSTEM_PROMPT,
-        model: 'sonnet-4.6',
+        model: MODEL,
         maxTurns: 3,
         mcpServers: { 'e2e-test': config },
       }),
@@ -165,7 +172,7 @@ describe.skipIf(SKIP)('claude-code e2e', () => {
     for await (const event of adapter.execute({
       prompt: 'Write a long essay about the history of computing. Make it very detailed.',
       systemPrompt: 'Write at least 2000 words.',
-      model: 'sonnet-4.6',
+      model: MODEL,
       maxTurns: 1,
     })) {
       events.push(event);

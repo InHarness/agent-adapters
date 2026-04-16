@@ -13,7 +13,7 @@ import type {
   McpSdkServerConfig,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
-import { resolveModel } from '../models.js';
+import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
 
 // Re-export SDK MCP primitives for consumers building in-process MCP servers
 export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -106,7 +106,16 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     const config = { ...this._providerConfig, ...params.architectureConfig };
 
     if (config.claude_thinking) {
-      options.thinking = config.claude_thinking as Options['thinking'];
+      const thinkingCfg = config.claude_thinking as Record<string, unknown>;
+      if (thinkingCfg.type === 'enabled' && ADAPTIVE_THINKING_ONLY.has(resolvedModel)) {
+        console.warn(
+          `[agent-adapters] Model "${resolvedModel}" only supports adaptive thinking. ` +
+            `Auto-converting { type: 'enabled' } → { type: 'adaptive' }.`,
+        );
+        options.thinking = { type: 'adaptive' } as Options['thinking'];
+      } else {
+        options.thinking = thinkingCfg as Options['thinking'];
+      }
     }
     if (config.claude_effort) {
       options.effort = config.claude_effort as Options['effort'];

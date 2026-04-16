@@ -70,7 +70,7 @@ export type {
   ArchitectureModelMap,
   ArchitectureWithModels,
 } from './models.js';
-export { MODEL_ALIASES, resolveModel, getModelsForArchitecture } from './models.js';
+export { MODEL_ALIASES, ADAPTIVE_THINKING_ONLY, resolveModel, getModelsForArchitecture } from './models.js';
 
 // Utilities
 export { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from './utils.js';

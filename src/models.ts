@@ -71,6 +71,13 @@ export interface ArchitectureModelMap {
   gemini: GeminiModel;
 }
 
+// --- Model capabilities ---
+
+/** Full model IDs that only support adaptive thinking (not fixed-budget `enabled`). */
+export const ADAPTIVE_THINKING_ONLY: ReadonlySet<string> = new Set([
+  'claude-opus-4-7',
+]);
+
 // --- Runtime resolution ---
 
 /**
