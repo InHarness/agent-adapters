@@ -21,6 +21,16 @@ export interface ArchOption {
   step?: number;
 }
 
+export const GLOBAL_OPTIONS: ArchOption[] = [
+  {
+    key: 'debug',
+    label: 'Debug',
+    type: 'boolean',
+    default: false,
+    description: 'Enable adapter-level debug mode (verbose logging / debug config).',
+  },
+];
+
 export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
   {
     key: 'claude_thinking',
@@ -148,5 +158,5 @@ const OPTIONS_BY_ARCHITECTURE: Record<string, ArchOption[]> = {
 };
 
 export function getArchitectureOptions(architecture: string): ArchOption[] {
-  return OPTIONS_BY_ARCHITECTURE[architecture] ?? [];
+  return [...GLOBAL_OPTIONS, ...(OPTIONS_BY_ARCHITECTURE[architecture] ?? [])];
 }

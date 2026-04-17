@@ -138,89 +138,85 @@ export class GeminiAdapter implements RuntimeAdapter {
       return;
     }
 
-    const LegacyAgentSession = sdk.LegacyAgentSession as new (deps: Record<string, unknown>) => {
-      sendStream(payload: Record<string, unknown>): AsyncIterable<AgentEvent>;
-      abort(): Promise<void>;
-    };
+    const GeminiConfig = sdk.Config as
+      | (new (params: Record<string, unknown>) => {
+          initialize(): Promise<void>;
+          refreshAuth(authType: string, apiKey?: string): Promise<void>;
+        })
+      | undefined;
+    const GeminiClient = sdk.GeminiClient as
+      | (new (ctx: unknown) => { initialize(): Promise<void> })
+      | undefined;
+    const LegacyAgentSession = sdk.LegacyAgentSession as
+      | (new (deps: Record<string, unknown>) => {
+          sendStream(payload: Record<string, unknown>): AsyncIterable<AgentEvent>;
+          abort(): Promise<void>;
+        })
+      | undefined;
+    const GeminiMCPServerConfig = sdk.MCPServerConfig as (new (...args: unknown[]) => unknown) | undefined;
+    const AuthType = sdk.AuthType as Record<string, string> | undefined;
 
-    if (!LegacyAgentSession) {
-      yield { type: 'error', error: new AdapterInitError('gemini', new Error('LegacyAgentSession not found in SDK')) };
-      return;
-    }
-
-    const archConfig = params.architectureConfig ?? {};
-    let session: { sendStream(payload: Record<string, unknown>): AsyncIterable<AgentEvent>; abort(): Promise<void> };
-
-    try {
-      const createContentGeneratorConfig = sdk.createContentGeneratorConfig as
-        | ((opts: Record<string, unknown>) => Record<string, unknown>)
-        | undefined;
-      const createContentGenerator = sdk.createContentGenerator as
-        | ((config: Record<string, unknown>) => Record<string, unknown>)
-        | undefined;
-      const GeminiClient = sdk.GeminiClient as (new (opts: Record<string, unknown>) => Record<string, unknown>) | undefined;
-      const GeminiConfig = sdk.Config as (new (configParams: Record<string, unknown>) => Record<string, unknown>) | undefined;
-      const GeminiMCPServerConfig = sdk.MCPServerConfig as (new (...args: unknown[]) => unknown) | undefined;
-
-      if (!GeminiClient || !createContentGeneratorConfig || !createContentGenerator) {
-        yield {
-          type: 'error',
-          error: new AdapterInitError(
-            'gemini',
-            new Error(
-              'Gemini SDK missing required exports. The SDK is designed for the full Gemini CLI, not standalone usage. ' +
-              'Consider wrapping the gemini CLI binary or using Gemini REST API directly.',
-            ),
-          ),
-        };
-        return;
-      }
-
-      const genConfig = createContentGeneratorConfig({
-        model: resolvedModel,
-        apiKey,
-        thinkingConfig: archConfig.gemini_thinkingBudget
-          ? { thinkingBudget: archConfig.gemini_thinkingBudget as number }
-          : archConfig.gemini_thinkingLevel
-            ? { thinkingLevel: archConfig.gemini_thinkingLevel as string }
-            : undefined,
-        temperature: archConfig.gemini_temperature as number | undefined,
-        topP: archConfig.gemini_topP as number | undefined,
-        topK: archConfig.gemini_topK as number | undefined,
-      });
-
-      const generator = createContentGenerator(genConfig);
-      const client = new GeminiClient({ contentGenerator: generator });
-
-      // Build config — with MCP servers if provided and Config class is available
-      let geminiConfig: Record<string, unknown>;
-      if (GeminiConfig && params.mcpServers && Object.keys(params.mcpServers).length > 0 && GeminiMCPServerConfig) {
-        const mcpServers = mapMcpServersToGemini(params.mcpServers, GeminiMCPServerConfig);
-        geminiConfig = new GeminiConfig({
-          model: resolvedModel,
-          cwd: params.cwd ?? process.cwd(),
-          mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
-        });
-      } else {
-        geminiConfig = { model: resolvedModel } as Record<string, unknown>;
-      }
-
-      session = new LegacyAgentSession({
-        config: geminiConfig,
-        client,
-      });
-      this.abortFn = () => session.abort();
-    } catch (err) {
+    if (!GeminiConfig || !GeminiClient || !LegacyAgentSession || !AuthType) {
       yield {
         type: 'error',
         error: new AdapterInitError(
           'gemini',
-          new Error(
-            `Failed to initialize Gemini infrastructure: ${err}. ` +
-            'The @google/gemini-cli-core package requires full CLI config system. ' +
-            'Consider wrapping the gemini CLI binary or using Gemini REST API directly.',
-          ),
+          new Error('Gemini SDK missing required exports (Config/GeminiClient/LegacyAgentSession/AuthType).'),
         ),
+      };
+      return;
+    }
+
+    const archConfig = params.architectureConfig ?? {};
+    const debug = (archConfig.debug as boolean | undefined) ?? false;
+    const cwd = params.cwd ?? process.cwd();
+
+    const generateContentConfig: Record<string, unknown> = {};
+    if (archConfig.gemini_temperature !== undefined) generateContentConfig.temperature = archConfig.gemini_temperature;
+    if (archConfig.gemini_topP !== undefined) generateContentConfig.topP = archConfig.gemini_topP;
+    if (archConfig.gemini_topK !== undefined) generateContentConfig.topK = archConfig.gemini_topK;
+    if (archConfig.gemini_thinkingBudget) {
+      generateContentConfig.thinkingConfig = { thinkingBudget: archConfig.gemini_thinkingBudget };
+    } else if (archConfig.gemini_thinkingLevel) {
+      generateContentConfig.thinkingConfig = { thinkingLevel: archConfig.gemini_thinkingLevel };
+    }
+    const hasModelParams = Object.keys(generateContentConfig).length > 0;
+
+    const mappedMcpServers =
+      params.mcpServers && GeminiMCPServerConfig ? mapMcpServersToGemini(params.mcpServers, GeminiMCPServerConfig) : {};
+
+    let session: {
+      sendStream(payload: Record<string, unknown>): AsyncIterable<AgentEvent>;
+      abort(): Promise<void>;
+    };
+
+    try {
+      const { randomUUID } = await import('node:crypto');
+
+      const geminiConfig = new GeminiConfig({
+        sessionId: randomUUID(),
+        targetDir: cwd,
+        cwd,
+        debugMode: debug,
+        model: resolvedModel,
+        mcpServers: Object.keys(mappedMcpServers).length > 0 ? mappedMcpServers : undefined,
+        modelConfigServiceConfig: hasModelParams
+          ? { overrides: [{ match: { model: resolvedModel }, modelConfig: { generateContentConfig } }] }
+          : undefined,
+      });
+
+      await geminiConfig.initialize();
+      await geminiConfig.refreshAuth(AuthType.USE_GEMINI, apiKey);
+
+      const client = new GeminiClient(geminiConfig);
+      await client.initialize();
+
+      session = new LegacyAgentSession({ config: geminiConfig, client });
+      this.abortFn = () => session.abort();
+    } catch (err) {
+      yield {
+        type: 'error',
+        error: new AdapterInitError('gemini', err instanceof Error ? err : new Error(String(err))),
       };
       return;
     }
@@ -352,10 +348,31 @@ export class GeminiAdapter implements RuntimeAdapter {
               break;
             }
 
+            const reason = event.reason as string | undefined;
+            if (reason === 'aborted') {
+              yield {
+                type: 'error',
+                error: timedOut ? new AdapterTimeoutError('gemini', params.timeoutMs!) : new AdapterAbortError('gemini'),
+              };
+              return;
+            }
+
             const output = rawMessages
               .filter((m) => m.role === 'assistant')
               .flatMap((m) => m.content.filter((c) => c.type === 'text').map((c) => (c as { text: string }).text))
               .join('\n');
+
+            // Fallback: Gemini 2.5 with implicit thinking sometimes omits candidatesTokenCount,
+            // so outputTokens comes through as 0. Estimate from produced text length (~4 chars/token).
+            if (totalUsage.outputTokens === 0) {
+              const outputChars = rawMessages
+                .filter((m) => m.role === 'assistant')
+                .flatMap((m) => m.content.filter((c) => c.type === 'text' || c.type === 'thinking'))
+                .reduce((sum, c) => sum + ((c as { text?: string }).text?.length ?? 0), 0);
+              if (outputChars > 0) {
+                totalUsage = { ...totalUsage, outputTokens: Math.max(1, Math.round(outputChars / 4)) };
+              }
+            }
 
             yield {
               type: 'result',
