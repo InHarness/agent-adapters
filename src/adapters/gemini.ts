@@ -169,6 +169,7 @@ export class GeminiAdapter implements RuntimeAdapter {
 
     const archConfig = params.architectureConfig ?? {};
     const debug = (archConfig.debug as boolean | undefined) ?? false;
+    const approvalMode = (archConfig.gemini_approvalMode as string | undefined) ?? 'yolo';
     const cwd = params.cwd ?? process.cwd();
 
     const generateContentConfig: Record<string, unknown> = {};
@@ -199,6 +200,9 @@ export class GeminiAdapter implements RuntimeAdapter {
         cwd,
         debugMode: debug,
         model: resolvedModel,
+        approvalMode,
+        excludeTools: ['ask_user'],
+        maxSessionTurns: params.maxTurns ?? -1,
         mcpServers: Object.keys(mappedMcpServers).length > 0 ? mappedMcpServers : undefined,
         modelConfigServiceConfig: hasModelParams
           ? { overrides: [{ match: { model: resolvedModel }, modelConfig: { generateContentConfig } }] }
@@ -258,7 +262,9 @@ export class GeminiAdapter implements RuntimeAdapter {
             if (role === 'agent') {
               for (const part of content) {
                 if (part.type === 'thought') {
-                  yield { type: 'thinking', text: part.thought as string, isSubagent };
+                  // Gemini emits each thought as a complete summary (not a token delta),
+                  // so each event must start a new block instead of concatenating.
+                  yield { type: 'thinking', text: part.thought as string, isSubagent, replace: true };
                 } else if (part.type === 'text') {
                   yield { type: 'text_delta', text: part.text as string, isSubagent };
                 }

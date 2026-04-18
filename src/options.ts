@@ -145,6 +145,15 @@ export const GEMINI_OPTIONS: ArchOption[] = [
     min: 0,
     step: 1,
   },
+  {
+    key: 'gemini_approvalMode',
+    label: 'Approval mode',
+    type: 'select',
+    values: ['default', 'autoEdit', 'yolo', 'plan'],
+    default: 'yolo',
+    description:
+      'Tool-approval policy. "yolo" auto-approves all tools (needed for headless runs). "plan" = read-only. "autoEdit" = auto-approve edits, ask for shell. "default" = ask for everything (headless blocks).',
+  },
 ];
 
 const OPTIONS_BY_ARCHITECTURE: Record<string, ArchOption[]> = {

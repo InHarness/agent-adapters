@@ -37,7 +37,7 @@ export type UnifiedEvent =
   | { type: 'text_delta'; text: string; isSubagent: boolean }
   | { type: 'tool_use'; toolName: string; toolUseId: string; input: unknown; isSubagent: boolean }
   | { type: 'tool_result'; toolUseId: string; summary: string; isSubagent: boolean }
-  | { type: 'thinking'; text: string; isSubagent: boolean }
+  | { type: 'thinking'; text: string; isSubagent: boolean; replace?: boolean }
   | { type: 'assistant_message'; message: NormalizedMessage }
   | { type: 'subagent_started'; taskId: string; description: string; toolUseId: string }
   | { type: 'subagent_progress'; taskId: string; description: string; lastToolName?: string }
@@ -128,6 +128,37 @@ export type McpServerConfig =
   | McpHttpServerConfig
   | McpSdkServerConfig;
 
+// --- Elicitation (interactive user input from the model / MCP server) ---
+
+/**
+ * Request from an MCP server or model to ask the end-user for input.
+ * Shape is intentionally close to Anthropic SDK's `ElicitationRequest` and MCP's `ElicitResult`.
+ */
+export interface ElicitationRequest {
+  /** Stable id for correlating request and response. */
+  elicitationId: string;
+  /** Originator — MCP server name for MCP elicitation, adapter-specific otherwise. */
+  source: string;
+  /** Human-readable prompt. */
+  message: string;
+  /** JSON Schema describing expected `content` shape (when mode === 'form'). */
+  requestedSchema?: Record<string, unknown>;
+  /** 'form' = structured input; 'url' = browser redirect (rare). */
+  mode?: 'form' | 'url';
+  /** URL to open when mode === 'url'. */
+  url?: string;
+  /** Raw SDK request (adapter-specific). */
+  native?: unknown;
+}
+
+export interface ElicitationResponse {
+  action: 'accept' | 'decline' | 'cancel';
+  /** Populated when action === 'accept' and mode === 'form'. */
+  content?: Record<string, unknown>;
+}
+
+export type ElicitationHandler = (req: ElicitationRequest) => Promise<ElicitationResponse>;
+
 // --- Runtime Adapter ---
 
 export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
@@ -157,6 +188,14 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   maxTurns?: number;
   timeoutMs?: number;
   architectureConfig?: Record<string, unknown>;
+
+  /**
+   * Callback invoked when the model / MCP server requests interactive user input.
+   * If omitted, adapters that support elicitation will fall back to the SDK's default behavior
+   * (typically: decline). Adapters without native elicitation support ignore this field.
+   * Currently supported: claude-code. Not supported: gemini, codex, opencode.
+   */
+  onElicitation?: ElicitationHandler;
 }
 
 export interface RuntimeAdapter {

@@ -178,6 +178,31 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       options.resume = params.resumeSessionId;
     }
 
+    // Elicitation — bridge unified ElicitationHandler to SDK's onElicitation.
+    // MCP's ElicitResult.content is narrower than our Record<string, unknown>; cast at the boundary.
+    if (params.onElicitation) {
+      const handler = params.onElicitation;
+      options.onElicitation = (async (sdkReq: {
+        serverName: string;
+        message: string;
+        mode?: 'form' | 'url';
+        url?: string;
+        elicitationId?: string;
+        requestedSchema?: Record<string, unknown>;
+      }) => {
+        const res = await handler({
+          elicitationId: sdkReq.elicitationId ?? `${sdkReq.serverName}-${Date.now()}`,
+          source: sdkReq.serverName,
+          message: sdkReq.message,
+          requestedSchema: sdkReq.requestedSchema,
+          mode: sdkReq.mode,
+          url: sdkReq.url,
+          native: sdkReq,
+        });
+        return { action: res.action, content: res.content };
+      }) as Options['onElicitation'];
+    }
+
     const rawMessages: NormalizedMessage[] = [];
     let sessionId: string | undefined;
 

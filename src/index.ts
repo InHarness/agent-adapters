@@ -20,6 +20,9 @@ export type {
   ProviderPreset,
   ContractAssertion,
   ContractResult,
+  ElicitationRequest,
+  ElicitationResponse,
+  ElicitationHandler,
 } from './types.js';
 
 // Errors
@@ -79,6 +82,7 @@ export { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractT
 export type { ArchOption, ArchOptionType } from './options.js';
 export {
   getArchitectureOptions,
+  GLOBAL_OPTIONS,
   CLAUDE_CODE_OPTIONS,
   CODEX_OPTIONS,
   OPENCODE_OPTIONS,
