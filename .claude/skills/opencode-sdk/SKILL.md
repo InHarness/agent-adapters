@@ -76,6 +76,57 @@ OpenCode is the only adapter that requires an **external CLI binary in PATH** an
 8. **Question flow is POST-back**, not a promise. When `question.asked` arrives, the adapter calls `onUserInput`; the response is POSTed to the v2 client's question-reply endpoint. Failure to POST stalls the run indefinitely (until abort).
 9. **`opencode-openrouter` architecture** uses OpenRouter as the provider; model aliases (`claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1`) resolve to `anthropic/...`, `google/...`, `deepseek/...` strings.
 
+## Skills support
+
+**Native support: first-class, fully dynamic, and interop-friendly with Claude Code's skill directory.**
+
+### Discovery (widest of any adapter)
+
+Project (walked up from cwd to git worktree root):
+- `.opencode/skills/<name>/SKILL.md`
+- `.claude/skills/<name>/SKILL.md` ← **same directory claude-code uses; zero-config interop**
+- `.agents/skills/<name>/SKILL.md` ← same directory codex uses
+
+Global:
+- `~/.config/opencode/skills/<name>/SKILL.md`
+- `~/.claude/skills/<name>/SKILL.md`
+- `~/.agents/skills/<name>/SKILL.md`
+
+### File format
+
+`SKILL.md` with YAML frontmatter:
+- `name` — 1-64 chars, regex `^[a-z0-9]+(-[a-z0-9]+)*$`
+- `description` — 1-1024 chars
+- Optional: `license`, `compatibility`, `metadata`
+
+### Dynamic loading
+
+**Native `skill` tool** — OpenCode injects a tool the model can call to load any skill's body on-demand. Lazy, progressive-disclosure semantics. On `session.compacted` events the server re-injects the skill listing so long sessions don't lose access.
+
+### Permission gating
+
+`opencode.json` takes a `skills` block with three behaviors per pattern: `allow` (auto-loads), `deny` (hidden from agent), `ask` (prompts user). Wildcards supported (e.g. `internal-*`).
+
+### Programmatic injection pattern
+
+Not officially part of the SDK reference, but community plugins (`zenobi-us/opencode-skillful`, `joshuadavidthomas/opencode-agent-skills`) inject skills into a session by POSTing messages with:
+- `synthetic: true` — marks the message as system-generated
+- `noReply: true` — agent observes content without being forced to respond
+
+and by listening to `session.compacted` events to re-inject.
+
+### Our adapter status
+
+`src/adapters/opencode.ts` does nothing about skills, **and this is fine for the filesystem path** — skills under `.claude/skills/` or `.opencode/skills/` in the consumer's cwd are auto-discovered by the OpenCode server the adapter spawns. Zero code change needed for the common case.
+
+Gaps to close if we ever want programmatic control:
+- No way to pass `allowedSkills` / `deniedSkills` per call (would require generating an `opencode.json` snippet or using the plugin hooks)
+- No unified `skill_invoked` event — the skill tool call appears as a regular `tool_use` named `skill` in our stream
+
+TODO (add to version watch):
+- First-class `sessionOptions.skills` on `client.session.create` (watch sst/opencode changelog)
+- Unified `skill_*` events in our taxonomy once a second adapter supports them
+
 ## Troubleshooting recipes
 
 - **"Adapter starts but no events arrive"**

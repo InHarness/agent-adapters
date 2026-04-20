@@ -83,6 +83,38 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 6. **Subagent events are first-class.** Unlike other adapters, we don't synthesize — we map. `task_started/progress/notification` carry `taskId` directly.
 7. **`compact_boundary`** fires before the SDK compresses history. Emit `flush` so downstream can checkpoint.
 
+## Skills support
+
+**Native support: first-class, fully dynamic.** Skills are a built-in Claude Code concept with the widest SDK surface of any adapter we wrap.
+
+### SDK surface (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`)
+
+- `AgentInput.skills?: string[]` (line 67) — preload specific skill names into the agent's context at session start
+- `SettingsSource` union includes `'skills'` (line 192) — settings can originate from a skills scope
+- `SettingsBase.skillOverrides: Record<string, 'on' | 'name-only' | 'user-invocable-only' | 'off'>` (line 3198) — per-skill visibility control
+- `skillListingMaxDescChars` (line 3107, default `1536`) and `skillListingBudgetFraction` (line 3111, default `0.01`) — cap how many tokens the skill listing may consume per turn
+- `disableSkillShellExecution` (line 3406) — security switch that replaces inline shell in skills/slash commands with a placeholder
+- `strictPluginOnlyCustomization: boolean | ('skills' | ...)[]` (line 3434) — restrict skills to plugin-scoped only
+- `Query.supportedCommands(): Promise<SlashCommand[]>` (line 1765) — runtime skill/command discovery
+- `SlashCommand { name, description, argumentHint }` (lines 4369-4381) — skill descriptor shape
+- `ConfigChange` hook with `source: 'skills'` (line 192) — fires when skill files change on disk
+
+### Dynamic loading
+
+**Progressive disclosure**: at init, the SDK ships only `{ name, description }` per skill into the model context (budgeted by `skillListingBudgetFraction`). The body of `SKILL.md` is loaded into context only when the model invokes the skill. No restart required — file changes trigger a `ConfigChange` hook.
+
+### Filesystem discovery
+
+`.claude/skills/<name>/SKILL.md` (project), `~/.claude/skills/<name>/SKILL.md` (user), plus plugin-bundled skills via `options.plugins`.
+
+### Our adapter status
+
+`src/adapters/claude-code.ts` passes **none** of these fields today. A `grep -ri "skill" src/` returns zero matches. Gap to close when adding skills support:
+
+- Surface `claude_skills: string[]`, `claude_skillOverrides: Record<string, ...>`, `claude_skillListingBudgetFraction: number`, `claude_disableSkillShellExecution: boolean` via `architectureConfig`
+- Optionally expose `supportedCommands()` output as a pre-execute hook so consumers can pick skills programmatically
+- Consider emitting a synthetic `skill_invoked` unified event when a skill is opened (today the invocation is not distinguishable from a regular text turn)
+
 ## Troubleshooting recipes
 
 - **"Thinking events aren't showing for Opus 4.7"**

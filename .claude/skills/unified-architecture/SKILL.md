@@ -110,6 +110,36 @@ When both `onUserInput` and `onElicitation` are provided, `onUserInput` wins.
 
 This table decides whether a new unified feature degrades gracefully. If you add a new event/field and three adapters can't emit it, design the graceful degradation (warning event, or silently skip with adapter-specific note).
 
+## Skills (cross-cutting concern)
+
+`@inharness/agent-adapters` currently has **no skills support at the unified layer**: no `skills` field in `RuntimeExecuteParams`, no `skill_listing` / `skill_invoked` events in `UnifiedEvent`, no adapter bridges. See per-adapter skill files for native capability; the snapshot:
+
+| Adapter | Native skills | Dynamic loading | Filesystem | Programmatic SDK API | Our adapter passes through? |
+|---|:---:|:---:|---|---|:---:|
+| **claude-code** | ✅ first-class | ✅ progressive disclosure | `.claude/skills/`, `~/.claude/skills/`, plugins | ✅ `AgentInput.skills[]`, `skillOverrides`, `skillListingBudgetFraction`, `disableSkillShellExecution`, `supportedCommands()` | ❌ |
+| **codex** | ✅ (runtime only) | ✅ progressive disclosure, auto file-change detection | `.agents/skills/`, `~/.agents/skills/`, `/etc/codex/skills` | ❌ not in `@openai/codex-sdk` | ❌ (but filesystem path works in cwd) |
+| **gemini-cli-core** | ⚠️ via Extensions bundle only | ❌ CLI restart required | `<ext>/skills/<name>/SKILL.md` inside a registered extension | ❌ no public API | ❌ |
+| **opencode** | ✅ first-class | ✅ native `skill` tool + re-inject on `session.compacted` | `.opencode/skills/`, `.claude/skills/`, `.agents/skills/`, plus globals | ⚠️ plugin-level via `synthetic`/`noReply` flags | ❌ (but filesystem path works in cwd) |
+| **google-genai** (planned) | ❌ | ❌ | N/A — `systemInstruction` only | ❌ | N/A |
+| **google-adk** (planned) | ❌ runtime primitive | ❌ | N/A — `Instructions` + `FunctionTool` + multi-agent | ❌ | N/A |
+
+### Shared-directory invariant
+
+claude-code, codex, and opencode all agree on the **Anthropic-style `SKILL.md` shape** (YAML frontmatter with `name` + `description`, optional body, optional sibling `scripts/` / `references/` / `assets/`). And the directory names overlap:
+
+- `.claude/skills/` — read by claude-code **and** opencode
+- `.agents/skills/` — read by codex **and** opencode
+- `.opencode/skills/` — opencode only
+
+So a skill authored in our repo's `.claude/skills/` is picked up transparently by **2 of 4 existing adapters** (claude-code, opencode) with zero code changes, and by codex if symlinked/copied to `.agents/skills/`. Gemini-cli-core is the outlier.
+
+### Open design questions (resolve before any implementation)
+
+1. **Unified-layer concept or per-adapter `architectureConfig`?** Argument *for* unified: the cross-adapter directory invariant above + claude-code + opencode dominating real usage. Argument *against*: only 2 of 4 adapters can act on programmatic hints, and gemini doesn't work at all.
+2. **Event model.** If unified, do we emit a `skill_invoked { name }` / `skill_loaded { name, bodyTokens }` event when the model opens a skill? claude-code emits nothing observable today. opencode emits a tool call on its native `skill` tool (already maps to `tool_use`). Decide whether to synthesise a dedicated event or stay with the existing `tool_use`/`tool_result` mapping.
+3. **Filesystem-only vs programmatic injection.** Filesystem works today for claude-code + opencode without adapter changes. Programmatic injection (allowedSkills, skillOverrides) only has a clean API path on claude-code. A two-phase rollout (filesystem first, programmatic second) is likely simplest.
+4. **Filter surface.** `allowedSkills` / `deniedSkills` unified field would map cleanly to claude-code `skillOverrides` (`'on' | 'off'`) and to a generated `opencode.json` `skills.deny` list; would be a warn-and-ignore no-op for codex and gemini.
+
 ### Planned additions
 
 Two more Google adapters are on the roadmap — design briefs live in sibling skills:

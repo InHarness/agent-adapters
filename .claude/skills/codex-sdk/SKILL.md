@@ -75,6 +75,45 @@ No native subagent events → `subagent_*` events are **not emitted**.
 6. **Session resumption is partial.** `codex.resumeThread(threadId)` exists but the adapter doesn't currently persist/expose `threadId` in `result.sessionId`. Resumption from outside is unreliable; prefer keeping the `Codex` + `Thread` instance alive in-process.
 7. **`codex-mini` alias** → `codex-mini-latest` (a rolling tag). Pin to a full ID (e.g. via `resolveModel` pass-through) if you need reproducibility.
 
+## Skills support
+
+**Native support: first-class at Codex runtime (CLI / IDE / app), but NOT exposed by `@openai/codex-sdk`.**
+
+### File format (Anthropic-compatible)
+
+Skill directory with:
+- `SKILL.md` (required) — YAML frontmatter `name` + `description`, plus instructions
+- `scripts/` (optional) — executable code
+- `references/` (optional) — docs
+- `assets/` (optional) — templates
+- `agents/openai.yaml` (optional) — UI metadata, dependencies, `allow_implicit_invocation`
+
+### Discovery (filesystem, hierarchical)
+
+- `.agents/skills/` — walked up from cwd through parent dirs to repo root
+- `$HOME/.agents/skills/`
+- `/etc/codex/skills/` and Codex-bundled skills
+
+File changes are detected automatically.
+
+### Dynamic loading
+
+**Progressive disclosure** at Codex-runtime level: metadata (name, description, file path, optional YAML metadata) shipped at start; full `SKILL.md` loaded only when the skill is selected. Invocation: explicit (`/skills` or `$name`) or implicit (when `allow_implicit_invocation: true`).
+
+### SDK gap
+
+`codex.startThread(options)` documented options are `workingDirectory`, `skipGitRepoCheck` — **no `skills` field, no `allowedSkills`, no listing callback**. Because skills are read from the filesystem by the Codex runtime itself, skills sitting in `$CWD/.agents/skills/` WILL be picked up when our adapter runs in that cwd — but there is no programmatic injection, filtering, or per-call toggle.
+
+### Our adapter status
+
+`src/adapters/codex.ts` does nothing about skills. Consumer can opt in by placing files in `.agents/skills/` relative to the adapter's cwd. Gap:
+
+- No way to inject skills from process memory
+- No way to disable skills per call (e.g. for tests)
+- No observability — skill invocations look identical to regular tool calls in the event stream
+
+TODO (add to version watch): track `@openai/codex-sdk` changelog for a `skills` field on `ThreadOptions` or a `listSkills()` helper.
+
 ## Troubleshooting recipes
 
 - **"MCP tool calls aren't appearing"**

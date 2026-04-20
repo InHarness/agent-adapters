@@ -76,6 +76,28 @@ Adding this adapter future-proofs our library: ADK Go 1.0 and Java 1.0 are GA; T
 - **Single-turn "just one model call"** — use `google-genai` sibling; simpler, more direct.
 - **Shell sandbox / file ops** — not ADK's job; consumer brings via MCP server or custom `FunctionTool`.
 
+## Skills support (design note)
+
+**Native support: none.** ADK has no runtime "skills" primitive comparable to `SKILL.md` progressive disclosure. Its extensibility primitives are:
+
+- **Instructions** — string prompts bound to an `Agent` at construction time
+- **Tools** — `FunctionTool` (custom TS functions) + built-ins (`GOOGLE_SEARCH`, etc.)
+- **Multi-agent composition** — delegate to specialised sub-agents via transfer
+
+The phrase "ADK developer Skills" that shows up in Google's marketing and the `@google/adk-devtools` package refers to **IDE-side assistants that help developers write ADK code at author time** — not runtime skills consumed by an agent at inference time. Do not conflate.
+
+### Closest analogues (at implementation time, pick one)
+
+1. **Unsupported + warning** — emit a one-shot `warning` event when `RuntimeExecuteParams.skills` (once we add it) is provided. Same pattern as Codex for `onUserInput`.
+2. **Synthesise via sub-agents** — map each requested `SKILL.md` to a sub-`Agent` whose `instructions` is the skill body + required tools. Use ADK's multi-agent transfer to invoke. **Cost**: instructions are evaluated upfront if composed at agent construction, so no progressive disclosure unless we gate via a router agent.
+3. **`load_skill` FunctionTool** — our adapter reads `.claude/skills/<name>/SKILL.md` itself, exposes a single `load_skill(name)` `FunctionTool` that returns the body. The model invokes it on demand → genuine progressive disclosure at the cost of one function-call round-trip per load. Matches the OpenCode `skill` tool shape.
+
+Recommendation: option 3 gives the best unified-event-compat (it produces a normal `tool_use` + `tool_result` pair that already maps to our taxonomy). Defer the decision to implementation time; revisit if ADK adds a native skill concept before then.
+
+### Dynamic loading
+
+None natively. Option 3 above gives it artificially.
+
 ## Architectures this adapter will register
 
 - `google-adk` — primary

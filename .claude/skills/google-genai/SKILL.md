@@ -74,6 +74,31 @@ Status is **Beta** — breaking schema changes possible. Pin conservatively.
 - **Shell / filesystem as native tools** — Interactions API does not provide these. Consumer brings them via MCP (e.g. `@modelcontextprotocol/server-filesystem`).
 - **Multi-agent orchestration** — that's the `google-adk` sibling's job. Interactions API is single-interaction per call.
 
+## Skills support (design note)
+
+**Native support: none.** Neither `@google/genai` nor the Interactions API expose a skills primitive. Available extensibility:
+
+- `systemInstruction` — single string
+- Function calling (custom tools)
+- Built-in tools: Google Search, Maps, Code execution, URL context, Computer Use, File search
+- Remote MCP servers
+
+### Don't confuse with `gemini-skills`
+
+[github.com/google-gemini/gemini-skills](https://github.com/google-gemini/gemini-skills) ships markdown *documentation modules* (e.g. `gemini-api-dev/SKILL.md`, `gemini-interactions-api/SKILL.md`) meant to be loaded **by developers into their own prompts at authoring time** — either pasted into `systemInstruction` or fed through a coding assistant. **It is not a runtime SDK capability.** There is no progressive disclosure, no auto-discovery, no `loadSkill()` method.
+
+### Closest analogues (at implementation time, pick one)
+
+1. **Unsupported + warning** — cleanest; emit a one-shot `warning` event when `RuntimeExecuteParams.skills` is provided. Callers who need skills route to `claude-code` or `opencode` instead.
+2. **Concatenate into `systemInstruction`** — adapter reads matching `SKILL.md` files and prepends bodies to the system instruction. Simple, but pays full token cost upfront for every session and loses progressive disclosure.
+3. **`load_skill` function-calling shim** — expose one custom function `load_skill(name)` alongside user-provided tools; the adapter resolves calls against `.claude/skills/<name>/SKILL.md`. Gives progressive disclosure at the cost of one round-trip per skill. Matches the pattern recommended in the sibling `google-adk` design note.
+
+Recommendation: option 3, for consistency with `google-adk` and to keep the event stream clean (a normal `tool_use` + `tool_result` pair).
+
+### Dynamic loading
+
+None natively. Option 3 above synthesises it via function calling.
+
 ## Architectures this adapter will register
 
 - `google-genai` — primary, Gemini Developer API backend

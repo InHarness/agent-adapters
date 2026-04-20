@@ -16,7 +16,8 @@ async function main() {
     model: 'sonnet-4.5',
     maxTurns: 1,
     architectureConfig: {
-      claude_thinking: { type: 'enabled', budgetTokens: 5000 },
+      claude_thinking: 'enabled',
+      claude_thinking_budget: 5000,
       claude_effort: 'high',
     },
   })) {

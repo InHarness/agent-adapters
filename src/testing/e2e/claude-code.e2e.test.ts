@@ -98,7 +98,8 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
         model: MODEL,
         maxTurns: 1,
         architectureConfig: {
-          claude_thinking: { type: 'enabled', budgetTokens: 5000 },
+          claude_thinking: 'enabled',
+          claude_thinking_budget: 5000,
         },
       }),
     );

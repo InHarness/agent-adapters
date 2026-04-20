@@ -139,15 +139,22 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     const config = { ...this._providerConfig, ...params.architectureConfig };
 
     if (config.claude_thinking) {
-      const thinkingCfg = config.claude_thinking as Record<string, unknown>;
-      if (thinkingCfg.type === 'enabled' && ADAPTIVE_THINKING_ONLY.has(resolvedModel)) {
+      const mode = config.claude_thinking as 'adaptive' | 'enabled';
+      const budget = config.claude_thinking_budget as number | undefined;
+
+      if (mode === 'enabled' && ADAPTIVE_THINKING_ONLY.has(resolvedModel)) {
         console.warn(
           `[agent-adapters] Model "${resolvedModel}" only supports adaptive thinking. ` +
-            `Auto-converting { type: 'enabled' } → { type: 'adaptive' }.`,
+            `Auto-converting 'enabled' → 'adaptive'.`,
         );
         options.thinking = { type: 'adaptive' } as Options['thinking'];
+      } else if (mode === 'enabled') {
+        options.thinking = {
+          type: 'enabled',
+          ...(budget ? { budgetTokens: budget } : {}),
+        } as Options['thinking'];
       } else {
-        options.thinking = thinkingCfg as Options['thinking'];
+        options.thinking = { type: 'adaptive' } as Options['thinking'];
       }
     }
     if (config.claude_effort) {

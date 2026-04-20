@@ -85,6 +85,38 @@ The package is **internal to the `gemini-cli` monorepo**. Google has not publish
    - `gemini_thinkingBudget: number` — sets `thinkingConfig.thinkingBudget`
    - `gemini_thinkingLevel` — alternative, sets `thinkingConfig.thinkingLevel` (only if `thinkingBudget` absent)
 
+## Skills support
+
+**Native support: partial and awkward — only via the Extensions bundle, no standalone skills, no dynamic loading, no public SDK.**
+
+### Shape of the feature
+
+Gemini CLI ships *Extensions* — a "shipping container" for customizations declared by a `gemini-extension.json` manifest. Inside an extension:
+- `commands/` — custom slash commands (TOML-only today; markdown is an open feature request: [google-gemini/gemini-cli#15535](https://github.com/google-gemini/gemini-cli/issues/15535))
+- `skills/<name>/SKILL.md` — Anthropic-style skill definitions
+- MCP servers, prompts, hooks
+
+Skills are only discoverable as part of a registered extension — there's no top-level `~/.gemini/skills/` or project `.gemini/skills/` analogous to Codex/OpenCode.
+
+### Dynamic loading
+
+**None documented.** Per the extension reference: *"All management operations, including updates to slash commands, take effect only after you restart the CLI session."* Skills/commands added at runtime are not picked up without a restart.
+
+### Programmatic API
+
+**No public surface in `@google/gemini-cli-core`.** The package is internal to the `gemini-cli` monorepo (see "Why this package" section above), and its reference documents `Config`, `LegacyAgentSession`, and the event model — not skills. There's no `listSkills()`, no `AgentInput.skills`, no skill-aware hook.
+
+### Our adapter status
+
+`src/adapters/gemini.ts` **cannot pass skills** even if we wanted to. Even filesystem drop-in into `.gemini/extensions/<name>/skills/` requires a runtime restart per docs — and the adapter spins a fresh `LegacyAgentSession` per execute, so in theory each run could see updated skills, but this is not documented or tested behavior.
+
+Treat skills as **unsupported for this adapter** until (a) `@google/gemini-cli-core` stabilizes as a public SDK and grows skills APIs, or (b) Google ships a formal `@google/gemini-sdk` per the long-standing request at [gemini-cli#15539](https://github.com/google-gemini/gemini-cli/issues/15539).
+
+TODO (add to version watch):
+- Markdown-based custom commands (gemini-cli#15535)
+- Programmatic skill listing / per-session enablement
+- Move out of Extensions-only constraint
+
 ## Troubleshooting recipes
 
 - **"Thinking text is duplicated / grows weirdly"**
