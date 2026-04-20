@@ -12,6 +12,9 @@ import type {
   ContentBlock,
   UsageStats,
   McpServerConfig,
+  UserInputRequest,
+  UserInputResponse,
+  UserInputQuestion,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
@@ -79,7 +82,8 @@ function mapMcpServersToGemini(
 
 // --- Normalization helpers ---
 
-function contentPartsToBlocks(parts: Array<Record<string, unknown>>): ContentBlock[] {
+/** @internal Exported for unit tests. */
+export function contentPartsToBlocks(parts: Array<Record<string, unknown>>): ContentBlock[] {
   const blocks: ContentBlock[] = [];
   for (const part of parts) {
     switch (part.type) {
@@ -142,10 +146,17 @@ export class GeminiAdapter implements RuntimeAdapter {
       | (new (params: Record<string, unknown>) => {
           initialize(): Promise<void>;
           refreshAuth(authType: string, apiKey?: string): Promise<void>;
+          storage: { getProjectTempDir(): string };
         })
       | undefined;
     const GeminiClient = sdk.GeminiClient as
-      | (new (ctx: unknown) => { initialize(): Promise<void> })
+      | (new (ctx: unknown) => {
+          initialize(): Promise<void>;
+          resumeChat(
+            history: Array<{ role: string; parts: unknown[] }>,
+            resumedSessionData: { conversation: unknown; filePath: string },
+          ): Promise<void>;
+        })
       | undefined;
     const LegacyAgentSession = sdk.LegacyAgentSession as
       | (new (deps: Record<string, unknown>) => {
@@ -155,6 +166,8 @@ export class GeminiAdapter implements RuntimeAdapter {
       | undefined;
     const GeminiMCPServerConfig = sdk.MCPServerConfig as (new (...args: unknown[]) => unknown) | undefined;
     const AuthType = sdk.AuthType as Record<string, string> | undefined;
+    const MessageBusType = sdk.MessageBusType as Record<string, string> | undefined;
+    const ToolConfirmationOutcome = sdk.ToolConfirmationOutcome as Record<string, string> | undefined;
 
     if (!GeminiConfig || !GeminiClient || !LegacyAgentSession || !AuthType) {
       yield {
@@ -169,7 +182,9 @@ export class GeminiAdapter implements RuntimeAdapter {
 
     const archConfig = params.architectureConfig ?? {};
     const debug = (archConfig.debug as boolean | undefined) ?? false;
-    const approvalMode = (archConfig.gemini_approvalMode as string | undefined) ?? 'yolo';
+    const approvalMode = params.planMode
+      ? 'plan'
+      : ((archConfig.gemini_approvalMode as string | undefined) ?? 'yolo');
     const cwd = params.cwd ?? process.cwd();
 
     const generateContentConfig: Record<string, unknown> = {};
@@ -190,18 +205,29 @@ export class GeminiAdapter implements RuntimeAdapter {
       sendStream(payload: Record<string, unknown>): AsyncIterable<AgentEvent>;
       abort(): Promise<void>;
     };
+    let geminiConfigRef: {
+      messageBus?: {
+        subscribe(type: string, listener: (msg: Record<string, unknown>) => void): void;
+        publish(msg: Record<string, unknown>): Promise<void>;
+      };
+    } | undefined;
+
+    const { randomUUID } = await import('node:crypto');
+    const effectiveSessionId = params.resumeSessionId ?? randomUUID();
 
     try {
-      const { randomUUID } = await import('node:crypto');
+      // Only exclude ask_user when the consumer didn't wire a handler — otherwise
+      // allow the model to invoke it and bridge responses via MessageBus below.
+      const excludeTools = params.onUserInput ? undefined : ['ask_user'];
 
       const geminiConfig = new GeminiConfig({
-        sessionId: randomUUID(),
+        sessionId: effectiveSessionId,
         targetDir: cwd,
         cwd,
         debugMode: debug,
         model: resolvedModel,
         approvalMode,
-        excludeTools: ['ask_user'],
+        excludeTools,
         maxSessionTurns: params.maxTurns ?? -1,
         mcpServers: Object.keys(mappedMcpServers).length > 0 ? mappedMcpServers : undefined,
         modelConfigServiceConfig: hasModelParams
@@ -212,11 +238,56 @@ export class GeminiAdapter implements RuntimeAdapter {
       await geminiConfig.initialize();
       await geminiConfig.refreshAuth(AuthType.USE_GEMINI, apiKey);
 
+      // Locate prior session file using the SDK's own project-identifier mapping
+      // (~/.gemini/projects.json → slug-based temp dir). This must run after
+      // geminiConfig.initialize() which populates storage.projectIdentifier.
+      let resumedSessionData:
+        | { conversation: { messages: Array<{ type: string; content: unknown }> }; filePath: string }
+        | undefined;
+      if (params.resumeSessionId) {
+        const { join } = await import('node:path');
+        const { readdir, readFile } = await import('node:fs/promises');
+        const chatsDir = join(geminiConfig.storage.getProjectTempDir(), 'chats');
+        const shortId = params.resumeSessionId.slice(0, 8);
+        try {
+          const files = await readdir(chatsDir);
+          const match = files.find((f) => f.startsWith('session-') && f.endsWith(`-${shortId}.json`));
+          if (match) {
+            const filePath = join(chatsDir, match);
+            const record = JSON.parse(await readFile(filePath, 'utf8'));
+            resumedSessionData = { conversation: record, filePath };
+          }
+        } catch {
+          // No prior session directory — start fresh with effectiveSessionId.
+        }
+      }
+
       const client = new GeminiClient(geminiConfig);
-      await client.initialize();
+      // Avoid calling client.initialize() when resuming — initialize() calls
+      // startChat() without resumedSessionData, which overwrites the existing
+      // session file on disk (SDK's filename uses minute-precision timestamp +
+      // shortId, so same-minute turns collide). resumeChat() alone sets up the
+      // chat state and points ChatRecordingService at the existing file.
+      if (resumedSessionData) {
+        const history = resumedSessionData.conversation.messages
+          .filter((m) => m.type === 'user' || m.type === 'gemini')
+          .map((m) => ({
+            role: m.type === 'gemini' ? 'model' : 'user',
+            parts: Array.isArray(m.content) ? (m.content as unknown[]) : [m.content],
+          }));
+        await client.resumeChat(history, resumedSessionData);
+      } else {
+        await client.initialize();
+      }
 
       session = new LegacyAgentSession({ config: geminiConfig, client });
       this.abortFn = () => session.abort();
+      geminiConfigRef = geminiConfig as unknown as {
+        messageBus?: {
+          subscribe(type: string, listener: (msg: Record<string, unknown>) => void): void;
+          publish(msg: Record<string, unknown>): Promise<void>;
+        };
+      };
     } catch (err) {
       yield {
         type: 'error',
@@ -227,6 +298,83 @@ export class GeminiAdapter implements RuntimeAdapter {
 
     const rawMessages: NormalizedMessage[] = [];
     let totalUsage: UsageStats = { inputTokens: 0, outputTokens: 0 };
+
+    // User-input bridge via Gemini's MessageBus (ask_user tool ↔ onUserInput).
+    type PendingUserInput = { req: UserInputRequest; correlationId: string };
+    const pendingUserInputs: PendingUserInput[] = [];
+    let userInputWaker: (() => void) | null = null;
+
+    // ask_user in Gemini doesn't publish to ASK_USER_REQUEST — it publishes a
+    // TOOL_CONFIRMATION_REQUEST with `details.type === 'ask_user'` and waits for
+    // TOOL_CONFIRMATION_RESPONSE. The scheduler ALSO subscribes and immediately
+    // replies with `requiresUserConfirmation: true` (which awaitConfirmation maps
+    // to Cancel). To win, we subscribe FIRST (before sendStream → scheduler init)
+    // and publish a ProceedOnce response with payload.answers as soon as we get
+    // the user's answer back from onUserInput.
+    // KNOWN LIMITATION: gemini ask_user integration is partial.
+    //
+    // The SDK routes ask_user through TOOL_CONFIRMATION_REQUEST with `details.type === 'ask_user'`,
+    // not the (defined-but-unused) ASK_USER_REQUEST channel. Worse, the Scheduler subscribes to
+    // TOOL_CONFIRMATION_REQUEST during construction and IMMEDIATELY publishes a default response
+    // with `requiresUserConfirmation: true` (which awaitConfirmation maps to Cancel). Because our
+    // onUserInput callback is async, our real reply loses the race.
+    //
+    // We still wire the subscription so the unified UnifiedEvent fires (consumers can observe the
+    // request), but the model will see a Cancel and the tool will return "User dismissed dialog".
+    // A complete fix requires either monkey-patching messageBus.publish or replacing the Scheduler's
+    // subscriber — both invasive. Tracked separately.
+    if (params.onUserInput && MessageBusType && ToolConfirmationOutcome && geminiConfigRef?.messageBus) {
+      const bus = geminiConfigRef.messageBus;
+      bus.subscribe(MessageBusType.TOOL_CONFIRMATION_REQUEST, (rawMsg) => {
+        const msg = rawMsg as {
+          correlationId: string;
+          details?: { type?: string; questions?: Array<Record<string, unknown>> };
+        };
+        const details = msg.details;
+        if (!details || details.type !== 'ask_user') return;
+        const correlationId = msg.correlationId;
+        const rawQuestions = Array.isArray(details.questions) ? details.questions : [];
+        const questions: UserInputQuestion[] = rawQuestions.map((q) => {
+          const qType = q.type as 'choice' | 'text' | 'yesno' | undefined;
+          if (qType === 'yesno') {
+            return {
+              question: q.question as string,
+              header: q.header as string | undefined,
+              options: [{ label: 'Yes' }, { label: 'No' }],
+              allowCustom: true,
+              placeholder: q.placeholder as string | undefined,
+            };
+          }
+          if (qType === 'text') {
+            return {
+              question: q.question as string,
+              header: q.header as string | undefined,
+              placeholder: q.placeholder as string | undefined,
+            };
+          }
+          const opts = Array.isArray(q.options) ? (q.options as Array<Record<string, unknown>>) : [];
+          return {
+            question: q.question as string,
+            header: q.header as string | undefined,
+            options: opts.map((o) => ({
+              label: o.label as string,
+              description: o.description as string | undefined,
+            })),
+            multiSelect: q.multiSelect as boolean | undefined,
+          };
+        });
+        const req: UserInputRequest = {
+          requestId: correlationId,
+          source: 'model-tool',
+          origin: 'gemini',
+          questions,
+          native: msg,
+        };
+        pendingUserInputs.push({ req, correlationId });
+        userInputWaker?.();
+        userInputWaker = null;
+      });
+    }
 
     // Timeout handling
     let timedOut = false;
@@ -250,7 +398,58 @@ export class GeminiAdapter implements RuntimeAdapter {
         },
       });
 
-      for await (const event of eventStream) {
+      const sdkIterator = eventStream[Symbol.asyncIterator]();
+      let pendingNext: Promise<IteratorResult<AgentEvent>> | null = null;
+
+      outer: while (true) {
+        // Drain pending user-input requests first.
+        while (pendingUserInputs.length > 0) {
+          const { req, correlationId } = pendingUserInputs.shift()!;
+          yield { type: 'user_input_request', request: req };
+          let res: UserInputResponse;
+          try {
+            res = params.onUserInput ? await params.onUserInput(req) : { action: 'decline' };
+          } catch (err) {
+            res = { action: 'cancel' };
+            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+          }
+          const bus = geminiConfigRef?.messageBus;
+          if (bus && MessageBusType && ToolConfirmationOutcome) {
+            // Reply on the TOOL_CONFIRMATION_RESPONSE channel with payload.answers
+            // — this is what AskUserTool.shouldConfirmExecute.onConfirm reads.
+            const answersMap: Record<string, string> = {};
+            if (res.action === 'accept' && res.answers) {
+              res.answers.forEach((answer, idx) => {
+                answersMap[String(idx)] = answer.join(', ');
+              });
+            }
+            await bus.publish({
+              type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
+              correlationId,
+              confirmed: res.action === 'accept',
+              outcome:
+                res.action === 'accept'
+                  ? ToolConfirmationOutcome.ProceedOnce
+                  : ToolConfirmationOutcome.Cancel,
+              payload: res.action === 'accept' ? { answers: answersMap } : undefined,
+            });
+          }
+        }
+
+        if (!pendingNext) pendingNext = sdkIterator.next();
+        const wake = new Promise<'wake'>((resolve) => {
+          userInputWaker = () => resolve('wake');
+        });
+        const winner = await Promise.race([
+          pendingNext.then((r) => ({ kind: 'sdk' as const, value: r })),
+          wake.then(() => ({ kind: 'wake' as const })),
+        ]);
+        userInputWaker = null;
+        if (winner.kind === 'wake') continue;
+        pendingNext = null;
+        if (winner.value.done) break outer;
+        const event = winner.value.value;
+
         switch (event.type) {
           case 'message': {
             const role = event.role as string;
@@ -317,6 +516,7 @@ export class GeminiAdapter implements RuntimeAdapter {
               toolUseId: event.requestId as string,
               summary,
               isSubagent: false,
+              isError: event.isError as boolean | undefined,
             };
             break;
           }
@@ -385,6 +585,7 @@ export class GeminiAdapter implements RuntimeAdapter {
               output,
               rawMessages,
               usage: totalUsage,
+              sessionId: effectiveSessionId,
             };
             break;
           }

@@ -2,8 +2,22 @@
 
 import { expect } from 'vitest';
 import { z } from 'zod';
-import type { UnifiedEvent, NormalizedMessage, ContentBlock, UsageStats } from '../../types.js';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type {
+  UnifiedEvent,
+  UsageStats,
+  RuntimeAdapter,
+  RuntimeExecuteParams,
+  UserInputHandler,
+  UserInputResponse,
+} from '../../types.js';
 import { createMcpServer, mcpTool } from '../../mcp.js';
+
+// Re-exported so existing imports `from './shared.js'` keep working.
+import { assertNormalizedMessage, assertContentBlock } from '../normalization.js';
+export { assertNormalizedMessage, assertContentBlock };
 
 // --- Skip guard ---
 
@@ -35,48 +49,6 @@ export function assertTextDeltas(events: UnifiedEvent[]): void {
   for (const d of deltas) {
     expect(typeof d.text).toBe('string');
     expect(typeof d.isSubagent).toBe('boolean');
-  }
-}
-
-// --- NormalizedMessage assertions ---
-
-/** Assert a NormalizedMessage has correct structure. */
-export function assertNormalizedMessage(msg: NormalizedMessage): void {
-  expect(msg.role).toMatch(/^(user|assistant)$/);
-  expect(Array.isArray(msg.content)).toBe(true);
-  expect(msg.content.length).toBeGreaterThanOrEqual(1);
-  expect(typeof msg.timestamp).toBe('string');
-  expect(msg.timestamp.length).toBeGreaterThan(0);
-
-  for (const block of msg.content) {
-    assertContentBlock(block);
-  }
-}
-
-/** Assert a ContentBlock has correct structure for its type. */
-export function assertContentBlock(block: ContentBlock): void {
-  switch (block.type) {
-    case 'text':
-      expect(typeof block.text).toBe('string');
-      break;
-    case 'thinking':
-      expect(typeof block.text).toBe('string');
-      break;
-    case 'toolUse':
-      expect(typeof block.toolUseId).toBe('string');
-      expect(block.toolUseId.length).toBeGreaterThan(0);
-      expect(typeof block.toolName).toBe('string');
-      expect(block.toolName.length).toBeGreaterThan(0);
-      expect(typeof block.input).toBe('object');
-      break;
-    case 'toolResult':
-      expect(typeof block.toolUseId).toBe('string');
-      expect(block.toolUseId.length).toBeGreaterThan(0);
-      expect(typeof block.content).toBe('string');
-      break;
-    case 'image':
-      expect(block.source).toBeDefined();
-      break;
   }
 }
 
@@ -169,3 +141,106 @@ export const THINKING_PROMPT = 'A traveler headed south. After walking 1 km he t
 export const THINKING_SYSTEM_PROMPT = 'Think through your reasoning step by step before answering. This is a classic lateral thinking puzzle.';
 export const SUBAGENT_PROMPT = 'Do these two tasks in parallel using subagents: (1) Use the echo tool with "task-a", (2) Use the echo tool with "task-b". Delegate each to a separate subagent.';
 export const SUBAGENT_SYSTEM_PROMPT = 'You must delegate independent tasks to subagents. Use the Task tool to spawn subagents for parallel work.';
+
+// --- Plan mode test helpers ---
+
+/** Create a unique temp cwd with a seed file for plan-mode tests. */
+export function createPlanModeTmpDir(): { dir: string; cleanup: () => void; seedFile: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-adapters-plan-'));
+  const seedFile = join(dir, 'README.md');
+  writeFileSync(seedFile, '# test seed\nSome content to read.\n');
+  return {
+    dir,
+    seedFile,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+export const PLAN_WRITE_PROMPT =
+  'Create a new file in the current directory named `notes.txt` with the content `hello world`. Use the Write tool directly without asking.';
+export const PLAN_WRITE_SYSTEM_PROMPT =
+  'You have filesystem tools available. When asked to create a file, use the Write tool directly.';
+
+export const PLAN_READ_PROMPT =
+  'Read the file README.md in the current directory and tell me its first line verbatim.';
+export const PLAN_READ_SYSTEM_PROMPT =
+  'You have filesystem tools available. When asked to read a file, use the Read tool.';
+
+/**
+ * Best-effort detector of tool names that imply filesystem mutation or shell writes.
+ * Different adapters use different naming: Claude (Write/Edit/MultiEdit), Codex (shell),
+ * Gemini (replace/write_file). Adapters may also call them via MCP with prefixes.
+ */
+export function findWriteToolUses(events: UnifiedEvent[]): Array<Extract<UnifiedEvent, { type: 'tool_use' }>> {
+  return events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'tool_use' }> =>
+      e.type === 'tool_use' && /(^|_|\.)(Write|Edit|MultiEdit|str_replace|write_file|replace|shell)$/i.test(e.toolName),
+  );
+}
+
+/** Assert plan mode prevented filesystem mutation inside `cwd`. */
+export function assertNoFileCreated(cwd: string, expected: string): void {
+  expect(existsSync(join(cwd, expected)), `planMode leaked: ${expected} exists in ${cwd}`).toBe(false);
+}
+
+/** Assert the file was actually created (baseline sanity for non-plan-mode). */
+export function assertFileCreated(cwd: string, expected: string): void {
+  expect(existsSync(join(cwd, expected)), `expected file ${expected} was not created in ${cwd}`).toBe(true);
+}
+
+// --- User-input (ask-user tool) scenario ---
+
+export const USER_QUESTION_PROMPT =
+  'You MUST use your ask-user question tool to ask the user to pick exactly one fruit from this list: apple, banana, cherry. Do not guess. After the user answers, reply with exactly one word — the chosen fruit.';
+export const USER_QUESTION_SYSTEM_PROMPT =
+  'When you need a decision from the user and you have a native ask-user / AskUserQuestion / question tool available, you MUST use it instead of guessing. Always prefer the ask-user tool over Bash or other tools for user input.';
+
+/**
+ * Run a user-question scenario and collect events + the handler invocations.
+ * The test helper builds the handler, tallies invocations, and returns everything
+ * so individual adapter tests can make their own assertions.
+ */
+export async function runUserQuestionScenario(
+  adapter: RuntimeAdapter,
+  params: Omit<RuntimeExecuteParams, 'onUserInput'> & {
+    mockAnswer: 'banana' | 'cancel';
+  },
+): Promise<{
+  events: UnifiedEvent[];
+  handlerCalls: number;
+  lastAnswer: UserInputResponse | null;
+}> {
+  let handlerCalls = 0;
+  let lastAnswer: UserInputResponse | null = null;
+  const handler: UserInputHandler = async () => {
+    handlerCalls += 1;
+    const resp: UserInputResponse =
+      params.mockAnswer === 'banana'
+        ? { action: 'accept', answers: [['banana']] }
+        : { action: 'cancel' };
+    lastAnswer = resp;
+    return resp;
+  };
+  const events: UnifiedEvent[] = [];
+  const { mockAnswer: _ignored, ...rest } = params;
+  void _ignored;
+  for await (const e of adapter.execute({ ...rest, onUserInput: handler })) {
+    events.push(e);
+  }
+  return { events, handlerCalls, lastAnswer };
+}
+
+/** Assert the event stream contains exactly one user_input_request with the expected source. */
+export function assertUserInputRequest(
+  events: UnifiedEvent[],
+  expectedSource: 'model-tool' | 'mcp-elicitation' = 'model-tool',
+): Extract<UnifiedEvent, { type: 'user_input_request' }> {
+  const reqs = events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'user_input_request' }> => e.type === 'user_input_request',
+  );
+  expect(reqs.length, `expected at least one user_input_request, got ${reqs.length}`).toBeGreaterThanOrEqual(1);
+  expect(reqs[0].request.source).toBe(expectedSource);
+  expect(Array.isArray(reqs[0].request.questions)).toBe(true);
+  expect(reqs[0].request.questions.length).toBeGreaterThanOrEqual(1);
+  return reqs[0];
+}

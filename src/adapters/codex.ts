@@ -49,7 +49,18 @@ export class CodexAdapter implements RuntimeAdapter {
       );
     }
 
-    const sandboxMode = (config.codex_sandboxMode as string) ?? 'workspace-write';
+    // Codex SDK has no ask-user / elicitation mechanism — surface once so callers know.
+    if (params.onUserInput || params.onElicitation) {
+      yield {
+        type: 'warning',
+        message:
+          'codex adapter: onUserInput/onElicitation is not supported — the Codex SDK has no ask-user mechanism. The handler will never be invoked.',
+      };
+    }
+
+    const sandboxMode = params.planMode
+      ? 'read-only'
+      : ((config.codex_sandboxMode as string) ?? 'workspace-write');
 
     const codexOptions: Record<string, unknown> = { apiKey };
     if (config.codex_baseUrl) {
@@ -142,6 +153,7 @@ export class CodexAdapter implements RuntimeAdapter {
                 toolUseId: item.id,
                 summary: item.aggregated_output ?? `exit_code: ${item.exit_code}`,
                 isSubagent: false,
+                isError: item.status === 'failed' || (item.exit_code != null && item.exit_code !== 0),
               };
             } else if (item.type === 'file_change') {
               yield {
@@ -156,6 +168,7 @@ export class CodexAdapter implements RuntimeAdapter {
                 toolUseId: item.id,
                 summary: item.changes.map((c) => `${c.kind}: ${c.path}`).join(', '),
                 isSubagent: false,
+                isError: item.status === 'failed',
               };
             } else if (item.type === 'mcp_tool_call') {
               yield {
@@ -170,6 +183,7 @@ export class CodexAdapter implements RuntimeAdapter {
                 toolUseId: item.id,
                 summary: item.error?.message ?? JSON.stringify(item.result ?? ''),
                 isSubagent: false,
+                isError: item.status === 'failed' || item.error != null,
               };
             } else if (item.type === 'reasoning') {
               yield { type: 'thinking', text: item.text, isSubagent: false };

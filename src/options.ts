@@ -5,6 +5,10 @@
 // Source of truth: keys here must match what the adapter actually reads from
 // `architectureConfig` inside its `execute()`. Credentials (*_apiKey) are
 // intentionally omitted — API keys belong in server env, not client forms.
+//
+// Exception: `context_window_override` is UI-only metadata — adapters do not
+// read it. It lets the UI display a correct usage % for pass-through model IDs
+// and runtime-configurable windows (Ollama num_ctx, custom providers).
 
 export type ArchOptionType = 'string' | 'number' | 'boolean' | 'select';
 
@@ -28,6 +32,15 @@ export const GLOBAL_OPTIONS: ArchOption[] = [
     type: 'boolean',
     default: false,
     description: 'Enable adapter-level debug mode (verbose logging / debug config).',
+  },
+  {
+    key: 'context_window_override',
+    label: 'Context window (tokens)',
+    type: 'number',
+    min: 1000,
+    placeholder: 'auto',
+    description:
+      'UI-only: override the auto-detected context window size for the usage indicator. Useful for Ollama (num_ctx) or pass-through model IDs. Adapters ignore this value.',
   },
 ];
 

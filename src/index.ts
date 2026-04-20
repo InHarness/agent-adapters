@@ -23,6 +23,12 @@ export type {
   ElicitationRequest,
   ElicitationResponse,
   ElicitationHandler,
+  UserInputSource,
+  UserInputOption,
+  UserInputQuestion,
+  UserInputRequest,
+  UserInputResponse,
+  UserInputHandler,
 } from './types.js';
 
 // Errors
@@ -73,7 +79,14 @@ export type {
   ArchitectureModelMap,
   ArchitectureWithModels,
 } from './models.js';
-export { MODEL_ALIASES, ADAPTIVE_THINKING_ONLY, resolveModel, getModelsForArchitecture } from './models.js';
+export {
+  MODEL_ALIASES,
+  ADAPTIVE_THINKING_ONLY,
+  MODEL_CONTEXT_WINDOWS,
+  resolveModel,
+  getModelsForArchitecture,
+  getModelContextWindow,
+} from './models.js';
 
 // Utilities
 export { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from './utils.js';

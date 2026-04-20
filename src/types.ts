@@ -29,6 +29,10 @@ export interface NormalizedMessage {
 export interface UsageStats {
   inputTokens: number;
   outputTokens: number;
+  /** Input tokens read from prompt cache (Anthropic). */
+  cacheReadInputTokens?: number;
+  /** Input tokens that created cache entries (Anthropic). */
+  cacheCreationInputTokens?: number;
 }
 
 // --- Unified Events ---
@@ -36,14 +40,26 @@ export interface UsageStats {
 export type UnifiedEvent =
   | { type: 'text_delta'; text: string; isSubagent: boolean }
   | { type: 'tool_use'; toolName: string; toolUseId: string; input: unknown; isSubagent: boolean }
-  | { type: 'tool_result'; toolUseId: string; summary: string; isSubagent: boolean }
+  | { type: 'tool_result'; toolUseId: string; summary: string; isSubagent: boolean; isError?: boolean }
   | { type: 'thinking'; text: string; isSubagent: boolean; replace?: boolean }
   | { type: 'assistant_message'; message: NormalizedMessage }
   | { type: 'subagent_started'; taskId: string; description: string; toolUseId: string }
   | { type: 'subagent_progress'; taskId: string; description: string; lastToolName?: string }
-  | { type: 'subagent_completed'; taskId: string; status: string; summary?: string; usage?: unknown }
+  | { type: 'subagent_completed'; taskId: string; status: string; summary?: string; usage?: UsageStats }
   | { type: 'result'; output: string; rawMessages: NormalizedMessage[]; usage: UsageStats; sessionId?: string }
   | { type: 'error'; error: Error }
+  | { type: 'warning'; message: string }
+  | { type: 'user_input_request'; request: UserInputRequest }
+  | {
+      /** @deprecated Use `user_input_request` with `source: 'mcp-elicitation'`. */
+      type: 'elicitation_request';
+      elicitationId: string;
+      source: string;
+      message: string;
+      requestedSchema?: Record<string, unknown>;
+      mode?: 'form' | 'url';
+      url?: string;
+    }
   | { type: 'flush' };
 
 // --- Architecture ---
@@ -128,35 +144,78 @@ export type McpServerConfig =
   | McpHttpServerConfig
   | McpSdkServerConfig;
 
-// --- Elicitation (interactive user input from the model / MCP server) ---
+// --- User Input (unified: model-tool ask-user + MCP elicitation) ---
 
 /**
- * Request from an MCP server or model to ask the end-user for input.
- * Shape is intentionally close to Anthropic SDK's `ElicitationRequest` and MCP's `ElicitResult`.
+ * Where the request originated.
+ * - 'model-tool': model invoked a first-class ask-user tool (e.g. AskUserQuestion / ask_user / opencode question.asked)
+ * - 'mcp-elicitation': an MCP server emitted an `elicitation/request` side-channel notification
  */
-export interface ElicitationRequest {
+export type UserInputSource = 'model-tool' | 'mcp-elicitation';
+
+export interface UserInputOption {
+  label: string;
+  description?: string;
+}
+
+export interface UserInputQuestion {
+  question: string;
+  header?: string;
+  /** Absent = free-form text input. Present = selectable choice. */
+  options?: UserInputOption[];
+  multiSelect?: boolean;
+  /** Allow typing a custom answer on top of options. */
+  allowCustom?: boolean;
+  placeholder?: string;
+}
+
+export interface UserInputRequest {
   /** Stable id for correlating request and response. */
-  elicitationId: string;
-  /** Originator — MCP server name for MCP elicitation, adapter-specific otherwise. */
-  source: string;
-  /** Human-readable prompt. */
-  message: string;
-  /** JSON Schema describing expected `content` shape (when mode === 'form'). */
-  requestedSchema?: Record<string, unknown>;
-  /** 'form' = structured input; 'url' = browser redirect (rare). */
-  mode?: 'form' | 'url';
-  /** URL to open when mode === 'url'. */
-  url?: string;
-  /** Raw SDK request (adapter-specific). */
+  requestId: string;
+  source: UserInputSource;
+  /** Adapter name for model-tool, MCP server name for mcp-elicitation. */
+  origin: string;
+  questions: UserInputQuestion[];
+  /** Raw SDK request for adapter-specific consumers. */
   native?: unknown;
 }
 
+export interface UserInputResponse {
+  action: 'accept' | 'decline' | 'cancel';
+  /**
+   * Per-question array of selected/entered values. `answers[i]` is the list of
+   * selections for `questions[i]` (single-element for non-multi-select questions).
+   * Empty / absent when action !== 'accept'.
+   */
+  answers?: string[][];
+}
+
+export type UserInputHandler = (req: UserInputRequest) => Promise<UserInputResponse>;
+
+// --- Elicitation (deprecated — prefer UserInput* above) ---
+
+/**
+ * @deprecated Use {@link UserInputRequest}. Kept as an alias for backwards compatibility.
+ * When both `onElicitation` and `onUserInput` are provided on `RuntimeExecuteParams`,
+ * `onUserInput` wins and `onElicitation` is ignored.
+ */
+export interface ElicitationRequest {
+  elicitationId: string;
+  source: string;
+  message: string;
+  requestedSchema?: Record<string, unknown>;
+  mode?: 'form' | 'url';
+  url?: string;
+  native?: unknown;
+}
+
+/** @deprecated Use {@link UserInputResponse}. */
 export interface ElicitationResponse {
   action: 'accept' | 'decline' | 'cancel';
-  /** Populated when action === 'accept' and mode === 'form'. */
   content?: Record<string, unknown>;
 }
 
+/** @deprecated Use {@link UserInputHandler}. */
 export type ElicitationHandler = (req: ElicitationRequest) => Promise<ElicitationResponse>;
 
 // --- Runtime Adapter ---
@@ -190,10 +249,33 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   architectureConfig?: Record<string, unknown>;
 
   /**
-   * Callback invoked when the model / MCP server requests interactive user input.
-   * If omitted, adapters that support elicitation will fall back to the SDK's default behavior
-   * (typically: decline). Adapters without native elicitation support ignore this field.
-   * Currently supported: claude-code. Not supported: gemini, codex, opencode.
+   * When true, adapter runs in plan-only mode: read-only tools allowed,
+   * writes/edits/shell-mutations blocked. Each adapter maps this to its native
+   * equivalent (claude-code: permissionMode='plan', gemini: approvalMode='plan',
+   * codex: sandboxMode='read-only', opencode: no-op with warning).
+   */
+  planMode?: boolean;
+
+  /**
+   * Unified callback invoked when:
+   * (a) the model invokes a first-class ask-user tool (AskUserQuestion / ask_user / opencode question event), or
+   * (b) an MCP server emits an `elicitation/request` side-channel notification.
+   *
+   * Supported per adapter:
+   * - claude-code: AskUserQuestion tool + MCP elicitation
+   * - opencode: native question events (question.asked/replied/rejected)
+   * - gemini: AskUserTool via MessageBus — only activated when this callback is provided
+   *   (otherwise `ask_user` remains excluded to preserve current behavior)
+   * - codex: not supported; passing the callback emits a one-shot warning event
+   *
+   * When both `onUserInput` and the deprecated `onElicitation` are provided,
+   * `onUserInput` takes precedence and `onElicitation` is ignored.
+   */
+  onUserInput?: UserInputHandler;
+
+  /**
+   * @deprecated Use {@link onUserInput}. Retained for backwards compatibility;
+   * bridged internally to `onUserInput` when the new handler is not provided.
    */
   onElicitation?: ElicitationHandler;
 }

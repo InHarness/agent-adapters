@@ -37,9 +37,9 @@ export const MODEL_ALIASES = {
     'deepseek-r1': 'deepseek/deepseek-r1',
   },
   gemini: {
-    'gemini-3.1-pro': 'gemini-3.1-pro',
-    'gemini-3.1-flash': 'gemini-3.1-flash',
-    'gemini-3.1-flash-lite': 'gemini-3.1-flash-lite',
+    'gemini-3.1-pro': 'gemini-3.1-pro-preview',
+    'gemini-3.1-flash': 'gemini-3-flash-preview',
+    'gemini-3.1-flash-lite': 'gemini-3.1-flash-lite-preview',
     'gemini-2.5-pro': 'gemini-2.5-pro',
     'gemini-2.5-flash': 'gemini-2.5-flash',
     'gemini-2.5-flash-lite': 'gemini-2.5-flash-lite',
@@ -81,6 +81,65 @@ export interface ArchitectureModelMap {
 export const ADAPTIVE_THINKING_ONLY: ReadonlySet<string> = new Set([
   'claude-opus-4-7',
 ]);
+
+// --- Context window sizes ---
+
+/**
+ * Maximum input context window per model alias, in tokens.
+ * Only aliases known at publish time are listed. For pass-through full IDs,
+ * reverse-lookup via MODEL_ALIASES is attempted. Runtime-configurable windows
+ * (Ollama num_ctx, custom providers) should be supplied by the consumer.
+ */
+export const MODEL_CONTEXT_WINDOWS: Record<string, Record<string, number>> = {
+  'claude-code': {
+    'sonnet-4.6': 200_000,
+    'sonnet-4.5': 200_000,
+    'opus-4.7': 200_000,
+    'opus-4.6': 200_000,
+    'opus-4.5': 200_000,
+    'haiku-4.5': 200_000,
+  },
+  codex: {
+    'o4-mini': 200_000,
+    'o3': 200_000,
+    'codex-mini': 200_000,
+  },
+  gemini: {
+    'gemini-3.1-pro': 1_048_576,
+    'gemini-3.1-flash': 1_048_576,
+    'gemini-3.1-flash-lite': 1_048_576,
+    'gemini-2.5-pro': 2_097_152,
+    'gemini-2.5-flash': 1_048_576,
+    'gemini-2.5-flash-lite': 1_048_576,
+    'gemini-2.0-flash': 1_048_576,
+  },
+  'opencode-openrouter': {
+    'claude-sonnet-4': 200_000,
+    'claude-opus-4': 200_000,
+    'gemini-2.5-pro': 2_097_152,
+    'deepseek-r1': 64_000,
+  },
+  // claude-code-ollama, claude-code-minimax: intentionally empty
+  // (depends on local/provider configuration, not on model name alone)
+};
+
+/**
+ * Resolve the context window size (tokens) for a given architecture + model.
+ * Accepts either an alias or the full model ID.
+ * Returns undefined when unknown (custom adapters, pass-through IDs not in MODEL_ALIASES).
+ */
+export function getModelContextWindow(architecture: Architecture, model: string): number | undefined {
+  const forArch = MODEL_CONTEXT_WINDOWS[architecture];
+  if (!forArch) return undefined;
+  if (model in forArch) return forArch[model];
+
+  const aliases = (MODEL_ALIASES as Record<string, Record<string, string>>)[architecture];
+  if (aliases) {
+    const alias = Object.entries(aliases).find(([, fullId]) => fullId === model)?.[0];
+    if (alias && alias in forArch) return forArch[alias];
+  }
+  return undefined;
+}
 
 // --- Runtime resolution ---
 

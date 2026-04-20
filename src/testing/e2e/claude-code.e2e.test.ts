@@ -10,12 +10,16 @@ import { resolveModel } from '../../models.js';
 import { assertSimpleText, assertToolUse, assertThinking } from '../contract.js';
 import { AdapterError, AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
+import { assertNormalization } from '../normalization.js';
 import {
   requireEnv,
   assertSimpleTextStream,
   assertEventTypes,
   assertNormalizedMessage,
   createE2eMcpServer,
+  createPlanModeTmpDir,
+  assertNoFileCreated,
+  assertFileCreated,
   SIMPLE_PROMPT,
   SIMPLE_SYSTEM_PROMPT,
   TOOL_PROMPT,
@@ -24,6 +28,14 @@ import {
   THINKING_SYSTEM_PROMPT,
   SUBAGENT_PROMPT,
   SUBAGENT_SYSTEM_PROMPT,
+  PLAN_WRITE_PROMPT,
+  PLAN_WRITE_SYSTEM_PROMPT,
+  PLAN_READ_PROMPT,
+  PLAN_READ_SYSTEM_PROMPT,
+  USER_QUESTION_PROMPT,
+  USER_QUESTION_SYSTEM_PROMPT,
+  runUserQuestionScenario,
+  assertUserInputRequest,
 } from './shared.js';
 
 // Claude Code SDK manages auth internally (OAuth, cached credentials, or ANTHROPIC_API_KEY).
@@ -164,6 +176,12 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     const resultEvent = events.find((e) => e.type === 'result') as Extract<UnifiedEvent, { type: 'result' }>;
     const allRawBlocks = resultEvent.rawMessages.flatMap((m) => m.content);
     expect(allRawBlocks.some((b) => b.type === 'toolResult'), 'No toolResult content block in rawMessages').toBe(true);
+
+    // Cross-check the same contract via the shared normalization helper.
+    // claude-code splits tool-use (assistant role) and tool-result (user role) across rawMessages.
+    assertNormalization(events, {
+      blocks: [{ type: 'toolUse' }, { type: 'toolResult' }],
+    });
   });
 
   it('subagent events', async () => {
@@ -263,5 +281,116 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     }
 
     expect(threwError, 'Expected AdapterError to be thrown for unknown model alias').toBe(true);
+  });
+
+  describe('plan mode', () => {
+    it('planMode=true blocks file creation', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const adapter = createAdapter('claude-code');
+        const events = await collectEvents(
+          adapter.execute({
+            prompt: PLAN_WRITE_PROMPT,
+            systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
+            model: MODEL,
+            maxTurns: 3,
+            cwd: dir,
+            planMode: true,
+          }),
+        );
+        assertNoFileCreated(dir, 'notes.txt');
+        // In plan mode SDK should still finish the stream (with a plan or ExitPlanMode).
+        expect(events.some((e) => e.type === 'result' || e.type === 'assistant_message')).toBe(true);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it('planMode=true allows reads', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const adapter = createAdapter('claude-code');
+        const events = await collectEvents(
+          adapter.execute({
+            prompt: PLAN_READ_PROMPT,
+            systemPrompt: PLAN_READ_SYSTEM_PROMPT,
+            model: MODEL,
+            maxTurns: 3,
+            cwd: dir,
+            planMode: true,
+          }),
+        );
+        const readUses = (events.filter((e) => e.type === 'tool_use') as Extract<UnifiedEvent, { type: 'tool_use' }>[])
+          .filter((tu) => /^Read$/i.test(tu.toolName));
+        expect(readUses.length, 'Read tool should have been used in plan mode').toBeGreaterThanOrEqual(1);
+        const result = events.find((e) => e.type === 'result') as Extract<UnifiedEvent, { type: 'result' }>;
+        expect(result.output.toLowerCase()).toContain('test seed');
+      } finally {
+        cleanup();
+      }
+    });
+
+    it('planMode=undefined allows writes (baseline sanity)', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const adapter = createAdapter('claude-code');
+        await collectEvents(
+          adapter.execute({
+            prompt: PLAN_WRITE_PROMPT,
+            systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
+            model: MODEL,
+            maxTurns: 3,
+            cwd: dir,
+            // planMode omitted = default bypassPermissions
+          }),
+        );
+        assertFileCreated(dir, 'notes.txt');
+      } finally {
+        cleanup();
+      }
+    });
+  });
+
+  describe('onUserInput — AskUserQuestion tool bridge', () => {
+    it('model invokes AskUserQuestion → handler runs → answer reaches the model', async () => {
+      const adapter = createAdapter('claude-code');
+      const { events, handlerCalls } = await runUserQuestionScenario(adapter, {
+        prompt: USER_QUESTION_PROMPT,
+        systemPrompt: USER_QUESTION_SYSTEM_PROMPT,
+        model: MODEL,
+        maxTurns: 4,
+        mockAnswer: 'banana',
+      });
+
+      expect(handlerCalls, 'onUserInput should fire at least once').toBeGreaterThanOrEqual(1);
+      const req = assertUserInputRequest(events, 'model-tool');
+      expect(req.request.origin).toBe('claude-code');
+
+      // The model should continue and reference "banana" in its final text.
+      const finalText = (events.filter((e) => e.type === 'assistant_message') as Extract<
+        UnifiedEvent,
+        { type: 'assistant_message' }
+      >[])
+        .flatMap((m) => m.message.content.filter((c) => c.type === 'text'))
+        .map((c) => (c as { text: string }).text)
+        .join(' ')
+        .toLowerCase();
+      expect(finalText, `expected "banana" in final output, got: ${finalText}`).toContain('banana');
+    });
+
+    it('decline path — model sees the cancellation and keeps going', async () => {
+      const adapter = createAdapter('claude-code');
+      const { events, handlerCalls } = await runUserQuestionScenario(adapter, {
+        prompt: USER_QUESTION_PROMPT,
+        systemPrompt: USER_QUESTION_SYSTEM_PROMPT,
+        model: MODEL,
+        maxTurns: 3,
+        mockAnswer: 'cancel',
+      });
+      expect(handlerCalls).toBeGreaterThanOrEqual(1);
+      assertUserInputRequest(events, 'model-tool');
+      // No crash — completion event must still be present.
+      expect(events.some((e) => e.type === 'result' || e.type === 'error')).toBe(true);
+    });
   });
 });

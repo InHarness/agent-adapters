@@ -11,11 +11,22 @@ import {
   requireEnv,
   assertSimpleTextStream,
   assertEventTypes,
+  createPlanModeTmpDir,
+  assertNoFileCreated,
   SIMPLE_PROMPT,
   SIMPLE_SYSTEM_PROMPT,
   THINKING_PROMPT,
   THINKING_SYSTEM_PROMPT,
+  PLAN_WRITE_PROMPT,
+  PLAN_WRITE_SYSTEM_PROMPT,
+  PLAN_READ_PROMPT,
+  PLAN_READ_SYSTEM_PROMPT,
+  USER_QUESTION_PROMPT,
+  USER_QUESTION_SYSTEM_PROMPT,
+  runUserQuestionScenario,
+  assertUserInputRequest,
 } from './shared.js';
+import { assertNormalization } from '../normalization.js';
 
 const HAS_API_KEY = requireEnv('GOOGLE_API_KEY') || requireEnv('GEMINI_API_KEY');
 
@@ -87,6 +98,13 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     >[];
     const hasThinkingBlock = assistantMsgs.some((am) => am.message.content.some((b) => b.type === 'thinking'));
     expect(hasThinkingBlock, 'No assistant_message with thinking content block').toBe(true);
+
+    // Cross-check: gemini contentPartsToBlocks() turns SDK 'thought' parts into
+    // 'thinking' blocks alongside the text reply.
+    assertNormalization(events, {
+      role: 'assistant',
+      blocks: [{ type: 'thinking' }, { type: 'text' }],
+    });
   });
 
   // Gemini supports stdio MCP but not in-process — would need external MCP server binary
@@ -137,5 +155,70 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     }
 
     expect(threwError).toBe(true);
+  });
+
+  describe('plan mode', () => {
+    it('planMode=true blocks file creation (approvalMode=plan)', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const adapter = createAdapter('gemini');
+        const events = await collectEvents(
+          adapter.execute({
+            prompt: PLAN_WRITE_PROMPT,
+            systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
+            model: 'gemini-2.5-flash',
+            maxTurns: 3,
+            cwd: dir,
+            planMode: true,
+          }),
+        );
+        assertNoFileCreated(dir, 'notes.txt');
+        expect(events.some((e) => e.type === 'result' || e.type === 'assistant_message')).toBe(true);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it('planMode=true allows reads', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const adapter = createAdapter('gemini');
+        const events = await collectEvents(
+          adapter.execute({
+            prompt: PLAN_READ_PROMPT,
+            systemPrompt: PLAN_READ_SYSTEM_PROMPT,
+            model: 'gemini-2.5-flash',
+            maxTurns: 3,
+            cwd: dir,
+            planMode: true,
+          }),
+        );
+        const result = events.find((e) => e.type === 'result') as Extract<UnifiedEvent, { type: 'result' }>;
+        expect(result.output.toLowerCase()).toContain('test seed');
+      } finally {
+        cleanup();
+      }
+    });
+  });
+
+  describe('onUserInput — ask_user MessageBus bridge', () => {
+    // PARTIAL: see KNOWN LIMITATION comment in src/adapters/gemini.ts. The unified
+    // event fires correctly, but our async reply loses a race against the Scheduler's
+    // synchronous default response, so the model itself sees a Cancel. We assert the
+    // observable contract (event + handler invocation) but not the model's final text.
+    it('model invokes ask_user → unified event fires and handler runs', async () => {
+      const adapter = createAdapter('gemini');
+      const { events, handlerCalls } = await runUserQuestionScenario(adapter, {
+        prompt: USER_QUESTION_PROMPT,
+        systemPrompt: USER_QUESTION_SYSTEM_PROMPT,
+        model: 'gemini-2.5-flash',
+        maxTurns: 3,
+        mockAnswer: 'banana',
+      });
+
+      expect(handlerCalls, 'onUserInput should fire at least once').toBeGreaterThanOrEqual(1);
+      const req = assertUserInputRequest(events, 'model-tool');
+      expect(req.request.origin).toBe('gemini');
+    });
   });
 });

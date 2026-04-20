@@ -5,6 +5,7 @@
 
 import { createOpencode } from '@opencode-ai/sdk';
 import type { OpencodeClient } from '@opencode-ai/sdk';
+import { createOpencodeClient as createOpencodeClientV2 } from '@opencode-ai/sdk/v2/client';
 import type {
   RuntimeAdapter,
   RuntimeExecuteParams,
@@ -12,6 +13,9 @@ import type {
   NormalizedMessage,
   ContentBlock,
   UsageStats,
+  UserInputRequest,
+  UserInputResponse,
+  UserInputQuestion,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
@@ -53,6 +57,10 @@ export class OpencodeAdapter implements RuntimeAdapter {
 
     const apiKey = (config.opencode_apiKey as string) ?? process.env.OPENROUTER_API_KEY;
     if (!apiKey) throw new AdapterInitError('opencode', new Error('OPENROUTER_API_KEY env var is required'));
+
+    if (params.planMode) {
+      console.warn('[agent-adapters] opencode: planMode not natively supported — ignored');
+    }
 
     // Resolve model alias to full ID before splitting into provider/model
     const resolvedModel = resolveModel(this.architecture, params.model);
@@ -127,6 +135,91 @@ export class OpencodeAdapter implements RuntimeAdapter {
     let totalUsage: UsageStats = { inputTokens: 0, outputTokens: 0 };
     let sessionId: string | undefined;
 
+    // v2 client for the question API (reply/reject). v2 SDK is additive over v1 —
+    // both clients talk to the same server on the same port.
+    type PendingUserInput = {
+      req: UserInputRequest;
+      resolve: (res: UserInputResponse) => void;
+    };
+    const pendingUserInputs: PendingUserInput[] = [];
+    let userInputWaker: (() => void) | null = null;
+    let v2Client: ReturnType<typeof createOpencodeClientV2> | undefined;
+    let v2SubscriptionCancel: (() => void) | undefined;
+
+    const maybeInitV2 = () => {
+      if (!params.onUserInput || v2Client) return;
+      v2Client = createOpencodeClientV2({ baseUrl: `http://127.0.0.1:${port}` } as unknown as Parameters<typeof createOpencodeClientV2>[0]);
+      const cwd = params.cwd ?? process.cwd();
+      // Parallel SSE subscription just for question events. Pushes pending entries
+      // into the queue and wakes the main loop. Swallow errors — question flow is
+      // an optional enhancement; the main v1 stream is authoritative.
+      (async () => {
+        try {
+          const sub = await v2Client!.event.subscribe({ directory: cwd });
+          v2SubscriptionCancel = () => {
+            try {
+              (sub as { stream?: { cancel?: () => void } }).stream?.cancel?.();
+            } catch {
+              /* noop */
+            }
+          };
+          const stream = (sub as { stream?: AsyncIterable<unknown> }).stream;
+          if (!stream) return;
+          for await (const evt of stream) {
+            if (signal.aborted) return;
+            const e = evt as { type?: string; properties?: Record<string, unknown> };
+            if (e.type !== 'question.asked') continue;
+            const props = e.properties as {
+              id: string;
+              sessionID: string;
+              questions: Array<{
+                question: string;
+                header?: string;
+                options: Array<{ label: string; description: string }>;
+                multiple?: boolean;
+                custom?: boolean;
+              }>;
+              tool?: { messageID: string; callID: string };
+            };
+            if (sessionId && props.sessionID && props.sessionID !== sessionId) continue;
+            const questions: UserInputQuestion[] = props.questions.map((q) => ({
+              question: q.question,
+              header: q.header,
+              options: q.options.map((o) => ({ label: o.label, description: o.description })),
+              multiSelect: q.multiple,
+              allowCustom: q.custom,
+            }));
+            const req: UserInputRequest = {
+              requestId: props.id,
+              source: 'model-tool',
+              origin: 'opencode',
+              questions,
+              native: props,
+            };
+            await new Promise<UserInputResponse>((resolve) => {
+              pendingUserInputs.push({ req, resolve });
+              userInputWaker?.();
+              userInputWaker = null;
+            }).then(async (res) => {
+              if (!v2Client) return;
+              try {
+                if (res.action === 'accept' && res.answers) {
+                  await v2Client.question.reply({ requestID: props.id, directory: cwd, answers: res.answers });
+                } else {
+                  await v2Client.question.reject({ requestID: props.id, directory: cwd });
+                }
+              } catch {
+                /* best-effort */
+              }
+            });
+          }
+        } catch {
+          /* SSE setup failure — degrade silently; user-input feature just won't fire */
+        }
+      })();
+    };
+    maybeInitV2();
+
     // Timeout handling
     let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -175,7 +268,41 @@ export class OpencodeAdapter implements RuntimeAdapter {
       const currentBlocks: ContentBlock[] = [];
       let lastMessageId: string | undefined;
 
-      for await (const event of sseResult.stream) {
+      const v1Iterator = sseResult.stream[Symbol.asyncIterator]();
+      let pendingNext: Promise<IteratorResult<unknown>> | null = null;
+
+      outer: while (true) {
+        // Drain pending user-input requests before consuming the next v1 event.
+        while (pendingUserInputs.length > 0) {
+          const { req, resolve } = pendingUserInputs.shift()!;
+          yield { type: 'user_input_request', request: req };
+          if (!params.onUserInput) {
+            resolve({ action: 'decline' });
+            continue;
+          }
+          try {
+            const res = await params.onUserInput(req);
+            resolve(res);
+          } catch (err) {
+            resolve({ action: 'cancel' });
+            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+          }
+        }
+
+        if (!pendingNext) pendingNext = v1Iterator.next();
+        const wake = new Promise<'wake'>((resolve) => {
+          userInputWaker = () => resolve('wake');
+        });
+        const winner = await Promise.race([
+          pendingNext.then((r) => ({ kind: 'sdk' as const, value: r })),
+          wake.then(() => ({ kind: 'wake' as const })),
+        ]);
+        userInputWaker = null;
+        if (winner.kind === 'wake') continue;
+        pendingNext = null;
+        if (winner.value.done) break outer;
+        const event = winner.value.value;
+
         if (signal.aborted) {
           if (timedOut) {
             yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!) };
@@ -285,6 +412,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
                   toolUseId: callId,
                   summary: (state.error as string) ?? 'Tool error',
                   isSubagent,
+                  isError: true,
                 };
                 if (isSubagent) {
                   yield {
@@ -356,6 +484,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
         }
       }
     } catch (err) {
+      v2SubscriptionCancel?.();
       if (signal.aborted) {
         if (timedOut) {
           yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!) };
@@ -366,6 +495,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
       }
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
     } finally {
+      v2SubscriptionCancel?.();
       clearTimeout(timeoutId);
       this.serverClose?.();
       this.serverClose = null;
