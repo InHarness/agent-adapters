@@ -1,12 +1,21 @@
 ---
 name: google-adk
-description: Use when designing or implementing the google-adk adapter at src/adapters/google-adk.ts (NOT YET IMPLEMENTED — this is a design brief), evaluating @google/adk (Agent Development Kit for TypeScript) for multi-agent / code-first orchestration, or deciding whether to route a call to google-genai (single-agent Interactions API) vs google-adk (multi-agent framework). Covers pre-GA TS status, native MCP, FunctionTool extensibility, deployment-agnostic and model-agnostic design.
+description: >-
+  Use when designing or implementing the google-adk adapter at
+  src/adapters/google-adk.ts (NOT YET IMPLEMENTED — this is a design brief),
+  evaluating @google/adk (Agent Development Kit for TypeScript) for multi-agent
+  / code-first orchestration, or deciding whether to route a call to
+  google-genai (single-agent Interactions API) vs google-adk (multi-agent
+  framework). Covers pre-GA TS status, native MCP, FunctionTool extensibility,
+  deployment-agnostic and model-agnostic design.
 ---
 
+<!-- anchor: 7w0m83k3 -->
 # google-adk adapter — `@google/adk` (Agent Development Kit for TypeScript)
 
 > **Status: PLANNED — not yet implemented.** This file is a design brief. When `src/adapters/google-adk.ts` is created, promote it to a full implementation doc (use sibling adapter skills as a template).
 
+<!-- anchor: qxycoqyj -->
 ## Why we're adding this
 
 ADK-JS is Google's answer to code-first agent frameworks — philosophically closer to `claude-agent-sdk` than `@google/genai` is. Key differentiators vs Interactions API:
@@ -20,6 +29,7 @@ ADK-JS is Google's answer to code-first agent frameworks — philosophically clo
 
 Adding this adapter future-proofs our library: ADK Go 1.0 and Java 1.0 are GA; TypeScript follows, and Google is clearly investing.
 
+<!-- anchor: tlosb4im -->
 ## Official documentation & sources
 
 - **ADK docs (home)**: https://adk.dev/
@@ -31,6 +41,7 @@ Adding this adapter future-proofs our library: ADK Go 1.0 and Java 1.0 are GA; T
 - **Introduction blog post**: https://developers.googleblog.com/introducing-agent-development-kit-for-typescript-build-ai-agents-with-the-power-of-a-code-first-approach/
 - **Architectural tour**: https://thenewstack.io/what-is-googles-agent-development-kit-an-architectural-tour/
 
+<!-- anchor: zudav77n -->
 ## Pinned version & TODO (placeholder — fill in at implementation time)
 
 - **Planned peer**: `@google/adk` — TS is **pre-GA** at research time (while Go 1.0 and Java 1.0 are GA). Mark adapter as experimental until TS 1.0 announcement.
@@ -42,6 +53,7 @@ Adding this adapter future-proofs our library: ADK Go 1.0 and Java 1.0 are GA; T
   - Streaming / event model is thin in docs — confirm async iterable shape before finalizing our event mapping
   - Multi-agent → `subagent_*` mapping: design how ADK sub-agents carry `taskId` / parent linkage
 
+<!-- anchor: ronx8xrk -->
 ## Design brief (capability map)
 
 | UnifiedEvent / Capability | ADK-JS mapping (expected) | Confidence |
@@ -56,6 +68,7 @@ Adding this adapter future-proofs our library: ADK Go 1.0 and Java 1.0 are GA; T
 | `planMode` | depends on tool filtering / sandbox primitives | ⚠️ design at impl |
 | MCP (stdio/SSE/HTTP/SDK) | native MCP tools component | ⚠️ verify transport subset |
 
+<!-- anchor: 4mazvhqv -->
 ## Open questions (resolve at impl time)
 
 1. **Stability**: is `@google/adk` TS actually v1.x GA at impl time, or still pre-GA? Re-check before adding to peer deps.
@@ -70,12 +83,14 @@ Adding this adapter future-proofs our library: ADK Go 1.0 and Java 1.0 are GA; T
    - Decision influences `ArchitectureModelMap` shape.
 8. **Overlap with other adapters**: if ADK can drive Anthropic models, does that conflict with `claude-code`? (Probably no — different primitives. Document clearly.)
 
+<!-- anchor: uyqal75l -->
 ## Non-goals
 
 - **Free-tier Code Assist for Individuals OAuth** — route to `gemini-cli-core`.
 - **Single-turn "just one model call"** — use `google-genai` sibling; simpler, more direct.
 - **Shell sandbox / file ops** — not ADK's job; consumer brings via MCP server or custom `FunctionTool`.
 
+<!-- anchor: kdw6426o -->
 ## Skills support (design note)
 
 **Native support: none.** ADK has no runtime "skills" primitive comparable to `SKILL.md` progressive disclosure. Its extensibility primitives are:
@@ -86,6 +101,7 @@ Adding this adapter future-proofs our library: ADK Go 1.0 and Java 1.0 are GA; T
 
 The phrase "ADK developer Skills" that shows up in Google's marketing and the `@google/adk-devtools` package refers to **IDE-side assistants that help developers write ADK code at author time** — not runtime skills consumed by an agent at inference time. Do not conflate.
 
+<!-- anchor: b9tovb66 -->
 ### Closest analogues (at implementation time, pick one)
 
 1. **Unsupported + warning** — emit a one-shot `warning` event when `RuntimeExecuteParams.skills` (once we add it) is provided. Same pattern as Codex for `onUserInput`.
@@ -94,16 +110,19 @@ The phrase "ADK developer Skills" that shows up in Google's marketing and the `@
 
 Recommendation: option 3 gives the best unified-event-compat (it produces a normal `tool_use` + `tool_result` pair that already maps to our taxonomy). Defer the decision to implementation time; revisit if ADK adds a native skill concept before then.
 
+<!-- anchor: pyqs2c51 -->
 ### Dynamic loading
 
 None natively. Option 3 above gives it artificially.
 
+<!-- anchor: 2459zq0y -->
 ## Architectures this adapter will register
 
 - `google-adk` — primary
 - Possibly `google-adk-vertex` if Vertex needs separate preset
 - Model aliases: decide between passthrough (model-agnostic) vs curated per-model-family
 
+<!-- anchor: 090rj45k -->
 ## Key files (at implementation time)
 
 - `src/adapters/google-adk.ts` — NEW
@@ -113,6 +132,7 @@ None natively. Option 3 above gives it artificially.
 - `src/index.ts` — register in `createAdapter()`
 - `package.json` — add `@google/adk` peer + dev dep
 
+<!-- anchor: 0isvjwon -->
 ## Reminder
 
 When implementing, follow the unified-architecture checklist (see `unified-architecture` skill, section "Checklist: adding a new event type or param field"). Since ADK is the first adapter where `subagent_*` is native, this is also an opportunity to audit our subagent event shape and make sure it fits real multi-agent flows rather than the synthesis patterns baked in by the other adapters.

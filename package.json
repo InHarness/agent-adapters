@@ -92,7 +92,8 @@
     "test:e2e:opencode": "vitest run --config vitest.config.e2e.ts opencode",
     "test:e2e:gemini": "vitest run --config vitest.config.e2e.ts gemini",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "c4s": "npx claude4spec --pages .claude/skills"
   },
   "peerDependencies": {
     "@anthropic-ai/claude-agent-sdk": ">=0.2.0",

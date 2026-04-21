@@ -1,12 +1,21 @@
 ---
 name: opencode-sdk
-description: Use when editing src/adapters/opencode.ts or src/testing/e2e/opencode.e2e.test.ts, bumping @opencode-ai/sdk in package.json, debugging SSE streaming issues, OpenCode CLI availability, provider/model string parsing, question.asked user-input flow, or MCP stdio-only limitation. Extending UnifiedEvent and need to know that OpenCode ignores planMode, only supports stdio MCP, and requires the OpenCode CLI binary in PATH.
+description: >-
+  Use when editing src/adapters/opencode.ts or
+  src/testing/e2e/opencode.e2e.test.ts, bumping @opencode-ai/sdk in
+  package.json, debugging SSE streaming issues, OpenCode CLI availability,
+  provider/model string parsing, question.asked user-input flow, or MCP
+  stdio-only limitation. Extending UnifiedEvent and need to know that OpenCode
+  ignores planMode, only supports stdio MCP, and requires the OpenCode CLI
+  binary in PATH.
 ---
 
+<!-- anchor: no62p50n -->
 # opencode adapter — `@opencode-ai/sdk`
 
 OpenCode is the only adapter that requires an **external CLI binary in PATH** and that operates over **SSE** instead of in-process iteration. It runs two parallel subscriptions (v1 for events, v2 for question.asked), allocates a local port, and has the most "partial" checkboxes in the capability matrix.
 
+<!-- anchor: uphg3eyd -->
 ## Official documentation & sources
 
 - **Project site**: https://opencode.ai
@@ -18,6 +27,7 @@ OpenCode is the only adapter that requires an **external CLI binary in PATH** an
 - **MCP config docs**: https://opencode.ai/docs/mcp-servers
 - **OpenRouter** (used by `opencode-openrouter` architecture for model access): https://openrouter.ai/docs
 
+<!-- anchor: rt8i7e3z -->
 ## Pinned version & TODO
 
 - **Dev**: `^1.4.6` (`package.json`)
@@ -30,6 +40,7 @@ OpenCode is the only adapter that requires an **external CLI binary in PATH** an
   - **Bundled OpenCode CLI** — consider bundling or documenting the install step. Today `isOpencodeAvailable()` only checks PATH and doesn't install.
   - **Port collision** — `getAvailablePort()` is a race if the adapter is instantiated many times in parallel.
 
+<!-- anchor: 3q1rknwz -->
 ## Native API surface
 
 - **Entry**: `createOpencodeClient(baseUrl)` (v1) + `createOpencodeV2Client(baseUrl)` (v2 for questions). Local OpenCode server binds to `127.0.0.1:${availablePort}`.
@@ -46,6 +57,7 @@ OpenCode is the only adapter that requires an **external CLI binary in PATH** an
   - `question.asked { sessionId, questionId, question, options, ... }`
   - `question.replied`, `question.rejected`
 
+<!-- anchor: 1a9m42w4 -->
 ## Event mapping table
 
 | Native | UnifiedEvent | Notes |
@@ -59,6 +71,7 @@ OpenCode is the only adapter that requires an **external CLI binary in PATH** an
 | `session.idle` | `result` | accumulates usage across the run |
 | `session.error` | `error` | |
 
+<!-- anchor: vkk8pa6b -->
 ## Quirks & gotchas
 
 1. **OpenCode CLI required in PATH.** `isOpencodeAvailable()` is checked at startup; if false, the adapter won't fail outright but downstream calls will. Document the install step (`brew install opencode-ai/tap/opencode` or equivalent).
@@ -76,10 +89,12 @@ OpenCode is the only adapter that requires an **external CLI binary in PATH** an
 8. **Question flow is POST-back**, not a promise. When `question.asked` arrives, the adapter calls `onUserInput`; the response is POSTed to the v2 client's question-reply endpoint. Failure to POST stalls the run indefinitely (until abort).
 9. **`opencode-openrouter` architecture** uses OpenRouter as the provider; model aliases (`claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1`) resolve to `anthropic/...`, `google/...`, `deepseek/...` strings.
 
+<!-- anchor: y44duhba -->
 ## Skills support
 
 **Native support: first-class, fully dynamic, and interop-friendly with Claude Code's skill directory.**
 
+<!-- anchor: uqb5k32u -->
 ### Discovery (widest of any adapter)
 
 Project (walked up from cwd to git worktree root):
@@ -92,6 +107,7 @@ Global:
 - `~/.claude/skills/<name>/SKILL.md`
 - `~/.agents/skills/<name>/SKILL.md`
 
+<!-- anchor: z2l1bgtn -->
 ### File format
 
 `SKILL.md` with YAML frontmatter:
@@ -99,14 +115,17 @@ Global:
 - `description` — 1-1024 chars
 - Optional: `license`, `compatibility`, `metadata`
 
+<!-- anchor: dieb67dc -->
 ### Dynamic loading
 
 **Native `skill` tool** — OpenCode injects a tool the model can call to load any skill's body on-demand. Lazy, progressive-disclosure semantics. On `session.compacted` events the server re-injects the skill listing so long sessions don't lose access.
 
+<!-- anchor: ft1o7x3h -->
 ### Permission gating
 
 `opencode.json` takes a `skills` block with three behaviors per pattern: `allow` (auto-loads), `deny` (hidden from agent), `ask` (prompts user). Wildcards supported (e.g. `internal-*`).
 
+<!-- anchor: 6m1r3cu2 -->
 ### Programmatic injection pattern
 
 Not officially part of the SDK reference, but community plugins (`zenobi-us/opencode-skillful`, `joshuadavidthomas/opencode-agent-skills`) inject skills into a session by POSTing messages with:
@@ -115,6 +134,7 @@ Not officially part of the SDK reference, but community plugins (`zenobi-us/open
 
 and by listening to `session.compacted` events to re-inject.
 
+<!-- anchor: 34ob4cb6 -->
 ### Our adapter status
 
 `src/adapters/opencode.ts` does nothing about skills, **and this is fine for the filesystem path** — skills under `.claude/skills/` or `.opencode/skills/` in the consumer's cwd are auto-discovered by the OpenCode server the adapter spawns. Zero code change needed for the common case.
@@ -127,6 +147,7 @@ TODO (add to version watch):
 - First-class `sessionOptions.skills` on `client.session.create` (watch sst/opencode changelog)
 - Unified `skill_*` events in our taxonomy once a second adapter supports them
 
+<!-- anchor: z9qbf6pm -->
 ## Troubleshooting recipes
 
 - **"Adapter starts but no events arrive"**
@@ -153,6 +174,7 @@ TODO (add to version watch):
 - **"Usage numbers missing on `result`"**
   → OpenCode sometimes omits usage on `session.idle`. Adapter forwards whatever it got; if empty, consumer should treat as unknown. Don't interpolate.
 
+<!-- anchor: 0b0f3611 -->
 ## Key files
 
 - `src/adapters/opencode.ts` — implementation (v1 + v2 SSE plumbing, port allocation, provider/model split)

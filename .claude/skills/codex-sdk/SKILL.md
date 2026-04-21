@@ -1,12 +1,20 @@
 ---
 name: codex-sdk
-description: Use when editing src/adapters/codex.ts or src/testing/e2e/codex.e2e.test.ts, bumping @openai/codex-sdk in package.json, debugging missing events (user input not firing, MCP tools not showing, command execution events), or extending UnifiedEvent and needing to know what Codex can and cannot do. Codex has no native user input, no dynamic MCP config (must pre-configure via `codex mcp add`), and hardcodes approvalPolicy='never' regardless of planMode.
+description: >-
+  Use when editing src/adapters/codex.ts or src/testing/e2e/codex.e2e.test.ts,
+  bumping @openai/codex-sdk in package.json, debugging missing events (user
+  input not firing, MCP tools not showing, command execution events), or
+  extending UnifiedEvent and needing to know what Codex can and cannot do. Codex
+  has no native user input, no dynamic MCP config (must pre-configure via `codex
+  mcp add`), and hardcodes approvalPolicy='never' regardless of planMode.
 ---
 
+<!-- anchor: 4z89zfh9 -->
 # codex adapter — `@openai/codex-sdk`
 
 Codex is the most constrained of the four adapters: thread-based API, no native user input, MCP must be pre-configured via CLI, and the system prompt has to be concatenated with the user prompt. When a new UnifiedEvent feature arrives, Codex is usually the first place where "unsupported + warning" is the answer.
 
+<!-- anchor: g4yl5z0a -->
 ## Official documentation & sources
 
 - **Codex overview**: https://developers.openai.com/codex/
@@ -17,6 +25,7 @@ Codex is the most constrained of the four adapters: thread-based API, no native 
 - **CLI advanced docs**: https://github.com/openai/codex/blob/main/docs/advanced.md
 - **Releases / changelog**: https://github.com/openai/codex/releases
 
+<!-- anchor: tm1w5jzy -->
 ## Pinned version & TODO
 
 - **Dev**: `^0.120.0` (`package.json`)
@@ -27,6 +36,7 @@ Codex is the most constrained of the four adapters: thread-based API, no native 
   - **System prompt field** — currently concatenated into the prompt. A dedicated field would let us stop stringifying.
   - **`modelReasoningEffort` enum** — watch for new values; today we pass through `'minimal' | 'low' | 'medium' | 'high'`.
 
+<!-- anchor: 6dyylgko -->
 ## Native API surface
 
 - **Entry**: `new Codex({ apiKey, baseURL? })` → `codex.startThread(options) | codex.resumeThread(threadId, options)` → `thread.runStreamed(prompt)` yields events.
@@ -46,6 +56,7 @@ Codex is the most constrained of the four adapters: thread-based API, no native 
     - `reasoning { text }`
     - `error { message }`
 
+<!-- anchor: i6l10l52 -->
 ## Event mapping table
 
 | Native | UnifiedEvent | Notes |
@@ -61,6 +72,7 @@ Codex is the most constrained of the four adapters: thread-based API, no native 
 
 No native subagent events → `subagent_*` events are **not emitted**.
 
+<!-- anchor: olljlmnb -->
 ## Quirks & gotchas
 
 1. **No native user input.** If `onUserInput` (or legacy `onElicitation`) is passed, the adapter emits a one-shot `warning` event and then ignores the handler. The model cannot prompt the user mid-run.
@@ -75,10 +87,12 @@ No native subagent events → `subagent_*` events are **not emitted**.
 6. **Session resumption is partial.** `codex.resumeThread(threadId)` exists but the adapter doesn't currently persist/expose `threadId` in `result.sessionId`. Resumption from outside is unreliable; prefer keeping the `Codex` + `Thread` instance alive in-process.
 7. **`codex-mini` alias** → `codex-mini-latest` (a rolling tag). Pin to a full ID (e.g. via `resolveModel` pass-through) if you need reproducibility.
 
+<!-- anchor: jpscelad -->
 ## Skills support
 
 **Native support: first-class at Codex runtime (CLI / IDE / app), but NOT exposed by `@openai/codex-sdk`.**
 
+<!-- anchor: 1lvd0g7m -->
 ### File format (Anthropic-compatible)
 
 Skill directory with:
@@ -88,6 +102,7 @@ Skill directory with:
 - `assets/` (optional) — templates
 - `agents/openai.yaml` (optional) — UI metadata, dependencies, `allow_implicit_invocation`
 
+<!-- anchor: zd49e2uy -->
 ### Discovery (filesystem, hierarchical)
 
 - `.agents/skills/` — walked up from cwd through parent dirs to repo root
@@ -96,14 +111,17 @@ Skill directory with:
 
 File changes are detected automatically.
 
+<!-- anchor: xwjmij2c -->
 ### Dynamic loading
 
 **Progressive disclosure** at Codex-runtime level: metadata (name, description, file path, optional YAML metadata) shipped at start; full `SKILL.md` loaded only when the skill is selected. Invocation: explicit (`/skills` or `$name`) or implicit (when `allow_implicit_invocation: true`).
 
+<!-- anchor: abozlykm -->
 ### SDK gap
 
 `codex.startThread(options)` documented options are `workingDirectory`, `skipGitRepoCheck` — **no `skills` field, no `allowedSkills`, no listing callback**. Because skills are read from the filesystem by the Codex runtime itself, skills sitting in `$CWD/.agents/skills/` WILL be picked up when our adapter runs in that cwd — but there is no programmatic injection, filtering, or per-call toggle.
 
+<!-- anchor: lw6qrttm -->
 ### Our adapter status
 
 `src/adapters/codex.ts` does nothing about skills. Consumer can opt in by placing files in `.agents/skills/` relative to the adapter's cwd. Gap:
@@ -114,6 +132,7 @@ File changes are detected automatically.
 
 TODO (add to version watch): track `@openai/codex-sdk` changelog for a `skills` field on `ThreadOptions` or a `listSkills()` helper.
 
+<!-- anchor: bwhtsz14 -->
 ## Troubleshooting recipes
 
 - **"MCP tool calls aren't appearing"**
@@ -137,6 +156,7 @@ TODO (add to version watch): track `@openai/codex-sdk` changelog for a `skills` 
 - **"`turn.failed` with no error detail"**
   → Upstream — open an issue at https://github.com/openai/codex with the thread id. Our adapter just forwards to `error`.
 
+<!-- anchor: ptwasc3h -->
 ## Key files
 
 - `src/adapters/codex.ts` — implementation

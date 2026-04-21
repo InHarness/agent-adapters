@@ -1,12 +1,21 @@
 ---
 name: gemini-cli-core
-description: Use when editing src/adapters/gemini.ts or src/testing/e2e/gemini.e2e.test.ts, bumping @google/gemini-cli-core in package.json, debugging missing thinking/usage events, ask_user partial support, session resumption from ~/.gemini/projects, MCP server wiring, or extending UnifiedEvent. Gemini thinking is non-delta (replace:true), ask_user uses MessageBus TOOL_CONFIRMATION_REQUEST (not ASK_USER_REQUEST), 2.5-flash sometimes reports 0 output tokens requiring char-length fallback.
+description: >-
+  Use when editing src/adapters/gemini.ts or src/testing/e2e/gemini.e2e.test.ts,
+  bumping @google/gemini-cli-core in package.json, debugging missing
+  thinking/usage events, ask_user partial support, session resumption from
+  ~/.gemini/projects, MCP server wiring, or extending UnifiedEvent. Gemini
+  thinking is non-delta (replace:true), ask_user uses MessageBus
+  TOOL_CONFIRMATION_REQUEST (not ASK_USER_REQUEST), 2.5-flash sometimes reports
+  0 output tokens requiring char-length fallback.
 ---
 
+<!-- anchor: 6hxxl4ka -->
 # gemini adapter — `@google/gemini-cli-core`
 
 Gemini has the most internal plumbing of any adapter: a `LegacyAgentSession` driven by a `MessageBus`, thread-keyed subagent events, non-delta thinking, and filesystem-based session resumption. It's also on an internal-CLI package (not the public Google Gen AI SDK), so API breakage is more likely.
 
+<!-- anchor: e1potdn2 -->
 ## Why this package (and why we keep it despite being internal)
 
 This adapter exists for one strategic reason: **`@google/gemini-cli-core` is the only package in the Google ecosystem that supports free-tier Code Assist for Individuals OAuth** — logging in with a personal Google account to get free-tier quota without an API key or paid Vertex subscription. Every alternative (`@google/genai` Interactions API, `@google/adk`) requires an API key, Workspace OAuth, or a Vertex service account.
@@ -18,6 +27,7 @@ The package is **internal to the `gemini-cli` monorepo**. Google has not publish
 - API key / Workspace OAuth / Vertex, single-agent call → sibling skill **`google-genai`** (Interactions API; Beta, documented)
 - Multi-agent orchestration → sibling skill **`google-adk`** (Agent Development Kit for TypeScript; pre-GA for TS)
 
+<!-- anchor: ahkle4mi -->
 ## Official documentation & sources
 
 - **Repo** (monorepo: `packages/core`, `packages/cli`, `packages/a2a-server`): https://github.com/google-gemini/gemini-cli
@@ -28,6 +38,7 @@ The package is **internal to the `gemini-cli` monorepo**. Google has not publish
 - **Thinking config**: https://ai.google.dev/gemini-api/docs/thinking
 - **⚠️ Not to be confused with `@google/genai`** (public Google Gen AI SDK) — `gemini-cli-core` is an *internal CLI package* and its API can change without deprecation notice. Always re-check types on version bumps.
 
+<!-- anchor: y4du4389 -->
 ## Pinned version & TODO
 
 - **Dev**: `^0.38.0` (`package.json`)
@@ -40,6 +51,7 @@ The package is **internal to the `gemini-cli` monorepo**. Google has not publish
   - **Session file format** — resumption reads `~/.gemini/projects/*/chats/*`; format has changed before. Re-test resume after every version bump.
   - **Formal public SDK** — watch [gemini-cli#15539](https://github.com/google-gemini/gemini-cli/issues/15539). If Google publishes `@google/gemini-sdk` or stabilizes `gemini-cli-core` as public, remove the "internal" warnings in this skill and consider relaxing defensive code in `src/adapters/gemini.ts`.
 
+<!-- anchor: oni9mqh1 -->
 ## Native API surface
 
 - **Entry**: construct `Config { sessionId, targetDir, cwd, debugMode, model, approvalMode, excludeTools, maxSessionTurns, mcpServers, modelConfigServiceConfig }`, build `LegacyAgentSession` via `initialize()` **or** `resumeChat()`, then `session.sendStream(prompt)` yields events.
@@ -55,6 +67,7 @@ The package is **internal to the `gemini-cli` monorepo**. Google has not publish
   - `error`
 - **MessageBus** — a separate event bus on the `Config`; adapter subscribes to `TOOL_CONFIRMATION_REQUEST` with `details.type === 'ask_user'` for user-input bridging.
 
+<!-- anchor: v5aipfzs -->
 ## Event mapping table
 
 | Native | UnifiedEvent | Notes |
@@ -70,6 +83,7 @@ The package is **internal to the `gemini-cli` monorepo**. Google has not publish
 | `error` | `error` | |
 | final flush | `result` | includes estimated usage if native is 0 |
 
+<!-- anchor: ewtqml5f -->
 ## Quirks & gotchas
 
 1. **Thinking is non-delta.** Gemini emits the *full current thought summary* each time, not additions. The adapter sets `replace: true` on the event so downstream knows to overwrite prior thinking text rather than append. Don't concat — you'll see duplicated paragraphs.
@@ -85,10 +99,12 @@ The package is **internal to the `gemini-cli` monorepo**. Google has not publish
    - `gemini_thinkingBudget: number` — sets `thinkingConfig.thinkingBudget`
    - `gemini_thinkingLevel` — alternative, sets `thinkingConfig.thinkingLevel` (only if `thinkingBudget` absent)
 
+<!-- anchor: pnayxngd -->
 ## Skills support
 
 **Native support: partial and awkward — only via the Extensions bundle, no standalone skills, no dynamic loading, no public SDK.**
 
+<!-- anchor: 9hh3pz2a -->
 ### Shape of the feature
 
 Gemini CLI ships *Extensions* — a "shipping container" for customizations declared by a `gemini-extension.json` manifest. Inside an extension:
@@ -98,14 +114,17 @@ Gemini CLI ships *Extensions* — a "shipping container" for customizations decl
 
 Skills are only discoverable as part of a registered extension — there's no top-level `~/.gemini/skills/` or project `.gemini/skills/` analogous to Codex/OpenCode.
 
+<!-- anchor: q3lf8u3o -->
 ### Dynamic loading
 
 **None documented.** Per the extension reference: *"All management operations, including updates to slash commands, take effect only after you restart the CLI session."* Skills/commands added at runtime are not picked up without a restart.
 
+<!-- anchor: n57cq6v5 -->
 ### Programmatic API
 
 **No public surface in `@google/gemini-cli-core`.** The package is internal to the `gemini-cli` monorepo (see "Why this package" section above), and its reference documents `Config`, `LegacyAgentSession`, and the event model — not skills. There's no `listSkills()`, no `AgentInput.skills`, no skill-aware hook.
 
+<!-- anchor: 46tvikok -->
 ### Our adapter status
 
 `src/adapters/gemini.ts` **cannot pass skills** even if we wanted to. Even filesystem drop-in into `.gemini/extensions/<name>/skills/` requires a runtime restart per docs — and the adapter spins a fresh `LegacyAgentSession` per execute, so in theory each run could see updated skills, but this is not documented or tested behavior.
@@ -117,6 +136,7 @@ TODO (add to version watch):
 - Programmatic skill listing / per-session enablement
 - Move out of Extensions-only constraint
 
+<!-- anchor: ub8ipccx -->
 ## Troubleshooting recipes
 
 - **"Thinking text is duplicated / grows weirdly"**
@@ -143,6 +163,7 @@ TODO (add to version watch):
 - **"Subagent events never fire"**
   → Gemini only emits subagent events when a tool call has a `threadId`. Top-level tool calls (no `threadId`) map to plain `tool_use` / `tool_result`.
 
+<!-- anchor: 3u7jl1n3 -->
 ## Key files
 
 - `src/adapters/gemini.ts` — implementation (look for MessageBus handling + session file resolution)

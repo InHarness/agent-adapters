@@ -1,12 +1,3 @@
----
-name: unified-architecture
-description: >-
-  Use when editing src/types.ts, src/index.ts, src/models.ts, or adding a new
-  adapter/event type to @inharness/agent-adapters. Explains the RuntimeAdapter
-  contract, the UnifiedEvent taxonomy, NormalizedMessage shape,
-  RuntimeExecuteParams, the capability matrix across adapters, and the checklist
-  for extending the unified layer without breaking adapters.
----
 
 <!-- anchor: d4simyue -->
 # Unified Architecture — the contract all SDK adapters translate to
@@ -18,9 +9,9 @@ This library exposes a single interface over heterogeneous agent SDKs. This skil
 
 Standards the unified layer is built on top of:
 
-- **Model Context Protocol (MCP) spec**: https://modelcontextprotocol.io/ and https://spec.modelcontextprotocol.io/
+- **Model Context Protocol (MCP) spec**: https://modelcontextprotocol.io/specification/ (canonical host; `spec.modelcontextprotocol.io` is deprecated/offline)
 - **MCP TypeScript SDK**: https://github.com/modelcontextprotocol/typescript-sdk — npm: https://www.npmjs.com/package/@modelcontextprotocol/sdk
-- **MCP elicitation** (user-input side-channel spec): https://spec.modelcontextprotocol.io/specification/server/utilities/elicitation/
+- **MCP elicitation** (user-input side-channel spec): https://modelcontextprotocol.io/specification/draft/client/elicitation — lives under `client/`, not `server/utilities/`. Covers both **form mode** (structured JSON-schema input) and **url mode** (out-of-band via URL, introduced in `2025-11-25`, used for credentials / OAuth flows). Response actions: `accept` / `decline` / `cancel`. Errors: `URLElicitationRequiredError` (`-32042`) signals the client must complete a URL elicitation before retrying.
 - **Per-adapter skills** (capability detail):
   - `claude-code-sdk` — the reference adapter
   - `codex-sdk`
@@ -53,7 +44,7 @@ Defined in `src/types.ts:36-59`. Groups (bold = required for basic conformance):
 - **Text**: `text_delta { text, isSubagent }`, `assistant_message { message: NormalizedMessage }`
 - **Thinking**: `thinking { text, isSubagent, replace? }` — `replace: true` signals the whole thinking text, not a delta (see `gemini-cli-core` skill for why)
 - **Tools**: `tool_use { toolName, toolUseId, input, isSubagent }`, `tool_result { toolUseId, summary, isSubagent, isError? }` — `isError` mirrors `ContentBlock.toolResult.isError`; absent when the adapter has no error signal (see capability matrix)
-- **Subagent lifecycle**: `subagent_started { taskId, description, toolUseId }`, `subagent_progress { taskId, description, lastToolName? }`, `subagent_completed { taskId, status, summary?, usage? }`
+- **Subagent lifecycle**: `subagent_started { taskId, description, toolUseId }`, `subagent_progress { taskId, description, lastToolName? }`, `subagent_completed { taskId, status, summary?, usage? }` — te eventy opisują *cykl życia* subagenta (start / postęp / koniec). Subagenty emitują **również normalne eventy** (`text_delta`, `tool_use`, `tool_result`, `thinking`, itp.) z flagą `isSubagent: true`, dzięki której konsumenci mogą je odróżnić od eventów głównego wątku. `taskId` pozwala grupować wszystkie eventy jednego subagenta.
 - **User input**: `user_input_request { request: UserInputRequest }` — unified entry point for model-tool asks and MCP elicitation
 - **Legacy user input**: `elicitation_request { ... }` — **deprecated**, adapters should emit `user_input_request` with `source: 'mcp-elicitation'` instead
 - **Terminal**: `result { output, rawMessages, usage, sessionId? }`, `error { error }`

@@ -1,12 +1,22 @@
 ---
 name: claude-code-sdk
-description: Use when editing src/adapters/claude-code.ts or src/testing/e2e/claude-code.e2e.test.ts, bumping @anthropic-ai/claude-agent-sdk in package.json, debugging missing/unexpected events from the Claude Code adapter (thinking, subagents, AskUserQuestion, MCP elicitation, resume), or extending UnifiedEvent and needing to know what claude-code can emit natively. Covers Opus 4.7 ADAPTIVE_THINKING_ONLY, claude_* architectureConfig keys, dual-channel user input, and preset system prompts.
+description: >-
+  Use when editing src/adapters/claude-code.ts or
+  src/testing/e2e/claude-code.e2e.test.ts, bumping
+  @anthropic-ai/claude-agent-sdk in package.json, debugging missing/unexpected
+  events from the Claude Code adapter (thinking, subagents, AskUserQuestion, MCP
+  elicitation, resume), or extending UnifiedEvent and needing to know what
+  claude-code can emit natively. Covers Opus 4.7 ADAPTIVE_THINKING_ONLY,
+  claude_* architectureConfig keys, dual-channel user input, and preset system
+  prompts.
 ---
 
+<!-- anchor: 5i6ubzxc -->
 # claude-code adapter — `@anthropic-ai/claude-agent-sdk`
 
 This is the **reference adapter** — closest to the UnifiedEvent semantics, because the unified layer was originally designed around Claude Code's event model. Use it as the baseline when extending `src/types.ts` or sanity-checking other adapters.
 
+<!-- anchor: mw4jf15k -->
 ## Official documentation & sources
 
 - **Overview**: https://docs.claude.com/en/docs/claude-code/sdk
@@ -16,6 +26,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 - **MCP docs (server setup, elicitation)**: https://docs.claude.com/en/docs/claude-code/mcp
 - **Anthropic Messages API reference** (for thinking/effort parameters): https://docs.claude.com/en/api/messages
 
+<!-- anchor: 0vsr6pry -->
 ## Pinned version & TODO
 
 - **Dev**: `^0.2.109` (`package.json`)
@@ -26,6 +37,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
   - `canUseTool` callback ergonomics — if the SDK adds a first-class ask-user tool type, reduce our custom AskUserQuestion plumbing.
   - Preset expansion — currently only `'claude_code'`. If more presets ship, `claude_usePreset` should accept them.
 
+<!-- anchor: da7anbcx -->
 ## Native API surface
 
 - **Entry**: `query({ prompt, options })` returns an async iterable of `SDKMessage` objects.
@@ -48,6 +60,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
   - `tool_use_summary` — accumulated tool-use summary
   - `result` — final with usage, session id
 
+<!-- anchor: zmlptiyv -->
 ## Event mapping table
 
 | Native (SDK) | UnifiedEvent | Notes |
@@ -65,6 +78,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 | `options.onElicitation(req)` | `user_input_request` (source=`'mcp-elicitation'`) | MCP side-channel |
 | `result` | `result` | includes `sessionId` for resume |
 
+<!-- anchor: pqk13bxx -->
 ## Quirks & gotchas
 
 1. **Opus 4.7 requires adaptive thinking.** `src/models.ts:ADAPTIVE_THINKING_ONLY` lists model IDs that reject fixed-budget thinking. The adapter auto-converts `{ type: 'enabled', budget_tokens: N }` into `{ type: 'adaptive' }` for those models. When a new Opus ships, verify whether it also needs this.
@@ -83,10 +97,12 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 6. **Subagent events are first-class.** Unlike other adapters, we don't synthesize — we map. `task_started/progress/notification` carry `taskId` directly.
 7. **`compact_boundary`** fires before the SDK compresses history. Emit `flush` so downstream can checkpoint.
 
+<!-- anchor: b46yqjzy -->
 ## Skills support
 
 **Native support: first-class, fully dynamic.** Skills are a built-in Claude Code concept with the widest SDK surface of any adapter we wrap.
 
+<!-- anchor: vr2bteuk -->
 ### SDK surface (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`)
 
 - `AgentInput.skills?: string[]` (line 67) — preload specific skill names into the agent's context at session start
@@ -99,14 +115,17 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 - `SlashCommand { name, description, argumentHint }` (lines 4369-4381) — skill descriptor shape
 - `ConfigChange` hook with `source: 'skills'` (line 192) — fires when skill files change on disk
 
+<!-- anchor: rvzindrz -->
 ### Dynamic loading
 
 **Progressive disclosure**: at init, the SDK ships only `{ name, description }` per skill into the model context (budgeted by `skillListingBudgetFraction`). The body of `SKILL.md` is loaded into context only when the model invokes the skill. No restart required — file changes trigger a `ConfigChange` hook.
 
+<!-- anchor: cmgr1my5 -->
 ### Filesystem discovery
 
 `.claude/skills/<name>/SKILL.md` (project), `~/.claude/skills/<name>/SKILL.md` (user), plus plugin-bundled skills via `options.plugins`.
 
+<!-- anchor: w8l32dhd -->
 ### Our adapter status
 
 `src/adapters/claude-code.ts` passes **none** of these fields today. A `grep -ri "skill" src/` returns zero matches. Gap to close when adding skills support:
@@ -115,6 +134,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 - Optionally expose `supportedCommands()` output as a pre-execute hook so consumers can pick skills programmatically
 - Consider emitting a synthetic `skill_invoked` unified event when a skill is opened (today the invocation is not distinguishable from a regular text turn)
 
+<!-- anchor: tzqm6r7w -->
 ## Troubleshooting recipes
 
 - **"Thinking events aren't showing for Opus 4.7"**
@@ -135,6 +155,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 - **"Adapter hangs on abort()"**
   → `abort()` must propagate to the SDK's internal signal. If you see a hang, verify the adapter's `AbortController.signal` is wired into `query({ options: { abortController } })`.
 
+<!-- anchor: dywisvaa -->
 ## Key files
 
 - `src/adapters/claude-code.ts` — implementation

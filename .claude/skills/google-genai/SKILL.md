@@ -1,12 +1,21 @@
 ---
 name: google-genai
-description: Use when designing or implementing the google-genai adapter at src/adapters/google-genai.ts (NOT YET IMPLEMENTED — this is a design brief), evaluating @google/genai Interactions API for paid Gemini use cases (API key / Workspace OAuth / Vertex), or deciding whether to route a Gemini call to gemini-cli-core (free-tier personal OAuth) vs google-genai (stable, documented, built-in MCP + SSE streaming + long-running tasks + Deep Research Agent). Covers Interactions API Beta status and design open questions.
+description: >-
+  Use when designing or implementing the google-genai adapter at
+  src/adapters/google-genai.ts (NOT YET IMPLEMENTED — this is a design brief),
+  evaluating @google/genai Interactions API for paid Gemini use cases (API key /
+  Workspace OAuth / Vertex), or deciding whether to route a Gemini call to
+  gemini-cli-core (free-tier personal OAuth) vs google-genai (stable,
+  documented, built-in MCP + SSE streaming + long-running tasks + Deep Research
+  Agent). Covers Interactions API Beta status and design open questions.
 ---
 
+<!-- anchor: fkbj8d63 -->
 # google-genai adapter — `@google/genai` Interactions API
 
 > **Status: PLANNED — not yet implemented.** This file is a design brief. When `src/adapters/google-genai.ts` is created, promote it to a full implementation doc (use sibling adapter skills as a template — sections: Pinned version, Native API surface, Event mapping, Quirks, Troubleshooting).
 
+<!-- anchor: fkxdlqmg -->
 ## Why we're adding this
 
 The existing `gemini-cli-core` adapter exists strictly to support **free-tier Code Assist for Individuals OAuth** — the only Google path without a paid API key. But `gemini-cli-core` is internal, undocumented, and unstable.
@@ -23,6 +32,7 @@ For every other Gemini use case — paid API key, Workspace OAuth, Vertex AI —
 
 Status is **Beta** — breaking schema changes possible. Pin conservatively.
 
+<!-- anchor: rt6p570n -->
 ## Official documentation & sources
 
 - **Interactions API docs**: https://ai.google.dev/gemini-api/docs/interactions
@@ -33,6 +43,7 @@ Status is **Beta** — breaking schema changes possible. Pin conservatively.
 - **npm (`@google/genai`)**: https://www.npmjs.com/package/@google/genai
 - **Repo (`js-genai`)**: https://github.com/googleapis/js-genai
 
+<!-- anchor: 311twra0 -->
 ## Pinned version & TODO (placeholder — fill in at implementation time)
 
 - **Planned peer**: `@google/genai` (latest observed at research time: `1.48.0`; pin to current stable at impl)
@@ -43,6 +54,7 @@ Status is **Beta** — breaking schema changes possible. Pin conservatively.
   - Background execution via polling — design how our `execute(): AsyncIterable<UnifiedEvent>` bridges long-running async tasks
   - Confirm whether this SDK can emit `thinking` incrementally or only as a final summary
 
+<!-- anchor: 3tkjli23 -->
 ## Design brief (capability map)
 
 | UnifiedEvent / Capability | Interactions API mapping (expected) | Confidence |
@@ -58,6 +70,7 @@ Status is **Beta** — breaking schema changes possible. Pin conservatively.
 | `planMode` | no native sandbox; restrict tools to read-only or emit warning | ⚠️ design at impl |
 | MCP transports | remote only; likely SSE + HTTP (stdio unlikely) | medium |
 
+<!-- anchor: uhw8n4la -->
 ## Open questions (resolve at impl time)
 
 1. **Auth modes**: API key confirmed; Workspace OAuth confirmed; personal OAuth — should be routed to `gemini-cli-core` sibling. Verify behavior if consumer passes personal credentials accidentally.
@@ -68,12 +81,14 @@ Status is **Beta** — breaking schema changes possible. Pin conservatively.
 6. **Session resumption fidelity**: is `previous_interaction_id` a full state restore or just context hint? Compare with `claude-code`'s native `options.resume`.
 7. **Vertex AI path**: single architecture `google-genai` handling both backends, or split into `google-genai` + `google-genai-vertex`?
 
+<!-- anchor: ajd1aj3w -->
 ## Non-goals
 
 - **Free-tier Code Assist for Individuals OAuth** — stays in `gemini-cli-core` sibling. If consumer needs it, route there.
 - **Shell / filesystem as native tools** — Interactions API does not provide these. Consumer brings them via MCP (e.g. `@modelcontextprotocol/server-filesystem`).
 - **Multi-agent orchestration** — that's the `google-adk` sibling's job. Interactions API is single-interaction per call.
 
+<!-- anchor: b74fizs3 -->
 ## Skills support (design note)
 
 **Native support: none.** Neither `@google/genai` nor the Interactions API expose a skills primitive. Available extensibility:
@@ -83,10 +98,12 @@ Status is **Beta** — breaking schema changes possible. Pin conservatively.
 - Built-in tools: Google Search, Maps, Code execution, URL context, Computer Use, File search
 - Remote MCP servers
 
+<!-- anchor: 7yiv1hwv -->
 ### Don't confuse with `gemini-skills`
 
 [github.com/google-gemini/gemini-skills](https://github.com/google-gemini/gemini-skills) ships markdown *documentation modules* (e.g. `gemini-api-dev/SKILL.md`, `gemini-interactions-api/SKILL.md`) meant to be loaded **by developers into their own prompts at authoring time** — either pasted into `systemInstruction` or fed through a coding assistant. **It is not a runtime SDK capability.** There is no progressive disclosure, no auto-discovery, no `loadSkill()` method.
 
+<!-- anchor: 88lbwz9y -->
 ### Closest analogues (at implementation time, pick one)
 
 1. **Unsupported + warning** — cleanest; emit a one-shot `warning` event when `RuntimeExecuteParams.skills` is provided. Callers who need skills route to `claude-code` or `opencode` instead.
@@ -95,10 +112,12 @@ Status is **Beta** — breaking schema changes possible. Pin conservatively.
 
 Recommendation: option 3, for consistency with `google-adk` and to keep the event stream clean (a normal `tool_use` + `tool_result` pair).
 
+<!-- anchor: bx9ckv3u -->
 ### Dynamic loading
 
 None natively. Option 3 above synthesises it via function calling.
 
+<!-- anchor: ufndytv4 -->
 ## Architectures this adapter will register
 
 - `google-genai` — primary, Gemini Developer API backend
@@ -106,6 +125,7 @@ None natively. Option 3 above synthesises it via function calling.
 
 Model aliases to be added in `src/models.ts` mirroring the existing `gemini` architecture (Gemini 3.1 / 2.5 families), plus specialized ones like `deep-research`.
 
+<!-- anchor: gz5ycu3g -->
 ## Key files (at implementation time)
 
 - `src/adapters/google-genai.ts` — NEW
@@ -115,6 +135,7 @@ Model aliases to be added in `src/models.ts` mirroring the existing `gemini` arc
 - `src/index.ts` — register in `createAdapter()`
 - `package.json` — add `@google/genai` peer + dev dep, bump version in dep range
 
+<!-- anchor: vdiniqjo -->
 ## Reminder
 
 When implementing, follow the unified-architecture checklist (see `unified-architecture` skill, section "Checklist: adding a new event type or param field") — every new adapter must update the capability matrix and provide graceful degradation for anything it can't emit.
