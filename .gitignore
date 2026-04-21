@@ -3,3 +3,4 @@ dist/
 *.tsbuildinfo
 .env
 .claude4spec/
+.buddy/buddy.yml
