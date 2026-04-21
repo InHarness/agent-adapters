@@ -65,7 +65,7 @@ export interface McpServerInstance {
  * @example
  * ```typescript
  * import { z } from 'zod';
- * import { createMcpServer, mcpTool } from '@inharness/agent-adapters';
+ * import { createMcpServer, mcpTool } from '@inharness-ai/agent-adapters';
  *
  * const { config } = createMcpServer({
  *   name: 'my-tools',

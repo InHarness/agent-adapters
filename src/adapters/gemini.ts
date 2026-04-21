@@ -457,15 +457,16 @@ export class GeminiAdapter implements RuntimeAdapter {
             if (!content) break;
 
             const isSubagent = !!event.threadId;
+            const subagentTaskId = event.threadId as string | undefined;
 
             if (role === 'agent') {
               for (const part of content) {
                 if (part.type === 'thought') {
                   // Gemini emits each thought as a complete summary (not a token delta),
                   // so each event must start a new block instead of concatenating.
-                  yield { type: 'thinking', text: part.thought as string, isSubagent, replace: true };
+                  yield { type: 'thinking', text: part.thought as string, isSubagent, replace: true, subagentTaskId };
                 } else if (part.type === 'text') {
-                  yield { type: 'text_delta', text: part.text as string, isSubagent };
+                  yield { type: 'text_delta', text: part.text as string, isSubagent, subagentTaskId };
                 }
               }
 
@@ -484,12 +485,14 @@ export class GeminiAdapter implements RuntimeAdapter {
 
           case 'tool_request': {
             const isSubagent = !!event.threadId;
+            const subagentTaskId = event.threadId as string | undefined;
             yield {
               type: 'tool_use',
               toolName: event.name as string,
               toolUseId: event.requestId as string,
               input: event.args as unknown,
               isSubagent,
+              subagentTaskId,
             };
 
             // Synthesize subagent_started from tool_request with threadId
@@ -511,12 +514,15 @@ export class GeminiAdapter implements RuntimeAdapter {
               ?.filter((p) => p.type === 'text')
               .map((p) => p.text as string)
               .join('\n') ?? '';
+            const isSubagent = !!event.threadId;
+            const subagentTaskId = event.threadId as string | undefined;
             yield {
               type: 'tool_result',
               toolUseId: event.requestId as string,
               summary,
-              isSubagent: false,
+              isSubagent,
               isError: event.isError as boolean | undefined,
+              subagentTaskId,
             };
             break;
           }

@@ -357,6 +357,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
     const rawMessages: NormalizedMessage[] = [];
     let sessionId: string | undefined;
+    // parent_tool_use_id → task_id lookup. Populated on `system` subtype
+    // `task_started`; read on every delta/tool event to resolve subagentTaskId.
+    const subagentTaskIdByParentToolUseId = new Map<string, string>();
 
     // Timeout handling
     let timedOut = false;
@@ -467,14 +470,18 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         switch (event.type) {
           case 'stream_event': {
             const streamEvent = event.event as unknown as Record<string, unknown>;
-            const isSubagent = event.parent_tool_use_id != null;
+            const parentToolUseId = event.parent_tool_use_id ?? undefined;
+            const isSubagent = parentToolUseId != null;
+            const subagentTaskId = parentToolUseId
+              ? subagentTaskIdByParentToolUseId.get(parentToolUseId)
+              : undefined;
 
             if (streamEvent.type === 'content_block_delta') {
               const delta = streamEvent.delta as Record<string, unknown>;
               if (delta.type === 'text_delta') {
-                yield { type: 'text_delta', text: delta.text as string, isSubagent };
+                yield { type: 'text_delta', text: delta.text as string, isSubagent, subagentTaskId };
               } else if (delta.type === 'thinking_delta') {
-                yield { type: 'thinking', text: delta.thinking as string, isSubagent };
+                yield { type: 'thinking', text: delta.thinking as string, isSubagent, subagentTaskId };
               }
             }
             break;
@@ -483,7 +490,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           case 'assistant': {
             const normalized = normalizeAssistantMessage(event);
             rawMessages.push(normalized);
-            const isSubagent = event.parent_tool_use_id != null;
+            const parentToolUseId = event.parent_tool_use_id ?? undefined;
+            const isSubagent = parentToolUseId != null;
+            const subagentTaskId = parentToolUseId
+              ? subagentTaskIdByParentToolUseId.get(parentToolUseId)
+              : undefined;
 
             for (const block of normalized.content) {
               if (block.type === 'toolUse') {
@@ -493,6 +504,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   toolUseId: block.toolUseId,
                   input: block.input,
                   isSubagent,
+                  subagentTaskId,
                 };
               }
             }
@@ -503,7 +515,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
           case 'user': {
             const userMsg = event as Record<string, unknown>;
-            const isSubagent = (userMsg as Record<string, unknown>).parent_tool_use_id != null;
+            const parentToolUseId = (userMsg.parent_tool_use_id as string | undefined) ?? undefined;
+            const isSubagent = parentToolUseId != null;
+            const subagentTaskId = parentToolUseId
+              ? subagentTaskIdByParentToolUseId.get(parentToolUseId)
+              : undefined;
             const message = userMsg.message as Record<string, unknown>;
             if (message && Array.isArray(message.content)) {
               const normalized: NormalizedMessage = {
@@ -522,6 +538,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                     summary: block.content,
                     isSubagent,
                     isError: block.isError,
+                    subagentTaskId,
                   };
                 }
               }
@@ -530,12 +547,17 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           }
 
           case 'tool_use_summary': {
-            const isSubagent = (event as Record<string, unknown>).parent_tool_use_id != null;
+            const parentToolUseId = ((event as Record<string, unknown>).parent_tool_use_id as string | undefined) ?? undefined;
+            const isSubagent = parentToolUseId != null;
+            const subagentTaskId = parentToolUseId
+              ? subagentTaskIdByParentToolUseId.get(parentToolUseId)
+              : undefined;
             yield {
               type: 'tool_result',
               toolUseId: event.preceding_tool_use_ids?.[0] ?? 'unknown',
               summary: event.summary,
               isSubagent,
+              subagentTaskId,
             };
             break;
           }
@@ -544,11 +566,14 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             const subtype = (event as Record<string, unknown>).subtype as string;
             if (subtype === 'task_started') {
               const e = event as Record<string, unknown>;
+              const taskId = e.task_id as string;
+              const toolUseId = (e.tool_use_id as string) ?? '';
+              if (toolUseId) subagentTaskIdByParentToolUseId.set(toolUseId, taskId);
               yield {
                 type: 'subagent_started',
-                taskId: e.task_id as string,
+                taskId,
                 description: e.description as string,
-                toolUseId: (e.tool_use_id as string) ?? '',
+                toolUseId,
               };
             } else if (subtype === 'task_progress') {
               const e = event as Record<string, unknown>;

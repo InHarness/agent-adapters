@@ -65,8 +65,8 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 
 | Native (SDK) | UnifiedEvent | Notes |
 |---|---|---|
-| `stream_event` → `text_delta` | `text_delta` | 1:1, `isSubagent` from context |
-| `stream_event` → `thinking_delta` | `thinking` | incremental, `replace` omitted/false |
+| `stream_event` → `text_delta` | `text_delta` | 1:1, `isSubagent` from context; `subagentTaskId` resolved via `parent_tool_use_id → task_id` map |
+| `stream_event` → `thinking_delta` | `thinking` | incremental, `replace` omitted/false; `subagentTaskId` resolved same way as `text_delta` |
 | `assistant` | `assistant_message` | full `NormalizedMessage`, content blocks mapped |
 | `user` (tool_result inside) | `assistant_message` (role user) + `tool_result` per block | each `tool_result` block's `is_error` is passed through to both `ContentBlock.toolResult.isError` and `UnifiedEvent.tool_result.isError` |
 | `system` subtype=`task_started` | `subagent_started` | `taskId` from event, `toolUseId` from parent Task call |
@@ -96,6 +96,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 5. **MCP server types supported**: stdio, SSE, HTTP, in-process SDK (via `@modelcontextprotocol/sdk`'s `McpServer`). The widest coverage of all four adapters.
 6. **Subagent events are first-class.** Unlike other adapters, we don't synthesize — we map. `task_started/progress/notification` carry `taskId` directly.
 7. **`compact_boundary`** fires before the SDK compresses history. Emit `flush` so downstream can checkpoint.
+8. **`subagentTaskId` on deltas requires a local lookup.** The SDK puts `parent_tool_use_id` on every `stream_event`, but the true subagent `taskId` only appears on the `task_started` system event. Adapter keeps a `Map<parent_tool_use_id, task_id>` per `execute()` call, populated on `task_started` and read on every delta / tool event. If a delta arrives before `task_started` (race), `isSubagent: true` is emitted with `subagentTaskId: undefined` — acceptable graceful degradation.
 
 <!-- anchor: b46yqjzy -->
 ## Skills support

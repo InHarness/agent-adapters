@@ -88,6 +88,7 @@ OpenCode is the only adapter that requires an **external CLI binary in PATH** an
    - `opencode_temperature`, `opencode_topP` — inference params
 8. **Question flow is POST-back**, not a promise. When `question.asked` arrives, the adapter calls `onUserInput`; the response is POSTed to the v2 client's question-reply endpoint. Failure to POST stalls the run indefinitely (until abort).
 9. **`opencode-openrouter` architecture** uses OpenRouter as the provider; model aliases (`claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1`) resolve to `anthropic/...`, `google/...`, `deepseek/...` strings.
+10. **`subagentTaskId` is inferred from SSE ordering, not carried on the event.** OpenCode's `message.part.updated` events for `text` / `reasoning` do **not** include a `callId`. The adapter tracks a single `activeSubagentTaskId` that is set when the `task` tool enters `running` (using its `callId`) and cleared when the matching `completed`/`error` arrives. Text/thinking deltas observed in that window are attributed to that task. Assumes chronological SSE delivery (empirically true but not formally guaranteed upstream). **Single-active-subagent only** — if OpenCode ever ships nested/parallel tasks, the flat variable must become a stack.
 
 <!-- anchor: y44duhba -->
 ## Skills support

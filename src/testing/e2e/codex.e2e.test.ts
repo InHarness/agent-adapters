@@ -153,6 +153,29 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
     });
   });
 
+  it('no subagent events and subagentTaskId is never populated', async () => {
+    const adapter = createAdapter('codex');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt: SIMPLE_PROMPT,
+        systemPrompt: SIMPLE_SYSTEM_PROMPT,
+        model: 'o4-mini',
+        maxTurns: 1,
+      }),
+    );
+
+    // Codex SDK has no subagent concept.
+    expect(events.some((e) => e.type.startsWith('subagent_'))).toBe(false);
+
+    const deltaLikeTypes = new Set(['text_delta', 'thinking', 'tool_use', 'tool_result']);
+    for (const e of events) {
+      if (!deltaLikeTypes.has(e.type)) continue;
+      const d = e as Extract<UnifiedEvent, { type: 'text_delta' | 'thinking' | 'tool_use' | 'tool_result' }>;
+      expect(d.isSubagent).toBe(false);
+      expect(d.subagentTaskId).toBeUndefined();
+    }
+  });
+
   describe('onUserInput — not supported by SDK', () => {
     it('emits warning and never invokes the handler', async () => {
       const adapter = createAdapter('codex');

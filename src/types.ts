@@ -1,4 +1,4 @@
-// @inharness/agent-adapters — Core types
+// @inharness-ai/agent-adapters — Core types
 // Based on InHarness M04 spec (m04-orchestration.md)
 
 import type { ArchitectureModelMap } from './models.js';
@@ -37,11 +37,28 @@ export interface UsageStats {
 
 // --- Unified Events ---
 
+/**
+ * `subagentTaskId` on the delta-like variants (`text_delta`, `thinking`,
+ * `tool_use`, `tool_result`) matches the `taskId` of the surrounding
+ * `subagent_started` envelope. Required for grouping when multiple subagents
+ * run concurrently — `isSubagent: true` alone is too coarse.
+ *
+ * Per-adapter support:
+ *   - claude-code: ✅ mapped from `parent_tool_use_id` via local lookup
+ *   - gemini:      ✅ direct pass-through of `event.threadId`
+ *   - opencode:    ⚠️ inferred from SSE ordering (single active subagent only)
+ *   - codex:       ❌ SDK has no subagent concept — always `undefined`
+ *
+ * Graceful degradation: when a delta carries `isSubagent: true` but no
+ * `subagentTaskId` (e.g. claude-code race before `task_started`, or upstream
+ * SDK doesn't expose the ID), consumers should treat the event as belonging
+ * to an unknown subagent rather than the parent.
+ */
 export type UnifiedEvent =
-  | { type: 'text_delta'; text: string; isSubagent: boolean }
-  | { type: 'tool_use'; toolName: string; toolUseId: string; input: unknown; isSubagent: boolean }
-  | { type: 'tool_result'; toolUseId: string; summary: string; isSubagent: boolean; isError?: boolean }
-  | { type: 'thinking'; text: string; isSubagent: boolean; replace?: boolean }
+  | { type: 'text_delta'; text: string; isSubagent: boolean; subagentTaskId?: string }
+  | { type: 'tool_use'; toolName: string; toolUseId: string; input: unknown; isSubagent: boolean; subagentTaskId?: string }
+  | { type: 'tool_result'; toolUseId: string; summary: string; isSubagent: boolean; isError?: boolean; subagentTaskId?: string }
+  | { type: 'thinking'; text: string; isSubagent: boolean; replace?: boolean; subagentTaskId?: string }
   | { type: 'assistant_message'; message: NormalizedMessage }
   | { type: 'subagent_started'; taskId: string; description: string; toolUseId: string }
   | { type: 'subagent_progress'; taskId: string; description: string; lastToolName?: string }

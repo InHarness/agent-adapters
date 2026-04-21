@@ -70,7 +70,7 @@ Codex is the most constrained of the four adapters: thread-based API, no native 
 | `turn.completed` | `result` | aggregates usage; `sessionId` not tracked here |
 | `turn.failed` | `error` | |
 
-No native subagent events → `subagent_*` events are **not emitted**.
+No native subagent events → `subagent_*` events are **not emitted**. Consequently `subagentTaskId` on `text_delta` / `thinking` / `tool_use` / `tool_result` is **always `undefined`** and `isSubagent` is always `false`. See `unified-architecture` skill's capability matrix.
 
 <!-- anchor: olljlmnb -->
 ## Quirks & gotchas

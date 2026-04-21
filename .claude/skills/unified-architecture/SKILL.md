@@ -2,7 +2,7 @@
 name: unified-architecture
 description: >-
   Use when editing src/types.ts, src/index.ts, src/models.ts, or adding a new
-  adapter/event type to @inharness/agent-adapters. Explains the RuntimeAdapter
+  adapter/event type to @inharness-ai/agent-adapters. Explains the RuntimeAdapter
   contract, the UnifiedEvent taxonomy, NormalizedMessage shape,
   RuntimeExecuteParams, the capability matrix across adapters, and the checklist
   for extending the unified layer without breaking adapters.
@@ -50,9 +50,9 @@ Three obligations:
 
 Defined in `src/types.ts:36-59`. Groups (bold = required for basic conformance):
 
-- **Text**: `text_delta { text, isSubagent }`, `assistant_message { message: NormalizedMessage }`
-- **Thinking**: `thinking { text, isSubagent, replace? }` — `replace: true` signals the whole thinking text, not a delta (see `gemini-cli-core` skill for why)
-- **Tools**: `tool_use { toolName, toolUseId, input, isSubagent }`, `tool_result { toolUseId, summary, isSubagent, isError? }` — `isError` mirrors `ContentBlock.toolResult.isError`; absent when the adapter has no error signal (see capability matrix)
+- **Text**: `text_delta { text, isSubagent, subagentTaskId? }`, `assistant_message { message: NormalizedMessage }`
+- **Thinking**: `thinking { text, isSubagent, replace?, subagentTaskId? }` — `replace: true` signals the whole thinking text, not a delta (see `gemini-cli-core` skill for why)
+- **Tools**: `tool_use { toolName, toolUseId, input, isSubagent, subagentTaskId? }`, `tool_result { toolUseId, summary, isSubagent, isError?, subagentTaskId? }` — `isError` mirrors `ContentBlock.toolResult.isError`; absent when the adapter has no error signal (see capability matrix)
 - **Subagent lifecycle**: `subagent_started { taskId, description, toolUseId }`, `subagent_progress { taskId, description, lastToolName? }`, `subagent_completed { taskId, status, summary?, usage? }`
 - **User input**: `user_input_request { request: UserInputRequest }` — unified entry point for model-tool asks and MCP elicitation
 - **Legacy user input**: `elicitation_request { ... }` — **deprecated**, adapters should emit `user_input_request` with `source: 'mcp-elicitation'` instead
@@ -60,6 +60,8 @@ Defined in `src/types.ts:36-59`. Groups (bold = required for basic conformance):
 - **Misc**: `warning { message }`, `flush` (boundary hint, e.g. Claude Code `compact_boundary`)
 
 **Always include `isSubagent`** on delta-like events. Subagent events carry `taskId` so consumers can group them.
+
+**Subagents emit the full event stream**, not just the `subagent_*` lifecycle envelope. While a subagent is running, its `text_delta` / `thinking` / `tool_use` / `tool_result` are interleaved with the parent's in the same stream. `isSubagent: true` marks them as belonging to *some* subagent; `subagentTaskId?` (optional) carries the same value as the surrounding `subagent_started.taskId` so consumers can group events per subagent when multiple run concurrently. The field is optional because not every adapter can populate it (see capability matrix row "Subagent taskId on deltas"); consumers must handle `undefined` gracefully.
 
 <!-- anchor: iku0e0vm -->
 ## `NormalizedMessage` + `ContentBlock`
@@ -118,6 +120,7 @@ When both `onUserInput` and `onElicitation` are provided, `onUserInput` wins.
 | `resumeSessionId` | ✅ native `options.resume` | ⚠️ `resumeThread` but no tracking | ✅ reads `~/.gemini/projects/*/chats/` | ⚠️ partial |
 | Thinking deltas | ✅ incremental | ⚠️ chunks via reasoning event | ❌ full summary with `replace: true` | ✅ incremental |
 | Subagent lifecycle | ✅ native `task_*` system events | ⚠️ synthesized | ⚠️ synthesized per `threadId` | ⚠️ synthesized |
+| Subagent taskId on deltas (`subagentTaskId`) | ✅ mapped from `parent_tool_use_id` via local lookup | ❌ no subagent concept in SDK | ✅ direct pass-through of `event.threadId` | ⚠️ ordering-based (single active) |
 | Tool-error signal (`tool_result.isError`) | ✅ pass-through `is_error` from SDK tool_result blocks | ✅ derived from `status === 'failed'` / `exit_code` / `error` per item type | ✅ pass-through `event.isError` on `tool_response` | ✅ set on `status === 'error'` branch |
 
 This table decides whether a new unified feature degrades gracefully. If you add a new event/field and three adapters can't emit it, design the graceful degradation (warning event, or silently skip with adapter-specific note).
@@ -125,7 +128,7 @@ This table decides whether a new unified feature degrades gracefully. If you add
 <!-- anchor: exiq2qlz -->
 ## Skills (cross-cutting concern)
 
-`@inharness/agent-adapters` currently has **no skills support at the unified layer**: no `skills` field in `RuntimeExecuteParams`, no `skill_listing` / `skill_invoked` events in `UnifiedEvent`, no adapter bridges. See per-adapter skill files for native capability; the snapshot:
+`@inharness-ai/agent-adapters` currently has **no skills support at the unified layer**: no `skills` field in `RuntimeExecuteParams`, no `skill_listing` / `skill_invoked` events in `UnifiedEvent`, no adapter bridges. See per-adapter skill files for native capability; the snapshot:
 
 | Adapter | Native skills | Dynamic loading | Filesystem | Programmatic SDK API | Our adapter passes through? |
 |---|:---:|:---:|---|---|:---:|

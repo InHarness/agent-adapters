@@ -1,6 +1,6 @@
 {
-  "name": "@inharness/agent-adapters",
-  "version": "0.1.0",
+  "name": "@inharness-ai/agent-adapters",
+  "version": "0.2.0",
   "description": "Unified TypeScript interface for AI agent SDKs — Claude Code, Codex, OpenCode, Gemini",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -135,7 +135,17 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/inharness/agent-adapters"
+    "url": "git+https://github.com/inharness/agent-adapters.git"
   },
-  "author": "InHarness"
+  "bugs": {
+    "url": "https://github.com/inharness/agent-adapters/issues"
+  },
+  "homepage": "https://github.com/inharness/agent-adapters#readme",
+  "author": "InHarness",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

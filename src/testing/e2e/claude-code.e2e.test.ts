@@ -28,6 +28,8 @@ import {
   THINKING_SYSTEM_PROMPT,
   SUBAGENT_PROMPT,
   SUBAGENT_SYSTEM_PROMPT,
+  assertSubagentTaskIdConsistency,
+  assertAtLeastOneSubagentTaskIdPopulated,
   PLAN_WRITE_PROMPT,
   PLAN_WRITE_SYSTEM_PROMPT,
   PLAN_READ_PROMPT,
@@ -229,6 +231,10 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
         (e) => ('isSubagent' in e && e.isSubagent) || e.type.startsWith('subagent_'),
       );
       expect(hasSubagentEvents).toBe(true);
+
+      // subagentTaskId on deltas must match the surrounding subagent_started.taskId
+      assertSubagentTaskIdConsistency(events);
+      assertAtLeastOneSubagentTaskIdPopulated(events);
     }
   });
 

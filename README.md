@@ -1,9 +1,9 @@
-# @inharness/agent-adapters
+# @inharness-ai/agent-adapters
 
 Unified TypeScript interface for AI agent SDKs. Run prompts through Claude Code, Codex, OpenCode, or Gemini with one consistent `AsyncIterable<UnifiedEvent>` stream.
 
 ```ts
-import { createAdapter } from '@inharness/agent-adapters';
+import { createAdapter } from '@inharness-ai/agent-adapters';
 
 const adapter = createAdapter('claude-code');
 
@@ -26,7 +26,7 @@ Every AI agent SDK has its own event protocol. Claude Code emits `SDKMessage`, C
 ## Install
 
 ```bash
-npm install @inharness/agent-adapters
+npm install @inharness-ai/agent-adapters
 
 # Install only the SDKs you need (peer dependencies):
 npm install @anthropic-ai/claude-agent-sdk   # for claude-code
@@ -58,7 +58,7 @@ Adapters can run against alternative API backends via **providers**. A provider 
 | `openrouter` | opencode | [OpenRouter](https://openrouter.ai) multi-provider gateway |
 
 ```ts
-import { createAdapter } from '@inharness/agent-adapters';
+import { createAdapter } from '@inharness-ai/agent-adapters';
 
 // Convenience alias
 const adapter = createAdapter('claude-code-minimax');
@@ -97,8 +97,8 @@ These convenience aliases create an adapter with a pre-configured provider:
 Register your own provider for any API-compatible backend:
 
 ```ts
-import { registerProvider } from '@inharness/agent-adapters';
-import type { ProviderPreset } from '@inharness/agent-adapters';
+import { registerProvider } from '@inharness-ai/agent-adapters';
+import type { ProviderPreset } from '@inharness-ai/agent-adapters';
 
 registerProvider({
   name: 'openrouter',
@@ -155,7 +155,7 @@ Each architecture has a set of short aliases for popular models. Use an alias in
 | | `gemini-2.0-flash` | `gemini-2.0-flash` |
 
 ```ts
-import { createAdapter, resolveModel, getModelsForArchitecture, MODEL_ALIASES } from '@inharness/agent-adapters';
+import { createAdapter, resolveModel, getModelsForArchitecture, MODEL_ALIASES } from '@inharness-ai/agent-adapters';
 
 // Use aliases — resolved automatically by the adapter
 const adapter = createAdapter('claude-code');
@@ -236,7 +236,7 @@ Create custom MCP tools that run in the same process — no subprocess spawning,
 
 ```ts
 import { z } from 'zod';
-import { createAdapter, createMcpServer, mcpTool } from '@inharness/agent-adapters';
+import { createAdapter, createMcpServer, mcpTool } from '@inharness-ai/agent-adapters';
 
 // Define tools with Zod schemas
 const tools = [
@@ -274,7 +274,7 @@ For Claude Code specifically, you can also use the SDK's native `createSdkMcpSer
 
 ```ts
 import { z } from 'zod';
-import { ClaudeCodeAdapter, createSdkMcpServer, tool } from '@inharness/agent-adapters/claude-code';
+import { ClaudeCodeAdapter, createSdkMcpServer, tool } from '@inharness-ai/agent-adapters/claude-code';
 
 const server = createSdkMcpServer({
   name: 'notes',
@@ -302,7 +302,7 @@ for await (const event of adapter.execute({
 You can combine different server types in a single execution:
 
 ```ts
-import { createMcpServer, mcpTool } from '@inharness/agent-adapters';
+import { createMcpServer, mcpTool } from '@inharness-ai/agent-adapters';
 
 const { config: appTools } = createMcpServer({
   name: 'app',
@@ -339,7 +339,7 @@ import type {
   McpSseServerConfig,     // { type: 'sse', url, headers? }
   McpHttpServerConfig,    // { type: 'http', url, headers? }
   McpSdkServerConfig,     // { type: 'sdk', name, instance }
-} from '@inharness/agent-adapters';
+} from '@inharness-ai/agent-adapters';
 ```
 
 ## Error handling
@@ -352,7 +352,7 @@ import {
   AdapterInitError,    // SDK initialization failed (missing API key, SDK not installed)
   AdapterTimeoutError, // execution exceeded timeoutMs
   AdapterAbortError,   // adapter.abort() was called manually
-} from '@inharness/agent-adapters';
+} from '@inharness-ai/agent-adapters';
 
 for await (const event of adapter.execute(params)) {
   if (event.type === 'error') {
@@ -374,10 +374,10 @@ When `timeoutMs` is set, the adapter emits an `AdapterTimeoutError` event and st
 Import only the adapter you need — no unnecessary SDK dependencies:
 
 ```ts
-import { ClaudeCodeAdapter } from '@inharness/agent-adapters/claude-code';
-import { CodexAdapter } from '@inharness/agent-adapters/codex';
-import { OpencodeAdapter } from '@inharness/agent-adapters/opencode';
-import { GeminiAdapter } from '@inharness/agent-adapters/gemini';
+import { ClaudeCodeAdapter } from '@inharness-ai/agent-adapters/claude-code';
+import { CodexAdapter } from '@inharness-ai/agent-adapters/codex';
+import { OpencodeAdapter } from '@inharness-ai/agent-adapters/opencode';
+import { GeminiAdapter } from '@inharness-ai/agent-adapters/gemini';
 ```
 
 ## Observer pattern
@@ -385,8 +385,8 @@ import { GeminiAdapter } from '@inharness/agent-adapters/gemini';
 Attach observers to the event stream without consuming it:
 
 ```ts
-import { createAdapter, observeStream } from '@inharness/agent-adapters';
-import type { StreamObserver } from '@inharness/agent-adapters';
+import { createAdapter, observeStream } from '@inharness-ai/agent-adapters';
+import type { StreamObserver } from '@inharness-ai/agent-adapters';
 
 const logger: StreamObserver = {
   onTextDelta(text) { process.stdout.write(text); },
@@ -405,7 +405,7 @@ for await (const event of observeStream(stream, [logger])) {
 ## Streaming utilities
 
 ```ts
-import { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from '@inharness/agent-adapters';
+import { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from '@inharness-ai/agent-adapters';
 
 // Collect all events into array
 const events = await collectEvents(stream);
@@ -448,8 +448,8 @@ interface ProviderConfig {
 Register your own adapters for any agent architecture:
 
 ```ts
-import { registerAdapter, createAdapter } from '@inharness/agent-adapters';
-import type { RuntimeAdapter } from '@inharness/agent-adapters';
+import { registerAdapter, createAdapter } from '@inharness-ai/agent-adapters';
+import type { RuntimeAdapter } from '@inharness-ai/agent-adapters';
 
 class AiderAdapter implements RuntimeAdapter {
   architecture = 'aider';
@@ -467,7 +467,7 @@ const adapter = createAdapter('aider');
 Validate that your custom adapter produces correct event sequences:
 
 ```ts
-import { assertSimpleText, assertToolUse, assertThinking, assertMultiTurn } from '@inharness/agent-adapters/testing';
+import { assertSimpleText, assertToolUse, assertThinking, assertMultiTurn } from '@inharness-ai/agent-adapters/testing';
 
 const result = await assertSimpleText(myAdapter.execute(params));
 console.log(result.passed); // true/false

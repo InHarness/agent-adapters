@@ -44,7 +44,7 @@ Why two styles? `claude-code` and `gemini` already have isolated normalization h
 
 Common assertion helper (re-used by E2E):
 
-- `assertNormalization(events, expected)` — `src/testing/normalization.ts`, re-exported from `@inharness/agent-adapters/testing`. Walks the flattened `ContentBlock` stream from `result.rawMessages` (optionally filtered by `role`) and asserts the expected blocks appear in order. Fields on each expected block are matched partially.
+- `assertNormalization(events, expected)` — `src/testing/normalization.ts`, re-exported from `@inharness-ai/agent-adapters/testing`. Walks the flattened `ContentBlock` stream from `result.rawMessages` (optionally filtered by `role`) and asserts the expected blocks appear in order. Fields on each expected block are matched partially.
 
 Coverage matrix — what ends up in `NormalizedMessage.content` per adapter (events emitted on the unified stream may differ; see the adapter skill files for the full event taxonomy):
 
@@ -144,7 +144,7 @@ npx vitest run --config vitest.config.e2e.ts --testTimeout 240000 claude-code
 
 ## Writing new tests
 
-**Unit / contract** — import helpers from the public `@inharness/agent-adapters/testing` subpath (exported by `src/testing/index.ts`):
+**Unit / contract** — import helpers from the public `@inharness-ai/agent-adapters/testing` subpath (exported by `src/testing/index.ts`):
 
 - `MockAdapter`, `createTestParams` — from `src/testing/helpers.ts`
 - `assertSimpleText`, `assertToolUse`, `assertThinking`, `assertMultiTurn` — from `src/testing/contract.ts`

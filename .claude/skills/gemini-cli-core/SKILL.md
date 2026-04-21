@@ -72,11 +72,11 @@ The package is **internal to the `gemini-cli` monorepo**. Google has not publish
 
 | Native | UnifiedEvent | Notes |
 |---|---|---|
-| `message` (role=agent, content.type=text) | `text_delta` + eventually `assistant_message` | chunks aggregated |
-| `message` content.type=`thought` | `thinking { replace: true }` | **not a delta** — the full current thought summary |
-| `tool_request` (with `threadId`) | `subagent_started` | synthesized; `threadId` → `taskId` |
+| `message` (role=agent, content.type=text) | `text_delta` + eventually `assistant_message` | chunks aggregated; `subagentTaskId` = `event.threadId` when present |
+| `message` content.type=`thought` | `thinking { replace: true }` | **not a delta** — the full current thought summary; `subagentTaskId` = `event.threadId` when present |
+| `tool_request` (with `threadId`) | `subagent_started` + `tool_use` | synthesized; `threadId` → `taskId` → `subagentTaskId` on the `tool_use` |
 | `tool_update` (with `threadId`) | `subagent_progress` | synthesized |
-| `tool_response` | `tool_result` | correlated by `requestId`; `event.isError` (set by gemini-cli-core when `ToolCallResponse.error` is present) is passed through to `tool_result.isError` |
+| `tool_response` | `tool_result` | correlated by `requestId`; `event.isError` (set by gemini-cli-core when `ToolCallResponse.error` is present) is passed through to `tool_result.isError`; `subagentTaskId` = `event.threadId` when present |
 | `agent_end` (with `threadId`) | `subagent_completed` | synthesized; status/usage forwarded |
 | `usage` | accumulated into next `result` | not emitted as its own event |
 | MessageBus `TOOL_CONFIRMATION_REQUEST` details.type=`ask_user` | `user_input_request` (source=`'model-tool'`) | **only when `onUserInput` is provided** — else `ask_user` tool is excluded via `excludeTools` |
@@ -93,7 +93,8 @@ The package is **internal to the `gemini-cli` monorepo**. Google has not publish
 5. **Session resumption reads files directly.** Given a `resumeSessionId` shortId, the adapter scans `~/.gemini/projects/<dirhash>/chats/` and matches. Uses `resumeChat()` (not `initialize()`) to avoid overwriting the file.
 6. **`approvalMode`** maps: `planMode: true` → `'plan'`; otherwise → `'yolo'`. No `'default'` or `'auto'` middle ground.
 7. **MCP mapping takes positional args.** The adapter translates our `McpServerConfig` union into `GeminiMCPServerConfig(command, args, env, cwd, url, httpUrl, headers, tcp, type)`. If Gemini reorders constructor params, all four transport types break — re-verify on every bump.
-8. **`architectureConfig` keys** (`src/adapters/gemini.ts:182+`):
+8. **`subagentTaskId` is a direct pass-through of `event.threadId`.** No state tracking needed — every event that belongs to a subagent already carries `threadId`, which is the same value used as `taskId` on the synthesized `subagent_started`. Emit it verbatim on `text_delta`, `thinking`, `tool_use`, `tool_result`. Top-level events have no `threadId` → leave `subagentTaskId` undefined and `isSubagent: false`.
+9. **`architectureConfig` keys** (`src/adapters/gemini.ts:182+`):
    - `gemini_approvalMode` — `'plan' | 'yolo' | ...` (overridden by `planMode: true`)
    - `gemini_temperature`, `gemini_topP`, `gemini_topK`
    - `gemini_thinkingBudget: number` — sets `thinkingConfig.thinkingBudget`

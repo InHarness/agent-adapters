@@ -244,3 +244,54 @@ export function assertUserInputRequest(
   expect(reqs[0].request.questions.length).toBeGreaterThanOrEqual(1);
   return reqs[0];
 }
+
+// --- Subagent taskId consistency ---
+
+/** Types of delta-like events that may carry `subagentTaskId`. */
+type DeltaLikeEvent = Extract<UnifiedEvent, { type: 'text_delta' | 'thinking' | 'tool_use' | 'tool_result' }>;
+
+/**
+ * Validate that every delta-like event marked `isSubagent: true` either
+ * (a) carries a `subagentTaskId` matching one of the observed
+ * `subagent_started` taskIds, or (b) leaves it `undefined` (the documented
+ * graceful-degradation case for adapters that can't resolve it — e.g.
+ * claude-code race, opencode before a task starts).
+ *
+ * No-op when no `subagent_started` events were observed (subagent spawning
+ * is non-deterministic — the model may not delegate on a given run).
+ */
+export function assertSubagentTaskIdConsistency(events: UnifiedEvent[]): void {
+  const started = events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'subagent_started' }> => e.type === 'subagent_started',
+  );
+  if (started.length === 0) return;
+
+  const liveIds = new Set(started.map((s) => s.taskId));
+  const deltaLikeTypes = new Set(['text_delta', 'thinking', 'tool_use', 'tool_result']);
+  for (const e of events) {
+    if (!deltaLikeTypes.has(e.type)) continue;
+    const d = e as DeltaLikeEvent;
+    if (!d.isSubagent) continue;
+    if (d.subagentTaskId === undefined) continue; // tolerated
+    expect(
+      liveIds.has(d.subagentTaskId),
+      `delta (${d.type}) carries subagentTaskId=${d.subagentTaskId} but no matching subagent_started was observed (live: ${[...liveIds].join(', ')})`,
+    ).toBe(true);
+  }
+}
+
+/**
+ * Assert at least one delta-like event with `isSubagent: true` carries a
+ * populated `subagentTaskId`. Adapters that claim full support
+ * (claude-code, gemini) must emit at least one. Used in addition to
+ * `assertSubagentTaskIdConsistency` for strict verification.
+ */
+export function assertAtLeastOneSubagentTaskIdPopulated(events: UnifiedEvent[]): void {
+  const deltaLikeTypes = new Set(['text_delta', 'thinking', 'tool_use', 'tool_result']);
+  const found = events.some((e) => {
+    if (!deltaLikeTypes.has(e.type)) return false;
+    const d = e as DeltaLikeEvent;
+    return d.isSubagent && typeof d.subagentTaskId === 'string' && d.subagentTaskId.length > 0;
+  });
+  expect(found, 'expected at least one subagent delta event with a populated subagentTaskId').toBe(true);
+}

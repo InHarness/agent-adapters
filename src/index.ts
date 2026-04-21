@@ -1,4 +1,4 @@
-// @inharness/agent-adapters — main entry point
+// @inharness-ai/agent-adapters — main entry point
 
 // Types
 export type {

@@ -267,6 +267,13 @@ export class OpencodeAdapter implements RuntimeAdapter {
 
       const currentBlocks: ContentBlock[] = [];
       let lastMessageId: string | undefined;
+      // OpenCode's SSE does not attach a task/call ID to text/reasoning deltas.
+      // We correlate by ordering: deltas observed between a task tool's
+      // running → completed/error window are attributed to that task.
+      // Assumes chronological SSE delivery and a single active subagent
+      // (OpenCode doesn't ship nested tasks today — if it ever does, this
+      // must become a stack).
+      let activeSubagentTaskId: string | undefined;
 
       const v1Iterator = sseResult.stream[Symbol.asyncIterator]();
       let pendingNext: Promise<IteratorResult<unknown>> | null = null;
@@ -342,7 +349,12 @@ export class OpencodeAdapter implements RuntimeAdapter {
             if (partType === 'text') {
               const delta = props.delta ?? (part.text as string) ?? '';
               if (delta) {
-                yield { type: 'text_delta', text: delta, isSubagent: false };
+                yield {
+                  type: 'text_delta',
+                  text: delta,
+                  isSubagent: activeSubagentTaskId != null,
+                  subagentTaskId: activeSubagentTaskId,
+                };
               }
               const existingIdx = currentBlocks.findIndex(
                 (b) => b.type === 'text' && (b as { _partId?: string })._partId === part.id,
@@ -355,7 +367,12 @@ export class OpencodeAdapter implements RuntimeAdapter {
                 currentBlocks.push(block);
               }
             } else if (partType === 'reasoning') {
-              yield { type: 'thinking', text: props.delta ?? (part.text as string) ?? '', isSubagent: false };
+              yield {
+                type: 'thinking',
+                text: props.delta ?? (part.text as string) ?? '',
+                isSubagent: activeSubagentTaskId != null,
+                subagentTaskId: activeSubagentTaskId,
+              };
               currentBlocks.push({ type: 'thinking', text: part.text as string });
             } else if (partType === 'tool') {
               const state = part.state as Record<string, unknown>;
@@ -365,12 +382,14 @@ export class OpencodeAdapter implements RuntimeAdapter {
               const isSubagent = toolName === 'task';
 
               if (status === 'running') {
+                if (isSubagent) activeSubagentTaskId = callId;
                 yield {
                   type: 'tool_use',
                   toolName: isSubagent ? 'Agent' : toolName,
                   toolUseId: callId,
                   input: (state.input as unknown) ?? {},
                   isSubagent,
+                  subagentTaskId: isSubagent ? callId : activeSubagentTaskId,
                 };
                 if (isSubagent) {
                   yield {
@@ -386,6 +405,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
                   toolUseId: callId,
                   summary: (state.output as string) ?? '',
                   isSubagent,
+                  subagentTaskId: isSubagent ? callId : activeSubagentTaskId,
                 };
                 if (isSubagent) {
                   yield {
@@ -394,6 +414,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
                     status: 'completed',
                     summary: (state.output as string) ?? '',
                   };
+                  if (activeSubagentTaskId === callId) activeSubagentTaskId = undefined;
                 }
                 currentBlocks.push({
                   type: 'toolUse',
@@ -413,6 +434,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
                   summary: (state.error as string) ?? 'Tool error',
                   isSubagent,
                   isError: true,
+                  subagentTaskId: isSubagent ? callId : activeSubagentTaskId,
                 };
                 if (isSubagent) {
                   yield {
@@ -421,6 +443,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
                     status: 'failed',
                     summary: (state.error as string) ?? '',
                   };
+                  if (activeSubagentTaskId === callId) activeSubagentTaskId = undefined;
                 }
                 currentBlocks.push({
                   type: 'toolResult',

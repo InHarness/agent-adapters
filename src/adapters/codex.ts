@@ -33,6 +33,8 @@ export class CodexAdapter implements RuntimeAdapter {
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
+    // subagentTaskId on delta-like events is never populated — Codex SDK has
+    // no subagent concept. See .claude/skills/codex-sdk/SKILL.md:73.
     this.abortController = new AbortController();
 
     // Merge provider-resolved config with user-supplied config

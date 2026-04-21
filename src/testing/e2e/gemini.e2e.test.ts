@@ -23,8 +23,12 @@ import {
   PLAN_READ_SYSTEM_PROMPT,
   USER_QUESTION_PROMPT,
   USER_QUESTION_SYSTEM_PROMPT,
+  SUBAGENT_PROMPT,
+  SUBAGENT_SYSTEM_PROMPT,
   runUserQuestionScenario,
   assertUserInputRequest,
+  assertSubagentTaskIdConsistency,
+  createE2eMcpServer,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 
@@ -199,6 +203,40 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
         cleanup();
       }
     });
+  });
+
+  it('subagent events carry subagentTaskId on deltas', async () => {
+    const { config } = createE2eMcpServer();
+    const adapter = createAdapter('gemini');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt: SUBAGENT_PROMPT,
+        systemPrompt: SUBAGENT_SYSTEM_PROMPT,
+        model: 'gemini-2.5-flash',
+        maxTurns: 5,
+        mcpServers: { 'e2e-test': config },
+      }),
+    );
+
+    const started = events.filter((e) => e.type === 'subagent_started') as Extract<
+      UnifiedEvent,
+      { type: 'subagent_started' }
+    >[];
+
+    // Subagent spawning is non-deterministic — model decides whether to delegate.
+    if (started.length > 0) {
+      assertSubagentTaskIdConsistency(events);
+      // Gemini claims full support — require at least one populated value.
+      const populated = events.some(
+        (e) =>
+          'isSubagent' in e &&
+          e.isSubagent &&
+          'subagentTaskId' in e &&
+          typeof e.subagentTaskId === 'string' &&
+          e.subagentTaskId.length > 0,
+      );
+      expect(populated, 'expected at least one gemini subagent delta with populated subagentTaskId').toBe(true);
+    }
   });
 
   describe('onUserInput — ask_user MessageBus bridge', () => {

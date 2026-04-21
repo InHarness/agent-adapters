@@ -116,7 +116,7 @@ This table decides whether a new unified feature degrades gracefully. If you add
 <!-- anchor: exiq2qlz -->
 ## Skills (cross-cutting concern)
 
-`@inharness/agent-adapters` currently has **no skills support at the unified layer**: no `skills` field in `RuntimeExecuteParams`, no `skill_listing` / `skill_invoked` events in `UnifiedEvent`, no adapter bridges. See per-adapter skill files for native capability; the snapshot:
+`@inharness-ai/agent-adapters` currently has **no skills support at the unified layer**: no `skills` field in `RuntimeExecuteParams`, no `skill_listing` / `skill_invoked` events in `UnifiedEvent`, no adapter bridges. See per-adapter skill files for native capability; the snapshot:
 
 | Adapter | Native skills | Dynamic loading | Filesystem | Programmatic SDK API | Our adapter passes through? |
 |---|:---:|:---:|---|---|:---:|

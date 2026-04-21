@@ -13,10 +13,13 @@ import {
   assertSimpleTextStream,
   SIMPLE_PROMPT,
   SIMPLE_SYSTEM_PROMPT,
+  SUBAGENT_PROMPT,
+  SUBAGENT_SYSTEM_PROMPT,
   USER_QUESTION_PROMPT,
   USER_QUESTION_SYSTEM_PROMPT,
   runUserQuestionScenario,
   assertUserInputRequest,
+  assertSubagentTaskIdConsistency,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 
@@ -153,6 +156,30 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
         warnSpy.mockRestore();
       }
     });
+  });
+
+  it('subagent events carry subagentTaskId on deltas (ordering-based)', async () => {
+    const adapter = createAdapter('opencode-openrouter');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt: SUBAGENT_PROMPT,
+        systemPrompt: SUBAGENT_SYSTEM_PROMPT,
+        model: 'claude-sonnet-4',
+        maxTurns: 5,
+      }),
+    );
+
+    const started = events.filter((e) => e.type === 'subagent_started') as Extract<
+      UnifiedEvent,
+      { type: 'subagent_started' }
+    >[];
+
+    // Subagent spawning is non-deterministic. Only assert if the model delegated.
+    if (started.length > 0) {
+      // The ordering heuristic is allowed to miss deltas (undefined is tolerated),
+      // but wrong IDs must never appear.
+      assertSubagentTaskIdConsistency(events);
+    }
   });
 
   describe('onUserInput — question events bridge', () => {

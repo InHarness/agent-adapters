@@ -14,7 +14,7 @@ const projectInfo = mcpTool(
   { field: z.enum(['name', 'version', 'description', 'all']).describe('Which field to retrieve') },
   async (args) => {
     const info = {
-      name: '@inharness/agent-adapters',
+      name: '@inharness-ai/agent-adapters',
       version: '0.1.0',
       description: 'Unified TypeScript interface for AI agent SDKs',
     };
