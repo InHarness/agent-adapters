@@ -5,6 +5,7 @@ export type {
   ContentBlock,
   NormalizedMessage,
   UsageStats,
+  TodoItem,
   UnifiedEvent,
   BuiltinArchitecture,
   Architecture,

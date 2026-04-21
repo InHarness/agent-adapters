@@ -20,6 +20,9 @@ import {
   runUserQuestionScenario,
   assertUserInputRequest,
   assertSubagentTaskIdConsistency,
+  TODO_PROMPT,
+  TODO_SYSTEM_PROMPT,
+  assertTodoListUpdated,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 
@@ -206,6 +209,49 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
         .join(' ')
         .toLowerCase();
       expect(finalText, `expected "banana" in final output, got: ${finalText}`).toContain('banana');
+    });
+  });
+
+  describe('todo list (todo.updated → todo_list_updated + synthetic message)', () => {
+    it('emits session-state event, syntesizes rawMessages entry, and snapshots on result', async () => {
+      const adapter = createAdapter('opencode-openrouter');
+      const events = await collectEvents(
+        adapter.execute({
+          prompt: TODO_PROMPT,
+          systemPrompt: TODO_SYSTEM_PROMPT,
+          model: 'claude-sonnet-4',
+          maxTurns: 2,
+        }),
+      );
+
+      // 1. At least one todo_list_updated with source 'session-state'.
+      const todoEvent = assertTodoListUpdated(events, { expectedSource: 'session-state' });
+      expect(todoEvent.items.length).toBeGreaterThanOrEqual(1);
+
+      // 2. No TodoWrite tool_use leaked — opencode routes todo through the
+      //    session-state channel, not through tool calls.
+      const todoWriteToolUse = events.filter(
+        (e): e is Extract<UnifiedEvent, { type: 'tool_use' }> =>
+          e.type === 'tool_use' && e.toolName === 'TodoWrite',
+      );
+      expect(todoWriteToolUse.length).toBe(0);
+
+      // 3. result.rawMessages contains a synthetic message with a todoList
+      //    content block and native === undefined (marker for "not a
+      //    passthrough SDK message").
+      const result = events.find(
+        (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
+      );
+      expect(result).toBeDefined();
+      const synthetic = result!.rawMessages.find(
+        (m) => m.content.some((b) => b.type === 'todoList') && m.native === undefined,
+      );
+      expect(synthetic, 'expected a synthetic todoList message with native=undefined').toBeDefined();
+      expect(synthetic!.role).toBe('assistant');
+
+      // 4. Snapshot matches the last event.
+      expect(result!.todoListSnapshot).toBeDefined();
+      expect(result!.todoListSnapshot).toEqual(todoEvent.items);
     });
   });
 });

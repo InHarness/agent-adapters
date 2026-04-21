@@ -56,7 +56,8 @@ Defined in `src/types.ts:36-59`. Groups (bold = required for basic conformance):
 - **Subagent lifecycle**: `subagent_started { taskId, description, toolUseId }`, `subagent_progress { taskId, description, lastToolName? }`, `subagent_completed { taskId, status, summary?, usage? }`
 - **User input**: `user_input_request { request: UserInputRequest }` — unified entry point for model-tool asks and MCP elicitation
 - **Legacy user input**: `elicitation_request { ... }` — **deprecated**, adapters should emit `user_input_request` with `source: 'mcp-elicitation'` instead
-- **Terminal**: `result { output, rawMessages, usage, sessionId? }`, `error { error }`
+- **Todo list**: `todo_list_updated { items: TodoItem[], source: 'model-tool' | 'session-state', isSubagent, subagentTaskId? }` — unified TodoWrite/plan-tracking primitive. Replaces `tool_use` for claude-code TodoWrite (source: `'model-tool'`); synthesized from opencode's `todo.updated` SSE channel (source: `'session-state'`). Not emitted by codex or gemini. Adapters that emit this **also** place a `ContentBlock.todoList` into `NormalizedMessage.content` — claude-code replaces the TodoWrite `toolUse`, opencode pushes a synthetic `NormalizedMessage { role: 'assistant', native: undefined }`. See `TodoItem` in `src/types.ts` for item shape.
+- **Terminal**: `result { output, rawMessages, usage, sessionId?, todoListSnapshot? }`, `error { error }` — `todoListSnapshot` carries the last seen todo-list items; `undefined` when the adapter never observed a todo update during this run.
 - **Misc**: `warning { message }`, `flush` (boundary hint, e.g. Claude Code `compact_boundary`)
 
 **Always include `isSubagent`** on delta-like events. Subagent events carry `taskId` so consumers can group them.
@@ -74,7 +75,8 @@ type ContentBlock =
   | { type: 'thinking'; text: string }
   | { type: 'toolUse'; toolUseId; toolName; input }
   | { type: 'toolResult'; toolUseId; content; isError? }
-  | { type: 'image'; source: { type: 'base64'; mediaType; data } | { type: 'url'; url } };
+  | { type: 'image'; source: { type: 'base64'; mediaType; data } | { type: 'url'; url } }
+  | { type: 'todoList'; items: TodoItem[] };  // replaces TodoWrite toolUse (claude-code) or synthesized from session-state (opencode)
 
 interface NormalizedMessage {
   role: 'user' | 'assistant';
@@ -122,6 +124,7 @@ When both `onUserInput` and `onElicitation` are provided, `onUserInput` wins.
 | Subagent lifecycle | ✅ native `task_*` system events | ⚠️ synthesized | ⚠️ synthesized per `threadId` | ⚠️ synthesized |
 | Subagent taskId on deltas (`subagentTaskId`) | ✅ mapped from `parent_tool_use_id` via local lookup | ❌ no subagent concept in SDK | ✅ direct pass-through of `event.threadId` | ⚠️ ordering-based (single active) |
 | Tool-error signal (`tool_result.isError`) | ✅ pass-through `is_error` from SDK tool_result blocks | ✅ derived from `status === 'failed'` / `exit_code` / `error` per item type | ✅ pass-through `event.isError` on `tool_response` | ✅ set on `status === 'error'` branch |
+| Unified todo list (`todo_list_updated` + `ContentBlock.todoList` + `result.todoListSnapshot`) | ✅ source: `model-tool` — replaces TodoWrite `tool_use`/`tool_result` pair and `ContentBlock.toolUse` in rawMessages | ❌ no native todo primitive | ❌ no native todo primitive | ✅ source: `session-state` — from SSE `todo.updated`; synthesized `NormalizedMessage { role: 'assistant', native: undefined }` added to rawMessages |
 
 This table decides whether a new unified feature degrades gracefully. If you add a new event/field and three adapters can't emit it, design the graceful degradation (warning event, or silently skip with adapter-specific note).
 

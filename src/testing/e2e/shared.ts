@@ -188,6 +188,13 @@ export function assertFileCreated(cwd: string, expected: string): void {
   expect(existsSync(join(cwd, expected)), `expected file ${expected} was not created in ${cwd}`).toBe(true);
 }
 
+// --- Todo list scenario ---
+
+export const TODO_PROMPT =
+  'Before doing anything else, break the following job into exactly 3 clear sequential todo items using your native task-planning / TodoWrite tool, then do not execute them — just list them. The job is: "Refactor the user settings page: (1) extract the avatar upload, (2) add form validation, (3) write tests". Mark the first item as in_progress and the other two as pending.';
+export const TODO_SYSTEM_PROMPT =
+  'You have a native TodoWrite / task-planning tool available. When the user gives you a multi-step job, you MUST call it exactly once with all steps before doing anything else. Do not execute the steps — just plan them.';
+
 // --- User-input (ask-user tool) scenario ---
 
 export const USER_QUESTION_PROMPT =
@@ -228,6 +235,38 @@ export async function runUserQuestionScenario(
     events.push(e);
   }
   return { events, handlerCalls, lastAnswer };
+}
+
+// --- Todo list assertions ---
+
+/**
+ * Assert the event stream contains at least one `todo_list_updated`, optionally
+ * filtered by source. Validates that every item has a non-empty `id` and
+ * `content`. Returns the last matching event for further inspection.
+ */
+export function assertTodoListUpdated(
+  events: UnifiedEvent[],
+  opts: { minCount?: number; expectedSource?: 'model-tool' | 'session-state' } = {},
+): Extract<UnifiedEvent, { type: 'todo_list_updated' }> {
+  const { minCount = 1, expectedSource } = opts;
+  const all = events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'todo_list_updated' }> => e.type === 'todo_list_updated',
+  );
+  const filtered = expectedSource ? all.filter((e) => e.source === expectedSource) : all;
+  expect(
+    filtered.length,
+    `expected at least ${minCount} todo_list_updated${expectedSource ? ` with source=${expectedSource}` : ''}, got ${filtered.length}`,
+  ).toBeGreaterThanOrEqual(minCount);
+  const last = filtered[filtered.length - 1];
+  expect(Array.isArray(last.items)).toBe(true);
+  for (const item of last.items) {
+    expect(typeof item.id).toBe('string');
+    expect(item.id.length).toBeGreaterThan(0);
+    expect(typeof item.content).toBe('string');
+    expect(item.content.length).toBeGreaterThan(0);
+    expect(typeof item.status).toBe('string');
+  }
+  return last;
 }
 
 /** Assert the event stream contains exactly one user_input_request with the expected source. */

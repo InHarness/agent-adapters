@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { normalizeContentBlocks, normalizeAssistantMessage } from './claude-code.js';
+import { normalizeContentBlocks, normalizeAssistantMessage, todoItemsFromTodoWriteInput } from './claude-code.js';
 
 describe('normalizeContentBlocks', () => {
   it('maps SDK text → text block', () => {
@@ -142,5 +142,37 @@ describe('normalizeAssistantMessage', () => {
       { type: 'text', text: 'calling echo…' },
       { type: 'toolUse', toolUseId: 'tu_a', toolName: 'echo', input: { message: 'x' } },
     ]);
+  });
+});
+
+describe('todoItemsFromTodoWriteInput', () => {
+  it('maps TodoWrite.todos → TodoItem[] with synthesized id from index', () => {
+    const out = todoItemsFromTodoWriteInput({
+      todos: [
+        { content: 'First step', status: 'in_progress', activeForm: 'Doing first step' },
+        { content: 'Second step', status: 'pending', activeForm: 'Doing second step' },
+      ],
+    });
+    expect(out).toEqual([
+      { id: '0', content: 'First step', activeForm: 'Doing first step', status: 'in_progress' },
+      { id: '1', content: 'Second step', activeForm: 'Doing second step', status: 'pending' },
+    ]);
+  });
+
+  it('tolerates missing activeForm', () => {
+    const out = todoItemsFromTodoWriteInput({
+      todos: [{ content: 'Bare item', status: 'pending' }],
+    });
+    expect(out).toEqual([{ id: '0', content: 'Bare item', status: 'pending' }]);
+  });
+
+  it('defaults missing status to pending and missing content to empty string', () => {
+    const out = todoItemsFromTodoWriteInput({ todos: [{}] });
+    expect(out).toEqual([{ id: '0', content: '', status: 'pending' }]);
+  });
+
+  it('returns [] when todos is missing or not an array', () => {
+    expect(todoItemsFromTodoWriteInput({})).toEqual([]);
+    expect(todoItemsFromTodoWriteInput({ todos: 'nope' } as unknown as Record<string, unknown>)).toEqual([]);
   });
 });

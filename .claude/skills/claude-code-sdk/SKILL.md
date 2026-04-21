@@ -76,7 +76,8 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 | `tool_use_summary` | `tool_use` + synthetic `tool_result` | accumulated; `isSubagent` flagged |
 | `canUseTool('AskUserQuestion', ...)` | `user_input_request` (source=`'model-tool'`) | adapter intercepts, calls `onUserInput` |
 | `options.onElicitation(req)` | `user_input_request` (source=`'mcp-elicitation'`) | MCP side-channel |
-| `result` | `result` | includes `sessionId` for resume |
+| `tool_use { toolName: 'TodoWrite' }` inside assistant | `todo_list_updated` (source=`'model-tool'`) + `ContentBlock.todoList` | **replaces** both `tool_use` event and `ContentBlock.toolUse` in rawMessages. The matching `tool_result` is also suppressed — its `{ oldTodos, newTodos }` payload is redundant. `result.todoListSnapshot` carries the last seen items. See `src/adapters/claude-code.ts:todoItemsFromTodoWriteInput` for the mapping (id is synthesized from array index). |
+| `result` | `result` | includes `sessionId` for resume, `todoListSnapshot` when TodoWrite was used |
 
 <!-- anchor: pqk13bxx -->
 ## Quirks & gotchas

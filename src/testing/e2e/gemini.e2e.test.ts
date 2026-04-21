@@ -47,6 +47,12 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     );
 
     assertSimpleTextStream(events);
+
+    // Gemini has no native todo/plan primitive — snapshot must stay undefined,
+    // and no todo_list_updated events should fire.
+    const result = events.find((e) => e.type === 'result') as Extract<UnifiedEvent, { type: 'result' }>;
+    expect(result.todoListSnapshot).toBeUndefined();
+    expect(events.some((e) => e.type === 'todo_list_updated')).toBe(false);
   });
 
   it('simple text response (full model ID)', async () => {

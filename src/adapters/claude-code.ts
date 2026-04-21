@@ -12,6 +12,7 @@ import type {
   ContentBlock,
   McpSdkServerConfig,
   UsageStats,
+  TodoItem,
   UserInputRequest,
   UserInputResponse,
   UserInputHandler,
@@ -96,6 +97,23 @@ export function normalizeAssistantMessage(msg: SDKMessage & { type: 'assistant' 
     subagentTaskId: msg.parent_tool_use_id ?? undefined,
     native: msg,
   };
+}
+
+/**
+ * @internal Exported for unit tests.
+ * Convert a raw TodoWrite `{ todos: [...] }` input payload into the unified
+ * {@link TodoItem}[] representation. TodoWrite does not expose stable IDs,
+ * so the array index is used — sufficient because every TodoWrite call
+ * replaces the full list.
+ */
+export function todoItemsFromTodoWriteInput(input: Record<string, unknown>): TodoItem[] {
+  const raw = Array.isArray(input.todos) ? (input.todos as Record<string, unknown>[]) : [];
+  return raw.map((t, idx) => ({
+    id: String(idx),
+    content: typeof t.content === 'string' ? t.content : '',
+    ...(typeof t.activeForm === 'string' ? { activeForm: t.activeForm } : {}),
+    status: (typeof t.status === 'string' ? t.status : 'pending') as TodoItem['status'],
+  }));
 }
 
 function safeParseJson(s: string): Record<string, unknown> | undefined {
@@ -360,6 +378,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // parent_tool_use_id → task_id lookup. Populated on `system` subtype
     // `task_started`; read on every delta/tool event to resolve subagentTaskId.
     const subagentTaskIdByParentToolUseId = new Map<string, string>();
+    // Track TodoWrite tool_use IDs so we can suppress their matching tool_result
+    // (both the UnifiedEvent and the ContentBlock in rawMessages). The payload
+    // of that tool_result is `{ oldTodos, newTodos }` — redundant with the
+    // snapshot already surfaced via `todoList` / `todo_list_updated`.
+    const pendingTodoToolUseIds = new Set<string>();
+    let lastTodoSnapshot: TodoItem[] | undefined;
 
     // Timeout handling
     let timedOut = false;
@@ -489,12 +513,26 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
           case 'assistant': {
             const normalized = normalizeAssistantMessage(event);
-            rawMessages.push(normalized);
             const parentToolUseId = event.parent_tool_use_id ?? undefined;
             const isSubagent = parentToolUseId != null;
             const subagentTaskId = parentToolUseId
               ? subagentTaskIdByParentToolUseId.get(parentToolUseId)
               : undefined;
+
+            // Replace TodoWrite `toolUse` blocks with unified `todoList` blocks
+            // in-place so rawMessages and the assistant_message event both
+            // carry the normalized shape.
+            for (let i = 0; i < normalized.content.length; i++) {
+              const block = normalized.content[i];
+              if (block.type === 'toolUse' && block.toolName === 'TodoWrite') {
+                const items = todoItemsFromTodoWriteInput(block.input);
+                pendingTodoToolUseIds.add(block.toolUseId);
+                lastTodoSnapshot = items;
+                normalized.content[i] = { type: 'todoList', items };
+              }
+            }
+
+            rawMessages.push(normalized);
 
             for (const block of normalized.content) {
               if (block.type === 'toolUse') {
@@ -503,6 +541,14 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   toolName: block.toolName,
                   toolUseId: block.toolUseId,
                   input: block.input,
+                  isSubagent,
+                  subagentTaskId,
+                };
+              } else if (block.type === 'todoList') {
+                yield {
+                  type: 'todo_list_updated',
+                  items: block.items,
+                  source: 'model-tool',
                   isSubagent,
                   subagentTaskId,
                 };
@@ -522,9 +568,24 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               : undefined;
             const message = userMsg.message as Record<string, unknown>;
             if (message && Array.isArray(message.content)) {
+              const rawContent = normalizeContentBlocks(message.content);
+              // Strip tool_result blocks that correspond to a TodoWrite tool_use
+              // we already projected as `todo_list_updated`. The tool_result's
+              // `{ oldTodos, newTodos }` payload is redundant and would leak
+              // the raw TodoWrite shape back into rawMessages / the event stream.
+              const content = rawContent.filter((block) => {
+                if (block.type === 'toolResult' && pendingTodoToolUseIds.has(block.toolUseId)) {
+                  pendingTodoToolUseIds.delete(block.toolUseId);
+                  return false;
+                }
+                return true;
+              });
+
+              if (content.length === 0) break;
+
               const normalized: NormalizedMessage = {
                 role: 'user',
-                content: normalizeContentBlocks(message.content),
+                content,
                 timestamp: new Date().toISOString(),
                 native: event,
               };
@@ -607,6 +668,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 rawMessages,
                 usage: normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 },
                 sessionId,
+                ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),
               };
             } else {
               yield { type: 'error', error: new Error((resultEvent.result as string) ?? 'Unknown error') };

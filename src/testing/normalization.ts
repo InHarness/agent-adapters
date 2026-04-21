@@ -169,5 +169,7 @@ function describeActual(b: ContentBlock): string {
       return `toolResult(${b.toolUseId.slice(0, 8)}${b.isError ? ',err' : ''})`;
     case 'image':
       return `image(${b.source.type})`;
+    case 'todoList':
+      return `todoList(${b.items.length})`;
   }
 }

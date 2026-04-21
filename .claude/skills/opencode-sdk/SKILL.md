@@ -68,7 +68,8 @@ OpenCode is the only adapter that requires an **external CLI binary in PATH** an
 | `message.part.updated` part.type=`tool` state=`completed` | `tool_result` + synthesized `subagent_completed` | |
 | `message.part.updated` part.type=`tool` state=`error` | `tool_result { isError: true }` + synthesized `subagent_completed` with error status | |
 | v2 `question.asked` (filtered by sessionId) | `user_input_request` (source=`'model-tool'`) | consumer's `onUserInput` response is POSTed back via v2 client |
-| `session.idle` | `result` | accumulates usage across the run |
+| v1 `todo.updated` (filtered by sessionId) | `todo_list_updated` (source=`'session-state'`) + synthetic `NormalizedMessage { role: 'assistant', content: [{ type: 'todoList', items }], native: undefined }` pushed to rawMessages | Whole-list snapshot, not a delta. `native: undefined` marks the synthetic message as a projection rather than a passthrough SDK message. `result.todoListSnapshot` carries the last seen items. |
+| `session.idle` | `result` | accumulates usage across the run; includes `todoListSnapshot` when any `todo.updated` fired |
 | `session.error` | `error` | |
 
 <!-- anchor: vkk8pa6b -->

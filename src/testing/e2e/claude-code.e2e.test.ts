@@ -38,6 +38,9 @@ import {
   USER_QUESTION_SYSTEM_PROMPT,
   runUserQuestionScenario,
   assertUserInputRequest,
+  TODO_PROMPT,
+  TODO_SYSTEM_PROMPT,
+  assertTodoListUpdated,
 } from './shared.js';
 
 // Claude Code SDK manages auth internally (OAuth, cached credentials, or ANTHROPIC_API_KEY).
@@ -398,6 +401,51 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       assertUserInputRequest(events, 'model-tool');
       // No crash — completion event must still be present.
       expect(events.some((e) => e.type === 'result' || e.type === 'error')).toBe(true);
+    });
+  });
+
+  describe('todo list (TodoWrite → todoList projection)', () => {
+    it('emits todo_list_updated, drops tool_use TodoWrite, and snapshots on result', async () => {
+      const adapter = createAdapter('claude-code');
+      const events = await collectEvents(
+        adapter.execute({
+          prompt: TODO_PROMPT,
+          systemPrompt: TODO_SYSTEM_PROMPT,
+          model: MODEL,
+          maxTurns: 2,
+        }),
+      );
+
+      // 1. At least one todo_list_updated with source 'model-tool'.
+      const todoEvent = assertTodoListUpdated(events, { expectedSource: 'model-tool' });
+      expect(todoEvent.items.length).toBeGreaterThanOrEqual(1);
+
+      // 2. No raw tool_use event leaked for TodoWrite.
+      const todoWriteToolUse = events.filter(
+        (e): e is Extract<UnifiedEvent, { type: 'tool_use' }> =>
+          e.type === 'tool_use' && e.toolName === 'TodoWrite',
+      );
+      expect(
+        todoWriteToolUse.length,
+        'TodoWrite tool_use should be replaced by todo_list_updated',
+      ).toBe(0);
+
+      // 3. result.rawMessages contains a todoList content block, and no
+      //    leftover toolUse for TodoWrite.
+      const result = events.find(
+        (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
+      );
+      expect(result, 'result event expected').toBeDefined();
+      const allBlocks = result!.rawMessages.flatMap((m) => m.content);
+      expect(allBlocks.some((b) => b.type === 'todoList')).toBe(true);
+      expect(
+        allBlocks.some((b) => b.type === 'toolUse' && b.toolName === 'TodoWrite'),
+        'TodoWrite toolUse should be replaced by todoList in rawMessages',
+      ).toBe(false);
+
+      // 4. result.todoListSnapshot matches the last todo_list_updated items.
+      expect(result!.todoListSnapshot).toBeDefined();
+      expect(result!.todoListSnapshot).toEqual(todoEvent.items);
     });
   });
 });

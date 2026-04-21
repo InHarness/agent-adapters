@@ -13,6 +13,7 @@ import type {
   NormalizedMessage,
   ContentBlock,
   UsageStats,
+  TodoItem,
   UserInputRequest,
   UserInputResponse,
   UserInputQuestion,
@@ -134,6 +135,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
     const rawMessages: NormalizedMessage[] = [];
     let totalUsage: UsageStats = { inputTokens: 0, outputTokens: 0 };
     let sessionId: string | undefined;
+    let lastTodoSnapshot: TodoItem[] | undefined;
 
     // v2 client for the question API (reply/reject). v2 SDK is additive over v1 —
     // both clients talk to the same server on the same port.
@@ -464,6 +466,46 @@ export class OpencodeAdapter implements RuntimeAdapter {
             break;
           }
 
+          case 'todo.updated': {
+            const props = evt.properties as {
+              sessionID?: string;
+              todos?: Array<{
+                id?: string;
+                content?: string;
+                status?: string;
+                priority?: string;
+              }>;
+            };
+            if (props.sessionID && props.sessionID !== sessionId) break;
+            const rawTodos = Array.isArray(props.todos) ? props.todos : [];
+            const items: TodoItem[] = rawTodos.map((t, idx) => ({
+              id: typeof t.id === 'string' ? t.id : String(idx),
+              content: typeof t.content === 'string' ? t.content : '',
+              status: (typeof t.status === 'string' ? t.status : 'pending') as TodoItem['status'],
+              ...(t.priority === 'low' || t.priority === 'medium' || t.priority === 'high'
+                ? { priority: t.priority }
+                : {}),
+            }));
+            lastTodoSnapshot = items;
+            yield {
+              type: 'todo_list_updated',
+              items,
+              source: 'session-state',
+              isSubagent: false,
+            };
+            // Synthesize an assistant message so rawMessages has a consistent
+            // cross-adapter history of todo changes. `native: undefined`
+            // signals that this message is a projection from the session-state
+            // channel, not a passthrough of any SDK message.
+            rawMessages.push({
+              role: 'assistant',
+              content: [{ type: 'todoList', items }],
+              timestamp: new Date().toISOString(),
+              native: undefined,
+            });
+            break;
+          }
+
           case 'session.idle': {
             const props = evt.properties as { sessionID: string };
             if (props.sessionID !== sessionId) break;
@@ -490,6 +532,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
               rawMessages,
               usage: totalUsage,
               sessionId,
+              ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),
             };
             return;
           }

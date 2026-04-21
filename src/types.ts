@@ -5,6 +5,29 @@ import type { ArchitectureModelMap } from './models.js';
 
 // --- Content & Messages ---
 
+/**
+ * A single todo-list item as surfaced by the unified layer.
+ *
+ * `id` is always populated by the adapter:
+ *  - opencode passes through the stable ID from the SSE `todo.updated` event.
+ *  - claude-code synthesizes it from the item's index in the TodoWrite call
+ *    (the SDK does not expose stable IDs, but position is deterministic
+ *    within a single tool invocation).
+ *
+ * `status` is an open union — concrete statuses from the known SDKs are
+ * enumerated, but adapters may propagate unknown values from future SDKs
+ * without breaking the type.
+ */
+export interface TodoItem {
+  id: string;
+  content: string;
+  /** Present-continuous label for the active step (claude-code only; UI may fall back to `content`). */
+  activeForm?: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled' | (string & {});
+  /** Priority bucket (opencode only). */
+  priority?: 'low' | 'medium' | 'high';
+}
+
 export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
@@ -15,7 +38,20 @@ export type ContentBlock =
       source:
         | { type: 'base64'; mediaType: string; data: string }
         | { type: 'url'; url: string };
-    };
+    }
+  /**
+   * Snapshot of the todo list at the moment this message was produced.
+   *
+   * Emitted in place of `toolUse` / `toolResult` pairs for TodoWrite-like tool
+   * calls. Per-adapter origin:
+   *   - claude-code: replaces `ContentBlock.toolUse` when `toolName === 'TodoWrite'`
+   *     (and the matching `toolResult` is suppressed — its payload is redundant).
+   *   - opencode:    synthesized from the SSE `todo.updated` session-state channel;
+   *     wrapped in a `NormalizedMessage { role: 'assistant', native: undefined }` so
+   *     consumers can filter `rawMessages` the same way across adapters.
+   *   - codex, gemini: not emitted.
+   */
+  | { type: 'todoList'; items: TodoItem[] };
 
 export interface NormalizedMessage {
   role: 'user' | 'assistant';
@@ -63,10 +99,43 @@ export type UnifiedEvent =
   | { type: 'subagent_started'; taskId: string; description: string; toolUseId: string }
   | { type: 'subagent_progress'; taskId: string; description: string; lastToolName?: string }
   | { type: 'subagent_completed'; taskId: string; status: string; summary?: string; usage?: UsageStats }
-  | { type: 'result'; output: string; rawMessages: NormalizedMessage[]; usage: UsageStats; sessionId?: string }
+  | {
+      type: 'result';
+      output: string;
+      rawMessages: NormalizedMessage[];
+      usage: UsageStats;
+      sessionId?: string;
+      /**
+       * Last known snapshot of the todo list at run end. `undefined` means the
+       * adapter never observed a todo update during this run (either the model
+       * didn't use TodoWrite, or the adapter doesn't support todo tracking —
+       * see capability matrix in `.claude/skills/unified-architecture/SKILL.md`).
+       */
+      todoListSnapshot?: TodoItem[];
+    }
   | { type: 'error'; error: Error }
   | { type: 'warning'; message: string }
   | { type: 'user_input_request'; request: UserInputRequest }
+  /**
+   * Unified todo-list update. Snapshot of the full list, not a delta.
+   *
+   * Per-adapter support:
+   *   - claude-code: ✅ emitted in place of `tool_use { toolName: 'TodoWrite' }`
+   *     (source: 'model-tool'). The matching `tool_result` is suppressed.
+   *   - opencode:    ✅ emitted from the SSE `todo.updated` session-state channel
+   *     (source: 'session-state'). The adapter additionally pushes a synthetic
+   *     `NormalizedMessage` with a `todoList` content block so `rawMessages`
+   *     reflects the update.
+   *   - codex, gemini: ❌ never emitted — no native todo/plan primitive.
+   */
+  | {
+      type: 'todo_list_updated';
+      items: TodoItem[];
+      /** `'model-tool'` = replaces a model tool_use; `'session-state'` = separate state channel. */
+      source: 'model-tool' | 'session-state';
+      isSubagent: boolean;
+      subagentTaskId?: string;
+    }
   | {
       /** @deprecated Use `user_input_request` with `source: 'mcp-elicitation'`. */
       type: 'elicitation_request';
