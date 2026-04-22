@@ -116,15 +116,23 @@ export function normalizeContentBlocks(blocks: unknown[]): ContentBlock[] {
   return result;
 }
 
-/** @internal Exported for unit tests. */
+/**
+ * @internal Exported for unit tests.
+ *
+ * `betaMessage.usage` is per-response (non-cumulative) `BetaUsage` from the
+ * Anthropic SDK — exposing it here lets consumers see per-turn cache behavior
+ * instead of only the session-cumulative totals on the `result` event.
+ */
 export function normalizeAssistantMessage(msg: SDKMessage & { type: 'assistant' }): NormalizedMessage {
   const betaMessage = msg.message as unknown as Record<string, unknown>;
   const content = Array.isArray(betaMessage.content) ? betaMessage.content : [];
+  const usage = normalizeClaudeUsage(betaMessage.usage);
   return {
     role: 'assistant',
     content: normalizeContentBlocks(content),
     timestamp: new Date().toISOString(),
     subagentTaskId: msg.parent_tool_use_id ?? undefined,
+    ...(usage ? { usage } : {}),
     native: msg,
   };
 }
@@ -690,6 +698,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 taskId: e.task_id as string,
                 status: e.status as string,
                 summary: e.summary as string | undefined,
+                // Per-subagent total (sum across the subagent's turns).
                 usage: normalizeClaudeUsage(e.usage),
               };
             } else if (subtype === 'compact_boundary') {
@@ -705,6 +714,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 type: 'result',
                 output: (resultEvent.result as string) ?? '',
                 rawMessages,
+                // Session-cumulative total from the SDK — do not double-count with per-message usage on NormalizedMessage.
                 usage: normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 },
                 sessionId,
                 ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),

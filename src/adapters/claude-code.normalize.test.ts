@@ -83,11 +83,16 @@ describe('normalizeAssistantMessage', () => {
   function buildSdkAssistant(overrides: Partial<{
     content: unknown[];
     parent_tool_use_id: string | null;
+    usage: Record<string, unknown>;
   }>): SDKMessage & { type: 'assistant' } {
+    const message: Record<string, unknown> = {
+      content: overrides.content ?? [{ type: 'text', text: 'hi' }],
+    };
+    if (overrides.usage !== undefined) message.usage = overrides.usage;
     return {
       type: 'assistant',
       parent_tool_use_id: overrides.parent_tool_use_id ?? null,
-      message: { content: overrides.content ?? [{ type: 'text', text: 'hi' }] },
+      message,
     } as unknown as SDKMessage & { type: 'assistant' };
   }
 
@@ -127,6 +132,30 @@ describe('normalizeAssistantMessage', () => {
     } as unknown as SDKMessage & { type: 'assistant' };
     const out = normalizeAssistantMessage(sdkMsg);
     expect(out.content).toEqual([]);
+  });
+
+  it('extracts per-message usage (cache_read_input_tokens → cacheReadInputTokens)', () => {
+    const out = normalizeAssistantMessage(
+      buildSdkAssistant({
+        usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_read_input_tokens: 4321,
+          cache_creation_input_tokens: 100,
+        },
+      }),
+    );
+    expect(out.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 20,
+      cacheReadInputTokens: 4321,
+      cacheCreationInputTokens: 100,
+    });
+  });
+
+  it('omits usage when SDK message has no usage field', () => {
+    const out = normalizeAssistantMessage(buildSdkAssistant({}));
+    expect(out.usage).toBeUndefined();
   });
 
   it('round-trips text + tool_use into text + toolUse blocks', () => {
