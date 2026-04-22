@@ -359,6 +359,43 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
         cleanup();
       }
     });
+
+    it('planMode=true keeps MCP tools executable (consumer-curated read-only servers)', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const { config } = createE2eMcpServer();
+        const adapter = createAdapter('claude-code');
+        const events = await collectEvents(
+          adapter.execute({
+            prompt:
+              'First call the echo tool with the message "hello plan". Then create a file notes.txt with the echo result. If you cannot create the file, just report the echo result.',
+            systemPrompt:
+              'You have an echo MCP tool and filesystem tools. Use echo first, then try Write.',
+            model: MODEL,
+            maxTurns: 4,
+            cwd: dir,
+            planMode: true,
+            mcpServers: { 'e2e-test': config },
+          }),
+        );
+
+        // MCP tool executes freely under planMode (server is consumer-curated).
+        const toolUses = events.filter((e) => e.type === 'tool_use') as Extract<UnifiedEvent, { type: 'tool_use' }>[];
+        const echoUse = toolUses.find((tu) => tu.toolName.includes('echo'));
+        expect(echoUse, 'MCP echo tool should execute in planMode').toBeDefined();
+
+        // Mutating built-ins must not be in the catalog, so no Write tool_use.
+        expect(
+          toolUses.find((tu) => /^(Write|Edit|NotebookEdit)$/i.test(tu.toolName)),
+          'Write-family built-ins should be hidden in planMode',
+        ).toBeUndefined();
+
+        // Filesystem must remain untouched.
+        assertNoFileCreated(dir, 'notes.txt');
+      } finally {
+        cleanup();
+      }
+    });
   });
 
   describe('onUserInput — AskUserQuestion tool bridge', () => {

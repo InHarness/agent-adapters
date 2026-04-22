@@ -36,6 +36,36 @@ export type {
   McpServerInstance,
 } from '../mcp.js';
 
+// --- Plan-mode tool filters ---
+//
+// planMode: true maps to a restricted-visibility config (Option B per the
+// claude-code-sdk skill's "Permission model & read-only agents" section),
+// NOT to SDK's permissionMode: 'plan' (which would also block the MCP tools
+// a consumer deliberately wired up in params.mcpServers).
+//
+// The adapter hides mutating built-ins from the model's catalog via
+// `tools` + `disallowedTools`, and leaves MCP servers (consumer-curated) free
+// to execute under permissionMode: 'bypassPermissions'.
+//
+// When the SDK gains per-MCP-tool filtering at the options level, revisit —
+// see the TODO in .claude/skills/claude-code-sdk/SKILL.md.
+const CLAUDE_CODE_READONLY_BUILTINS: string[] = [
+  'Read',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'WebSearch',
+  'TodoWrite',
+  'AskUserQuestion',
+];
+const CLAUDE_CODE_MUTATING_BUILTINS: string[] = [
+  'Bash',
+  'Edit',
+  'Write',
+  'NotebookEdit',
+  'Task',
+];
+
 // --- Normalization helpers ---
 
 function normalizeClaudeUsage(raw: unknown): UsageStats | undefined {
@@ -147,11 +177,20 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       model: resolvedModel,
       systemPrompt: params.systemPrompt,
       maxTurns: params.maxTurns,
-      permissionMode: params.planMode ? 'plan' : 'bypassPermissions',
-      allowDangerouslySkipPermissions: !params.planMode,
+      // planMode: true → hide mutating built-ins, leave MCP untouched (see
+      // CLAUDE_CODE_READONLY_BUILTINS above). We deliberately do NOT set
+      // permissionMode: 'plan' because it would also block consumer-curated
+      // MCP tools, contradicting the RuntimeExecuteParams.planMode contract.
+      permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true,
       cwd: params.cwd ?? process.cwd(),
       includePartialMessages: true,
     };
+
+    if (params.planMode) {
+      options.tools = CLAUDE_CODE_READONLY_BUILTINS;
+      options.disallowedTools = CLAUDE_CODE_MUTATING_BUILTINS;
+    }
 
     // Architecture-specific config (merge provider-resolved config with user-supplied config)
     const config = { ...this._providerConfig, ...params.architectureConfig };

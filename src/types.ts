@@ -336,9 +336,19 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
 
   /**
    * When true, adapter runs in plan-only mode: read-only tools allowed,
-   * writes/edits/shell-mutations blocked. Each adapter maps this to its native
-   * equivalent (claude-code: permissionMode='plan', gemini: approvalMode='plan',
-   * codex: sandboxMode='read-only', opencode: no-op with warning).
+   * writes/edits/shell-mutations blocked. MCP servers listed in `mcpServers`
+   * remain executable — the consumer is responsible for only passing read-only
+   * servers in plan mode.
+   *
+   * Per-adapter mapping:
+   * - claude-code: hides mutating built-ins (Bash, Edit, Write, NotebookEdit,
+   *   Task) from the model's catalog via `tools` + `disallowedTools` and runs
+   *   under `permissionMode: 'bypassPermissions'`. See the "Permission model &
+   *   read-only agents" section in `.claude/skills/claude-code-sdk/SKILL.md`
+   *   for why SDK's `permissionMode: 'plan'` is intentionally NOT used here.
+   * - gemini: approvalMode='plan'
+   * - codex: sandboxMode='read-only'
+   * - opencode: no-op with warning
    */
   planMode?: boolean;
 

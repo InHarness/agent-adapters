@@ -36,6 +36,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
   - Elicitation API stability — `options.onElicitation` is still relatively new; watch for signature changes.
   - `canUseTool` callback ergonomics — if the SDK adds a first-class ask-user tool type, reduce our custom AskUserQuestion plumbing.
   - Preset expansion — currently only `'claude_code'`. If more presets ship, `claude_usePreset` should accept them.
+  - Per-MCP-tool filtering at the options level — currently needs a `PreToolUse` hook matcher (see "Permission model"). If a first-class allow/deny list for MCP tool names lands in `Options`, revisit the `planMode` mapping and consider exposing `params.planModeAllowedTools`.
 
 <!-- anchor: da7anbcx -->
 ## Native API surface
@@ -98,6 +99,86 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 6. **Subagent events are first-class.** Unlike other adapters, we don't synthesize — we map. `task_started/progress/notification` carry `taskId` directly.
 7. **`compact_boundary`** fires before the SDK compresses history. Emit `flush` so downstream can checkpoint.
 8. **`subagentTaskId` on deltas requires a local lookup.** The SDK puts `parent_tool_use_id` on every `stream_event`, but the true subagent `taskId` only appears on the `task_started` system event. Adapter keeps a `Map<parent_tool_use_id, task_id>` per `execute()` call, populated on `task_started` and read on every delta / tool event. If a delta arrives before `task_started` (race), `isSubagent: true` is emitted with `subagentTaskId: undefined` — acceptable graceful degradation.
+
+<!-- anchor: pm3x9k7q -->
+## Permission model & read-only agents
+
+Critical mental model for anyone wiring restrictions around `planMode` or MCP tools. The SDK evaluates every tool call in this order, short-circuiting on the first decision:
+
+1. **Hooks** (`PreToolUse`) — can `allow` / `deny` / pass through
+2. **Deny rules** — entries in `disallowedTools`
+3. **Permission mode** — `permissionMode`
+4. **Allow rules** — entries in `allowedTools` (auto-approve)
+5. **`canUseTool`** callback — last-resort runtime gate
+
+Implications:
+
+- `permissionMode: 'plan'` blocks at step 3. `allowedTools` (step 4) and `canUseTool` (step 5) run **after** and cannot override it. Only a `PreToolUse` hook (step 1) can.
+- `allowedTools` never controls which tools Claude *sees* — only whether they auto-approve. JSDoc on `Options.allowedTools` in `sdk.d.ts`: *"To restrict which tools are available, use the `tools` option instead."*
+- MCP servers listed in `mcpServers` are **spawned and listed to the model even in `permissionMode: 'plan'`**. Plan mode only gates execution, not discovery.
+
+<!-- anchor: 8vb4lq6e -->
+### Options that actually shape Claude's tool catalog
+
+Verified against `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`:
+
+- **`tools: string[] | { type: 'preset'; preset: 'claude_code' }`** — *"Specify the base set of available built-in tools. `[]` disables all built-in tools"*. Filters **built-ins only**; MCP tools are unaffected.
+- **`disallowedTools: string[]`** — *"These tools will be removed from the model's context and cannot be used, even if they would otherwise be allowed."* Hides from the catalog, not just gates execution. Works for built-in names. Filtering MCP tool names (`mcp__server__tool`) via this list is not documented and should not be relied on.
+- **`allowedTools: string[]`** — auto-approve list only. Does not hide anything.
+- **`permissionMode`** values (`'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'`):
+  - `'plan'` — blocks all tool execution; model can still see everything.
+  - `'bypassPermissions'` — approves everything visible (requires `allowDangerouslySkipPermissions: true`). Our default for non-plan runs.
+  - `'dontAsk'` — deny if not pre-approved (i.e. only `allowedTools` entries pass). Headless-safe alternative to `bypassPermissions` when you want a hard allow-list.
+
+<!-- anchor: j7sdrh24 -->
+### What the SDK can NOT do at the options level
+
+- Filter `Bash` subcommands (`Bash(rm:*)` syntax belongs to Claude Code's hooks system, not the SDK's options).
+- Whitelist individual MCP tools within a connected server. Per-tool MCP filtering requires a `PreToolUse` hook with a matcher, or server-side curation (pick which tools the MCP server exposes).
+
+<!-- anchor: k9p2cxzl -->
+### Read-only agent: two implementation options
+
+**Option A — plan mode + `PreToolUse` hook to unblock selected tools**
+
+```ts
+options.permissionMode = 'plan';
+options.hooks = {
+  PreToolUse: [{
+    matcher: 'mcp__readonly_server__.*',
+    hooks: [async () => ({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' },
+    })],
+  }],
+};
+```
+
+- **When it fits**: a single MCP server exposes mixed read/write tools and you need to pick individual ones by name (e.g. allow `search_docs`, deny `delete_document` within the same server).
+- **Cost**: the model sees the full catalog (all built-ins, all MCP tools) and may still attempt `Edit` / `Write` / blocked MCP tools — they fail at the gate and emit a `blocked`-style `tool_result`. Wasted turns, noisier event stream.
+
+**Option B — restrict visibility: `tools` + `disallowedTools`** (adapter default as of this revision)
+
+```ts
+options.permissionMode = 'bypassPermissions';
+options.allowDangerouslySkipPermissions = true;
+options.tools = ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'TodoWrite', 'AskUserQuestion'];
+options.disallowedTools = ['Bash', 'Edit', 'Write', 'NotebookEdit', 'Task'];
+// Consumer is responsible for passing only read-only MCP servers in params.mcpServers.
+```
+
+- **When it fits**: general "read-only agent" semantics. Read/write split is done per-MCP-server rather than per-MCP-tool — the consumer curates `params.mcpServers` to only include read-only servers.
+- **Cost**: built-ins are binary (no `Bash` means no `git log`, since the SDK can't filter sub-commands). MCP filtering happens at the server boundary.
+
+<!-- anchor: z6fr2p5x -->
+### Current adapter choice
+
+`src/adapters/claude-code.ts` maps `params.planMode: true` to **Option B**. `permissionMode: 'plan'` is intentionally **not** used — its "block everything" semantics contradict the `RuntimeExecuteParams.planMode` contract documented in `src/types.ts` (*"read-only tools allowed, writes/edits/shell-mutations blocked"*), which must leave consumer-curated MCP tools executable.
+
+Constants (in `src/adapters/claude-code.ts`):
+- `CLAUDE_CODE_READONLY_BUILTINS` — the `tools` allow-list.
+- `CLAUDE_CODE_MUTATING_BUILTINS` — the `disallowedTools` belt-and-suspenders list.
+
+**If a future requirement needs individual MCP tool filtering** (one server exposing both read and write tools, and only the read ones should execute), switch to **Option A** or introduce a separate param (e.g. `planModeAllowedTools: string[]`) that the adapter turns into a synthesized `PreToolUse` hook. Don't reach for `canUseTool` — it runs after plan mode and cannot override it.
 
 <!-- anchor: b46yqjzy -->
 ## Skills support
