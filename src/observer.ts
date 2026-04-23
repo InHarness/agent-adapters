@@ -133,6 +133,91 @@ export interface ConsoleObserverOptions {
   showAdapterReady?: boolean;
   /** Print `adapter_ready` sdkConfig as a single JSON line instead of pretty-printed. Defaults to `false`. */
   compactAdapterReady?: boolean;
+  /**
+   * Show only these paths in `adapter_ready.sdkConfig`. All other keys keep
+   * their position in the tree but their value is replaced with `'[Excluded]'`,
+   * so consumers still see which keys exist. Dot-path with `*` wildcard for a
+   * single segment, e.g. `'options.model'`, `'mcpServers.*.name'`.
+   *
+   * If both `sdkConfigInclude` and `sdkConfigExclude` are set, exclusion wins.
+   */
+  sdkConfigInclude?: string[];
+  /**
+   * Hide these paths in `adapter_ready.sdkConfig`. Matched subtrees are
+   * replaced with `'[Excluded]'`; siblings keep their values. Dot-path with
+   * `*` wildcard for a single segment, e.g. `'mcpServers.*.instance'`.
+   */
+  sdkConfigExclude?: string[];
+}
+
+const EXCLUDED = '[Excluded]';
+const FILTER_CIRCULAR = '[CIRCULAR]';
+
+type FilterPattern = readonly string[];
+
+function parsePatterns(patterns: string[] | undefined): FilterPattern[] | undefined {
+  if (!patterns || patterns.length === 0) return undefined;
+  return patterns.map((p) => p.split('.'));
+}
+
+function patternMatchesAtOrBeyond(pattern: FilterPattern, path: readonly string[]): boolean {
+  if (pattern.length > path.length) return false;
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] !== '*' && pattern[i] !== path[i]) return false;
+  }
+  return true;
+}
+
+function pathLeadsToPattern(pattern: FilterPattern, path: readonly string[]): boolean {
+  if (path.length >= pattern.length) return false;
+  for (let i = 0; i < path.length; i++) {
+    if (pattern[i] !== '*' && pattern[i] !== path[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Walk `sdkConfig` applying include/exclude path filters.
+ * Excluded subtrees become the string `'[Excluded]'` — the key stays so the
+ * reader sees which fields were passed to the SDK.
+ * Cycle-safe: repeated object references become `'[CIRCULAR]'`.
+ */
+export function applySdkConfigFilter(
+  value: unknown,
+  options: { include?: string[]; exclude?: string[] },
+): unknown {
+  const include = parsePatterns(options.include);
+  const exclude = parsePatterns(options.exclude);
+  if (!include && !exclude) return value;
+  const seen = new WeakSet<object>();
+  return walk(value, [], include, exclude, seen);
+}
+
+function walk(
+  value: unknown,
+  path: readonly string[],
+  include: FilterPattern[] | undefined,
+  exclude: FilterPattern[] | undefined,
+  seen: WeakSet<object>,
+): unknown {
+  if (exclude?.some((p) => patternMatchesAtOrBeyond(p, path))) return EXCLUDED;
+  if (include) {
+    const atOrBeyond = include.some((p) => patternMatchesAtOrBeyond(p, path));
+    const onPath = !atOrBeyond && include.some((p) => pathLeadsToPattern(p, path));
+    if (!atOrBeyond && !onPath) return EXCLUDED;
+    if (!atOrBeyond && (value === null || typeof value !== 'object')) return EXCLUDED;
+  }
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value as object)) return FILTER_CIRCULAR;
+  seen.add(value as object);
+  if (Array.isArray(value)) {
+    return value.map((v, i) => walk(v, [...path, String(i)], include, exclude, seen));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = walk(v, [...path, k], include, exclude, seen);
+  }
+  return out;
 }
 
 const ANSI = {
@@ -162,6 +247,8 @@ export function createConsoleObserver(options: ConsoleObserverOptions = {}): Str
   const maxLen = options.toolResultMaxLen ?? 100;
   const showAdapterReady = options.showAdapterReady ?? true;
   const compactAdapterReady = options.compactAdapterReady ?? false;
+  const sdkConfigInclude = options.sdkConfigInclude;
+  const sdkConfigExclude = options.sdkConfigExclude;
 
   const paint = (code: string, text: string): string =>
     color ? `${code}${text}${ANSI.reset}` : text;
@@ -210,10 +297,14 @@ export function createConsoleObserver(options: ConsoleObserverOptions = {}): Str
     onAdapterReady(adapter, sdkConfig) {
       if (!showAdapterReady) return;
       const header = paint(ANSI.cyan, `[${adapter}] ready`);
+      const filtered = applySdkConfigFilter(sdkConfig, {
+        include: sdkConfigInclude,
+        exclude: sdkConfigExclude,
+      });
       if (compactAdapterReady) {
-        write(`${header} ${JSON.stringify(sdkConfig)}\n`);
+        write(`${header} ${JSON.stringify(filtered)}\n`);
       } else {
-        write(`${header}\n${paint(ANSI.dim, JSON.stringify(sdkConfig, null, 2))}\n`);
+        write(`${header}\n${paint(ANSI.dim, JSON.stringify(filtered, null, 2))}\n`);
       }
     },
   };

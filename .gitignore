@@ -4,3 +4,4 @@ dist/
 .env
 .claude4spec/
 .buddy/buddy.yml
+.claude/skills/release-process/

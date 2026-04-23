@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Writable } from 'node:stream';
-import { dispatchEvent, observeStream, createConsoleObserver } from './observer.js';
+import {
+  dispatchEvent,
+  observeStream,
+  createConsoleObserver,
+  applySdkConfigFilter,
+} from './observer.js';
 import type { StreamObserver } from './observer.js';
 import type { UnifiedEvent, NormalizedMessage } from './types.js';
 
@@ -253,5 +258,131 @@ describe('createConsoleObserver', () => {
       [obs],
     );
     expect(output()).toBe('');
+  });
+});
+
+describe('applySdkConfigFilter', () => {
+  const sample = {
+    model: 'claude-opus-4-7',
+    systemPrompt: 'you are...',
+    mcpServers: {
+      echo: { command: 'node', args: ['echo.js'], instance: { deep: 'secret' } },
+      fs: { command: 'fs-bin', instance: { deep: 'secret' } },
+    },
+  };
+
+  it('returns value unchanged when neither include nor exclude is provided', () => {
+    const out = applySdkConfigFilter(sample, {});
+    expect(out).toEqual(sample);
+  });
+
+  it('exclude replaces matched top-level key with [Excluded], keeps siblings', () => {
+    const out = applySdkConfigFilter(sample, { exclude: ['systemPrompt'] }) as Record<
+      string,
+      unknown
+    >;
+    expect(out.systemPrompt).toBe('[Excluded]');
+    expect(out.model).toBe('claude-opus-4-7');
+    expect((out.mcpServers as Record<string, unknown>).echo).toBeDefined();
+  });
+
+  it('exclude with wildcard hides nested leaf under every parent', () => {
+    const out = applySdkConfigFilter(sample, { exclude: ['mcpServers.*.instance'] }) as {
+      mcpServers: Record<string, Record<string, unknown>>;
+    };
+    expect(out.mcpServers.echo.instance).toBe('[Excluded]');
+    expect(out.mcpServers.fs.instance).toBe('[Excluded]');
+    expect(out.mcpServers.echo.command).toBe('node');
+    expect(out.mcpServers.echo.args).toEqual(['echo.js']);
+  });
+
+  it('include shows only matching keys; all others become [Excluded] but keep their position', () => {
+    const out = applySdkConfigFilter(sample, { include: ['model'] }) as Record<string, unknown>;
+    expect(out.model).toBe('claude-opus-4-7');
+    expect(out.systemPrompt).toBe('[Excluded]');
+    expect(out.mcpServers).toBe('[Excluded]');
+  });
+
+  it('include descends into nested paths without flattening intermediate keys', () => {
+    const out = applySdkConfigFilter(sample, { include: ['mcpServers.echo.command'] }) as {
+      model: string;
+      mcpServers: Record<string, Record<string, unknown>>;
+    };
+    expect(out.model).toBe('[Excluded]');
+    expect(out.mcpServers.echo.command).toBe('node');
+    expect(out.mcpServers.echo.args).toBe('[Excluded]');
+    expect(out.mcpServers.echo.instance).toBe('[Excluded]');
+    expect(out.mcpServers.fs).toBe('[Excluded]');
+  });
+
+  it('exclude wins when include and exclude both match', () => {
+    const out = applySdkConfigFilter(sample, {
+      include: ['mcpServers.echo.instance'],
+      exclude: ['mcpServers.echo.instance'],
+    }) as { mcpServers: Record<string, Record<string, unknown>> };
+    expect(out.mcpServers.echo.instance).toBe('[Excluded]');
+  });
+
+  it('handles circular references without stack overflow', () => {
+    const input: Record<string, unknown> = { name: 'root' };
+    input.self = input;
+    const out = applySdkConfigFilter(input, { exclude: ['nothing'] }) as Record<string, unknown>;
+    expect(out.name).toBe('root');
+    expect(out.self).toBe('[CIRCULAR]');
+  });
+});
+
+describe('createConsoleObserver sdkConfig filtering', () => {
+  const sdkConfig = {
+    model: 'claude-opus-4-7',
+    mcpServers: { echo: { command: 'node', instance: { deep: 'x' } } },
+  };
+
+  it('hides excluded paths as "[Excluded]" in pretty-printed output, keeps keys visible', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({
+      stream,
+      color: false,
+      sdkConfigExclude: ['mcpServers.*.instance'],
+    });
+    dispatchEvent({ type: 'adapter_ready', adapter: 'claude-code', sdkConfig }, [obs]);
+    const out = output();
+    expect(out).toContain('"instance": "[Excluded]"');
+    expect(out).toContain('"command": "node"');
+    expect(out).toContain('"model": "claude-opus-4-7"');
+  });
+
+  it('applies filter in compact mode as well', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({
+      stream,
+      color: false,
+      compactAdapterReady: true,
+      sdkConfigExclude: ['mcpServers'],
+    });
+    dispatchEvent({ type: 'adapter_ready', adapter: 'claude-code', sdkConfig }, [obs]);
+    expect(output()).toContain('"mcpServers":"[Excluded]"');
+  });
+
+  it('include narrows the printed sdkConfig to matching paths', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({
+      stream,
+      color: false,
+      sdkConfigInclude: ['model'],
+    });
+    dispatchEvent({ type: 'adapter_ready', adapter: 'claude-code', sdkConfig }, [obs]);
+    const out = output();
+    expect(out).toContain('"model": "claude-opus-4-7"');
+    expect(out).toContain('"mcpServers": "[Excluded]"');
+  });
+
+  it('no filter options = unchanged default output', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: false });
+    dispatchEvent({ type: 'adapter_ready', adapter: 'claude-code', sdkConfig }, [obs]);
+    const out = output();
+    expect(out).toContain('"deep": "x"');
+    expect(out).not.toContain('[Excluded]');
   });
 });

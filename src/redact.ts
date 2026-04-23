@@ -16,19 +16,21 @@ const SECRET_KEY_REGEX = /(apikey|api_key|token|secret|password|authorization|cr
 const REDACTED = '[REDACTED]';
 
 export function redactSecrets<T>(value: T): T {
-  return redactValue(value) as T;
+  return redactValue(value, new WeakSet()) as T;
 }
 
-function redactValue(value: unknown): unknown {
+function redactValue(value: unknown, seen: WeakSet<object>): unknown {
   if (value == null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(redactValue);
+  if (seen.has(value as object)) return '[CIRCULAR]';
+  seen.add(value as object);
+  if (Array.isArray(value)) return value.map((v) => redactValue(v, seen));
   const source = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(source)) {
     if (SECRET_KEY_REGEX.test(key)) {
       out[key] = typeof v === 'string' && v.length > 0 ? REDACTED : v;
     } else {
-      out[key] = redactValue(v);
+      out[key] = redactValue(v, seen);
     }
   }
   return out;

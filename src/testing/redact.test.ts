@@ -87,4 +87,13 @@ describe('redactSecrets', () => {
     const input = { apiKey: '' };
     expect(redactSecrets(input)).toEqual({ apiKey: '' });
   });
+
+  it('handles circular references without stack overflow', () => {
+    const input: Record<string, unknown> = { name: 'server', apiKey: 'sk-xxx' };
+    input.self = input;
+    const out = redactSecrets(input) as Record<string, unknown>;
+    expect(out.name).toBe('server');
+    expect(out.apiKey).toBe('[REDACTED]');
+    expect(out.self).toBe('[CIRCULAR]');
+  });
 });

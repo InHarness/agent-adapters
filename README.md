@@ -502,7 +502,21 @@ for await (const _ of observeStream(stream, [createConsoleObserver()])) {
 }
 ```
 
-Options: `{ color?, thinking?, subagents?, usage?, toolResultMaxLen?, stream?, showAdapterReady?, compactAdapterReady? }` — all optional; `color` auto-detects TTY, `stream` accepts any `NodeJS.WritableStream` (useful for tests). `showAdapterReady` (default `true`) prints the SDK-native config snapshot at the start of each run; `compactAdapterReady` (default `false`) switches it from pretty-printed JSON to a single line.
+Options: `{ color?, thinking?, subagents?, usage?, toolResultMaxLen?, stream?, showAdapterReady?, compactAdapterReady?, sdkConfigInclude?, sdkConfigExclude? }` — all optional; `color` auto-detects TTY, `stream` accepts any `NodeJS.WritableStream` (useful for tests). `showAdapterReady` (default `true`) prints the SDK-native config snapshot at the start of each run; `compactAdapterReady` (default `false`) switches it from pretty-printed JSON to a single line.
+
+`sdkConfigInclude` / `sdkConfigExclude` filter which paths in the `adapter_ready.sdkConfig` payload are printed. Matched subtrees are replaced with the string `"[Excluded]"` — the key stays in place so you can still see which fields the adapter passed to the SDK. Paths use dot notation with `*` as a single-segment wildcard (e.g. `'mcpServers.*.instance'`). If both are set, exclusion wins.
+
+```ts
+// Hide large/noisy fields but still see their keys in the tree
+createConsoleObserver({
+  sdkConfigExclude: ['mcpServers.*.instance', 'systemPrompt'],
+});
+
+// Or invert: show only what you care about
+createConsoleObserver({
+  sdkConfigInclude: ['model', 'maxTurns', 'mcpServers.*.command'],
+});
+```
 
 For custom behavior, implement `StreamObserver` yourself:
 
