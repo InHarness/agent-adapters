@@ -179,7 +179,17 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
     this.abortController = new AbortController();
 
-    const resolvedModel = resolveModel(this.architecture, params.model);
+    let resolvedModel: string;
+    try {
+      resolvedModel = resolveModel(this.architecture, params.model);
+    } catch (err) {
+      yield {
+        type: 'error',
+        error: err instanceof Error ? err : new AdapterInitError('claude-code', err),
+        phase: 'init',
+      };
+      return;
+    }
 
     const options: Options = {
       abortController: this.abortController,
@@ -454,7 +464,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       q = query({ prompt: params.prompt, options });
     } catch (err) {
       clearTimeout(timeoutId);
-      throw new AdapterInitError('claude-code', err);
+      yield { type: 'error', error: new AdapterInitError('claude-code', err), phase: 'init' };
+      return;
     }
 
     try {
@@ -509,7 +520,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             } else {
               pending.resolveResponse({ action: 'cancel' });
             }
-            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           }
         }
 
@@ -536,9 +547,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
         if (this.abortController.signal.aborted) {
           if (timedOut) {
-            yield { type: 'error', error: new AdapterTimeoutError('claude-code', params.timeoutMs!) };
+            yield { type: 'error', error: new AdapterTimeoutError('claude-code', params.timeoutMs!), phase: 'runtime' };
           } else {
-            yield { type: 'error', error: new AdapterAbortError('claude-code') };
+            yield { type: 'error', error: new AdapterAbortError('claude-code'), phase: 'runtime' };
           }
           return;
         }
@@ -727,7 +738,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),
               };
             } else {
-              yield { type: 'error', error: new Error((resultEvent.result as string) ?? 'Unknown error') };
+              yield { type: 'error', error: new Error((resultEvent.result as string) ?? 'Unknown error'), phase: 'runtime' };
             }
             break;
           }
@@ -739,13 +750,13 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     } catch (err) {
       if (this.abortController.signal.aborted) {
         if (timedOut) {
-          yield { type: 'error', error: new AdapterTimeoutError('claude-code', params.timeoutMs!) };
+          yield { type: 'error', error: new AdapterTimeoutError('claude-code', params.timeoutMs!), phase: 'runtime' };
         } else {
-          yield { type: 'error', error: new AdapterAbortError('claude-code') };
+          yield { type: 'error', error: new AdapterAbortError('claude-code'), phase: 'runtime' };
         }
         return;
       }
-      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);
     }

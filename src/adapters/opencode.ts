@@ -58,7 +58,14 @@ export class OpencodeAdapter implements RuntimeAdapter {
     const config = { ...this._providerConfig, ...params.architectureConfig };
 
     const apiKey = (config.opencode_apiKey as string) ?? process.env.OPENROUTER_API_KEY;
-    if (!apiKey) throw new AdapterInitError('opencode', new Error('OPENROUTER_API_KEY env var is required'));
+    if (!apiKey) {
+      yield {
+        type: 'error',
+        error: new AdapterInitError('opencode', new Error('OPENROUTER_API_KEY env var is required')),
+        phase: 'init',
+      };
+      return;
+    }
 
     if (params.planMode) {
       console.warn('[agent-adapters] opencode: planMode not natively supported — ignored');
@@ -135,7 +142,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
       client = result.client;
       this.serverClose = result.server.close;
     } catch (err) {
-      yield { type: 'error', error: new AdapterInitError('opencode', err) };
+      yield { type: 'error', error: new AdapterInitError('opencode', err), phase: 'init' };
       return;
     }
 
@@ -151,6 +158,10 @@ export class OpencodeAdapter implements RuntimeAdapter {
       resolve: (res: UserInputResponse) => void;
     };
     const pendingUserInputs: PendingUserInput[] = [];
+    // Meta events (warnings/errors) surfaced from background tasks like the v2
+    // question subscription IIFE, which cannot yield directly. The main loop
+    // drains this alongside pendingUserInputs.
+    const pendingMetaEvents: UnifiedEvent[] = [];
     let userInputWaker: (() => void) | null = null;
     let v2Client: ReturnType<typeof createOpencodeClientV2> | undefined;
     let v2SubscriptionCancel: (() => void) | undefined;
@@ -222,8 +233,16 @@ export class OpencodeAdapter implements RuntimeAdapter {
               }
             });
           }
-        } catch {
-          /* SSE setup failure — degrade silently; user-input feature just won't fire */
+        } catch (err) {
+          // SSE setup or iteration failed. The main v1 stream is authoritative,
+          // so we don't error out the run — but we surface a warning so the
+          // user-input feature's absence isn't invisible.
+          pendingMetaEvents.push({
+            type: 'warning',
+            message: `opencode: v2 question subscription failed (${err instanceof Error ? err.message : String(err)}) — user-input flow disabled for this session`,
+          });
+          userInputWaker?.();
+          userInputWaker = null;
         }
       })();
     };
@@ -249,7 +268,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
       sessionId = session?.id;
 
       if (!sessionId) {
-        yield { type: 'error', error: new Error('Failed to create OpenCode session') };
+        yield { type: 'error', error: new Error('Failed to create OpenCode session'), phase: 'runtime' };
         return;
       }
 
@@ -270,7 +289,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
 
       // 4. Consume SSE events
       if (!sseResult.stream) {
-        yield { type: 'error', error: new Error('SSE stream not available') };
+        yield { type: 'error', error: new Error('SSE stream not available'), phase: 'runtime' };
         return;
       }
 
@@ -288,6 +307,10 @@ export class OpencodeAdapter implements RuntimeAdapter {
       let pendingNext: Promise<IteratorResult<unknown>> | null = null;
 
       outer: while (true) {
+        // Drain meta events (warnings/errors from background tasks) first.
+        while (pendingMetaEvents.length > 0) {
+          yield pendingMetaEvents.shift()!;
+        }
         // Drain pending user-input requests before consuming the next v1 event.
         while (pendingUserInputs.length > 0) {
           const { req, resolve } = pendingUserInputs.shift()!;
@@ -301,7 +324,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
             resolve(res);
           } catch (err) {
             resolve({ action: 'cancel' });
-            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           }
         }
 
@@ -321,9 +344,9 @@ export class OpencodeAdapter implements RuntimeAdapter {
 
         if (signal.aborted) {
           if (timedOut) {
-            yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!) };
+            yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!), phase: 'runtime' };
           } else {
-            yield { type: 'error', error: new AdapterAbortError('opencode') };
+            yield { type: 'error', error: new AdapterAbortError('opencode'), phase: 'runtime' };
           }
           return;
         }
@@ -548,7 +571,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
             const props = evt.properties as { sessionID?: string; error?: Record<string, unknown> };
             if (props.sessionID && props.sessionID !== sessionId) break;
             const errMsg = (props.error as Record<string, unknown>)?.message as string ?? 'Session error';
-            yield { type: 'error', error: new Error(errMsg) };
+            yield { type: 'error', error: new Error(errMsg), phase: 'runtime' };
             return;
           }
 
@@ -560,13 +583,13 @@ export class OpencodeAdapter implements RuntimeAdapter {
       v2SubscriptionCancel?.();
       if (signal.aborted) {
         if (timedOut) {
-          yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!) };
+          yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!), phase: 'runtime' };
         } else {
-          yield { type: 'error', error: new AdapterAbortError('opencode') };
+          yield { type: 'error', error: new AdapterAbortError('opencode'), phase: 'runtime' };
         }
         return;
       }
-      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       v2SubscriptionCancel?.();
       clearTimeout(timeoutId);

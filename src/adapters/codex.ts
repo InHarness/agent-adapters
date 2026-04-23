@@ -42,7 +42,14 @@ export class CodexAdapter implements RuntimeAdapter {
     const config = { ...this._providerConfig, ...params.architectureConfig };
 
     const apiKey = (config.codex_apiKey as string) ?? process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new AdapterInitError('codex', new Error('OPENAI_API_KEY env var is required'));
+    if (!apiKey) {
+      yield {
+        type: 'error',
+        error: new AdapterInitError('codex', new Error('OPENAI_API_KEY env var is required')),
+        phase: 'init',
+      };
+      return;
+    }
 
     // Warn if MCP servers are provided — Codex SDK does not support dynamic MCP configuration
     if (params.mcpServers && Object.keys(params.mcpServers).length > 0) {
@@ -74,10 +81,21 @@ export class CodexAdapter implements RuntimeAdapter {
     try {
       codex = new Codex(codexOptions as ConstructorParameters<typeof Codex>[0]);
     } catch (err) {
-      throw new AdapterInitError('codex', err);
+      yield { type: 'error', error: new AdapterInitError('codex', err), phase: 'init' };
+      return;
     }
 
-    const resolvedModel = resolveModel(this.architecture, params.model);
+    let resolvedModel: string;
+    try {
+      resolvedModel = resolveModel(this.architecture, params.model);
+    } catch (err) {
+      yield {
+        type: 'error',
+        error: err instanceof Error ? err : new AdapterInitError('codex', err),
+        phase: 'init',
+      };
+      return;
+    }
 
     // Session resumption: resumeThread if sessionId provided
     const threadOptions = {
@@ -131,9 +149,9 @@ export class CodexAdapter implements RuntimeAdapter {
       for await (const event of events) {
         if (this.abortController.signal.aborted) {
           if (timedOut) {
-            yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!) };
+            yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!), phase: 'runtime' };
           } else {
-            yield { type: 'error', error: new AdapterAbortError('codex') };
+            yield { type: 'error', error: new AdapterAbortError('codex'), phase: 'runtime' };
           }
           return;
         }
@@ -201,7 +219,7 @@ export class CodexAdapter implements RuntimeAdapter {
             } else if (item.type === 'reasoning') {
               yield { type: 'thinking', text: item.text, isSubagent: false };
             } else if (item.type === 'error') {
-              yield { type: 'error', error: new Error(item.message) };
+              yield { type: 'error', error: new Error(item.message), phase: 'runtime' };
             }
             break;
           }
@@ -238,12 +256,12 @@ export class CodexAdapter implements RuntimeAdapter {
           }
 
           case 'turn.failed': {
-            yield { type: 'error', error: new Error(event.error.message) };
+            yield { type: 'error', error: new Error(event.error.message), phase: 'runtime' };
             break;
           }
 
           case 'error': {
-            yield { type: 'error', error: new Error(event.message) };
+            yield { type: 'error', error: new Error(event.message), phase: 'runtime' };
             break;
           }
 
@@ -254,13 +272,13 @@ export class CodexAdapter implements RuntimeAdapter {
     } catch (err) {
       if (this.abortController.signal.aborted) {
         if (timedOut) {
-          yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!) };
+          yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!), phase: 'runtime' };
         } else {
-          yield { type: 'error', error: new AdapterAbortError('codex') };
+          yield { type: 'error', error: new AdapterAbortError('codex'), phase: 'runtime' };
         }
         return;
       }
-      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);
     }

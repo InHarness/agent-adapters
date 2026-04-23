@@ -141,4 +141,25 @@ describe('codex normalization (fixture replay)', () => {
     expect(result?.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
     expect(result?.output).toBe('Hello world');
   });
+
+  it('missing OPENAI_API_KEY yields {type:error, phase:init} instead of throwing', async () => {
+    const prev = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const { CodexAdapter } = await import('./codex.js');
+      const adapter = new CodexAdapter();
+      // Must not throw — the generator should yield an error event and return.
+      const events = await collectEvents(adapter.execute(createTestParams({ model: 'codex-mini' })));
+      const errors = events.filter((e) => e.type === 'error') as Extract<UnifiedEvent, { type: 'error' }>[];
+      expect(errors).toHaveLength(1);
+      expect(errors[0].phase).toBe('init');
+      expect(errors[0].error.message).toMatch(/Failed to initialize codex adapter/);
+      const cause = (errors[0].error as Error & { cause?: Error }).cause;
+      expect(cause?.message).toMatch(/OPENAI_API_KEY/);
+      // Pre-SDK failure: no adapter_ready should precede it.
+      expect(events.some((e) => e.type === 'adapter_ready')).toBe(false);
+    } finally {
+      if (prev !== undefined) process.env.OPENAI_API_KEY = prev;
+    }
+  });
 });

@@ -128,7 +128,15 @@ export type UnifiedEvent =
        */
       todoListSnapshot?: TodoItem[];
     }
-  | { type: 'error'; error: Error }
+  /**
+   * Error surfaced from the adapter. `phase` distinguishes errors raised while
+   * the adapter is still wiring up config/auth/SDK (`'init'`, emitted before
+   * `adapter_ready`) from errors during live SDK execution (`'runtime'`,
+   * emitted after). Consumers can use this to decide whether the run ever got
+   * off the ground. Optional for backwards compatibility with hand-constructed
+   * events (e.g. in tests).
+   */
+  | { type: 'error'; error: Error; phase?: 'init' | 'runtime' }
   | { type: 'warning'; message: string }
   | { type: 'user_input_request'; request: UserInputRequest }
   /**

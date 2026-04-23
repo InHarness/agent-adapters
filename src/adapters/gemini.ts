@@ -133,13 +133,20 @@ export class GeminiAdapter implements RuntimeAdapter {
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
     const resolvedModel = resolveModel(this.architecture, params.model);
     const apiKey = process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new AdapterInitError('gemini', new Error('GOOGLE_API_KEY or GEMINI_API_KEY env var is required'));
+    if (!apiKey) {
+      yield {
+        type: 'error',
+        error: new AdapterInitError('gemini', new Error('GOOGLE_API_KEY or GEMINI_API_KEY env var is required')),
+        phase: 'init',
+      };
+      return;
+    }
 
     let sdk: Record<string, unknown>;
     try {
       sdk = await import('@google/gemini-cli-core');
     } catch (err) {
-      yield { type: 'error', error: new AdapterInitError('gemini', err) };
+      yield { type: 'error', error: new AdapterInitError('gemini', err), phase: 'init' };
       return;
     }
 
@@ -177,6 +184,7 @@ export class GeminiAdapter implements RuntimeAdapter {
           'gemini',
           new Error('Gemini SDK missing required exports (Config/GeminiClient/LegacyAgentSession/AuthType).'),
         ),
+        phase: 'init',
       };
       return;
     }
@@ -265,9 +273,18 @@ export class GeminiAdapter implements RuntimeAdapter {
             const filePath = join(chatsDir, match);
             const record = JSON.parse(await readFile(filePath, 'utf8'));
             resumedSessionData = { conversation: record, filePath };
+          } else {
+            yield {
+              type: 'warning',
+              message: `gemini: no prior session file for ${shortId} — starting fresh`,
+            };
           }
-        } catch {
-          // No prior session directory — start fresh with effectiveSessionId.
+        } catch (err) {
+          // No prior session directory, unreadable file, or malformed JSON — start fresh.
+          yield {
+            type: 'warning',
+            message: `gemini: could not read prior session (${err instanceof Error ? err.message : String(err)}) — starting fresh`,
+          };
         }
       }
 
@@ -301,6 +318,7 @@ export class GeminiAdapter implements RuntimeAdapter {
       yield {
         type: 'error',
         error: new AdapterInitError('gemini', err instanceof Error ? err : new Error(String(err))),
+        phase: 'init',
       };
       return;
     }
@@ -420,7 +438,7 @@ export class GeminiAdapter implements RuntimeAdapter {
             res = params.onUserInput ? await params.onUserInput(req) : { action: 'decline' };
           } catch (err) {
             res = { action: 'cancel' };
-            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+            yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           }
           const bus = geminiConfigRef?.messageBus;
           if (bus && MessageBusType && ToolConfirmationOutcome) {
@@ -574,6 +592,7 @@ export class GeminiAdapter implements RuntimeAdapter {
               yield {
                 type: 'error',
                 error: timedOut ? new AdapterTimeoutError('gemini', params.timeoutMs!) : new AdapterAbortError('gemini'),
+                phase: 'runtime',
               };
               return;
             }
@@ -607,7 +626,7 @@ export class GeminiAdapter implements RuntimeAdapter {
 
           case 'error': {
             const fatal = event.fatal as boolean;
-            yield { type: 'error', error: new Error((event.message as string) ?? 'Gemini error') };
+            yield { type: 'error', error: new Error((event.message as string) ?? 'Gemini error'), phase: 'runtime' };
             if (fatal) return;
             break;
           }
@@ -620,13 +639,13 @@ export class GeminiAdapter implements RuntimeAdapter {
     } catch (err) {
       if (this.aborted) {
         if (timedOut) {
-          yield { type: 'error', error: new AdapterTimeoutError('gemini', params.timeoutMs!) };
+          yield { type: 'error', error: new AdapterTimeoutError('gemini', params.timeoutMs!), phase: 'runtime' };
         } else {
-          yield { type: 'error', error: new AdapterAbortError('gemini') };
+          yield { type: 'error', error: new AdapterAbortError('gemini'), phase: 'runtime' };
         }
         return;
       }
-      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);
     }
