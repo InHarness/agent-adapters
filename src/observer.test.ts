@@ -1,7 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
-import { dispatchEvent, observeStream } from './observer.js';
+import { Writable } from 'node:stream';
+import { dispatchEvent, observeStream, createConsoleObserver } from './observer.js';
 import type { StreamObserver } from './observer.js';
 import type { UnifiedEvent, NormalizedMessage } from './types.js';
+
+function captureStream(): { stream: Writable; output: () => string } {
+  const chunks: string[] = [];
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(chunk.toString());
+      callback();
+    },
+  });
+  return { stream, output: () => chunks.join('') };
+}
 
 const msg: NormalizedMessage = {
   role: 'assistant',
@@ -99,5 +111,105 @@ describe('observeStream', () => {
 
     expect(collected).toHaveLength(2);
     expect(onTextDelta).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('createConsoleObserver', () => {
+  it('writes text_delta verbatim without prefix', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: false });
+
+    dispatchEvent({ type: 'text_delta', text: 'hello ', isSubagent: false }, [obs]);
+    dispatchEvent({ type: 'text_delta', text: 'world', isSubagent: false }, [obs]);
+
+    expect(output()).toBe('hello world');
+  });
+
+  it('formats tool_use and tool_result', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: false });
+
+    dispatchEvent({ type: 'tool_use', toolName: 'Read', toolUseId: 'tu1', input: {}, isSubagent: false }, [obs]);
+    dispatchEvent({ type: 'tool_result', toolUseId: 'tu1', summary: 'file contents' }, [obs]);
+
+    expect(output()).toContain('[tool] Read (tu1)');
+    expect(output()).toContain('[result] file contents');
+  });
+
+  it('truncates tool_result summary at toolResultMaxLen', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: false, toolResultMaxLen: 10 });
+
+    dispatchEvent({ type: 'tool_result', toolUseId: 'tu1', summary: 'abcdefghijklmnop' }, [obs]);
+
+    expect(output()).toContain('abcdefghij…');
+    expect(output()).not.toContain('klmnop');
+  });
+
+  it('hides thinking by default and shows it when enabled', () => {
+    const c1 = captureStream();
+    const obsOff = createConsoleObserver({ stream: c1.stream, color: false });
+    dispatchEvent({ type: 'thinking', text: 'pondering', isSubagent: false }, [obsOff]);
+    expect(c1.output()).toBe('');
+
+    const c2 = captureStream();
+    const obsOn = createConsoleObserver({ stream: c2.stream, color: false, thinking: true });
+    dispatchEvent({ type: 'thinking', text: 'pondering', isSubagent: false }, [obsOn]);
+    expect(c2.output()).toContain('[think] pondering');
+  });
+
+  it('shows subagent events with taskId prefix and can be disabled', () => {
+    const c1 = captureStream();
+    const obsOn = createConsoleObserver({ stream: c1.stream, color: false });
+    dispatchEvent({ type: 'subagent_started', taskId: 't1', description: 'sub', toolUseId: 'tu2' }, [obsOn]);
+    dispatchEvent({ type: 'subagent_progress', taskId: 't1', description: 'working', lastToolName: 'Read' }, [obsOn]);
+    dispatchEvent({ type: 'subagent_completed', taskId: 't1', status: 'completed' }, [obsOn]);
+    const out = c1.output();
+    expect(out).toContain('[sub t1] → sub');
+    expect(out).toContain('[sub t1] working (Read)');
+    expect(out).toContain('[sub t1] ✓ completed');
+
+    const c2 = captureStream();
+    const obsOff = createConsoleObserver({ stream: c2.stream, color: false, subagents: false });
+    dispatchEvent({ type: 'subagent_started', taskId: 't1', description: 'sub', toolUseId: 'tu2' }, [obsOff]);
+    expect(c2.output()).toBe('');
+  });
+
+  it('prints usage on result by default and skips when usage=false', () => {
+    const msg: NormalizedMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'x' }],
+      timestamp: new Date().toISOString(),
+    };
+    const c1 = captureStream();
+    const obsOn = createConsoleObserver({ stream: c1.stream, color: false });
+    dispatchEvent({ type: 'result', output: 'done', rawMessages: [msg], usage: { inputTokens: 10, outputTokens: 5 } }, [obsOn]);
+    expect(c1.output()).toContain('[done] 10in / 5out');
+
+    const c2 = captureStream();
+    const obsOff = createConsoleObserver({ stream: c2.stream, color: false, usage: false });
+    dispatchEvent({ type: 'result', output: 'done', rawMessages: [msg], usage: { inputTokens: 10, outputTokens: 5 } }, [obsOff]);
+    expect(c2.output()).toBe('');
+  });
+
+  it('formats errors', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: false });
+    dispatchEvent({ type: 'error', error: new Error('boom') }, [obs]);
+    expect(output()).toContain('[error] boom');
+  });
+
+  it('emits ANSI codes when color=true', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: true });
+    dispatchEvent({ type: 'tool_use', toolName: 'Read', toolUseId: 'tu1', input: {}, isSubagent: false }, [obs]);
+    expect(output()).toMatch(/\x1b\[/);
+  });
+
+  it('omits ANSI codes when color=false', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: false });
+    dispatchEvent({ type: 'tool_use', toolName: 'Read', toolUseId: 'tu1', input: {}, isSubagent: false }, [obs]);
+    expect(output()).not.toMatch(/\x1b\[/);
   });
 });

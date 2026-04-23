@@ -103,3 +103,94 @@ export async function* observeStream(
     yield event;
   }
 }
+
+/**
+ * Options for {@link createConsoleObserver}.
+ */
+export interface ConsoleObserverOptions {
+  /** Use ANSI color codes. Defaults to `process.stdout.isTTY`. */
+  color?: boolean;
+  /** Print `thinking` deltas. Defaults to `false`. */
+  thinking?: boolean;
+  /** Prefix subagent events with `[sub <taskId>]`. Defaults to `true`. */
+  subagents?: boolean;
+  /** Print token usage on `result`. Defaults to `true`. */
+  usage?: boolean;
+  /** Truncate `onToolResult` summaries to this length. Defaults to `100`. */
+  toolResultMaxLen?: number;
+  /** Writable stream to print to. Defaults to `process.stdout`. */
+  stream?: NodeJS.WritableStream;
+}
+
+const ANSI = {
+  reset: '\x1b[0m',
+  dim: '\x1b[2m',
+  red: '\x1b[31m',
+  cyan: '\x1b[36m',
+};
+
+/**
+ * Create a ready-made {@link StreamObserver} that prints UnifiedEvents to a stream
+ * (default: `process.stdout`). Useful for debugging, examples, and e2e tests.
+ *
+ * @example
+ * ```ts
+ * for await (const _ of observeStream(adapter.execute(params), [createConsoleObserver()])) {
+ *   // events are printed to the terminal as they arrive
+ * }
+ * ```
+ */
+export function createConsoleObserver(options: ConsoleObserverOptions = {}): StreamObserver {
+  const stream = options.stream ?? process.stdout;
+  const color = options.color ?? Boolean((stream as NodeJS.WriteStream).isTTY);
+  const showThinking = options.thinking ?? false;
+  const showSubagents = options.subagents ?? true;
+  const showUsage = options.usage ?? true;
+  const maxLen = options.toolResultMaxLen ?? 100;
+
+  const paint = (code: string, text: string): string =>
+    color ? `${code}${text}${ANSI.reset}` : text;
+
+  const write = (s: string): void => {
+    stream.write(s);
+  };
+
+  const subPrefix = (taskId: string): string => paint(ANSI.cyan, `[sub ${taskId}] `);
+
+  return {
+    onTextDelta(text) {
+      write(text);
+    },
+    onThinking(text) {
+      if (!showThinking) return;
+      write(paint(ANSI.dim, `[think] ${text}`));
+    },
+    onToolUse(name, id) {
+      write(`\n${paint(ANSI.cyan, '[tool]')} ${name} (${id})\n`);
+    },
+    onToolResult(_id, summary) {
+      const truncated = summary.length > maxLen ? summary.slice(0, maxLen) + '…' : summary;
+      write(`${paint(ANSI.dim, '[result]')} ${truncated}\n`);
+    },
+    onSubagentStarted(taskId, description) {
+      if (!showSubagents) return;
+      write(`\n${subPrefix(taskId)}→ ${description}\n`);
+    },
+    onSubagentProgress(taskId, description, lastToolName) {
+      if (!showSubagents) return;
+      const tail = lastToolName ? ` (${lastToolName})` : '';
+      write(`${subPrefix(taskId)}${description}${tail}\n`);
+    },
+    onSubagentCompleted(taskId, status) {
+      if (!showSubagents) return;
+      write(`${subPrefix(taskId)}✓ ${status}\n`);
+    },
+    onResult(_output, _messages, usage) {
+      if (!showUsage) return;
+      write(`\n${paint(ANSI.dim, `[done] ${usage.inputTokens}in / ${usage.outputTokens}out`)}\n`);
+    },
+    onError(error) {
+      write(`\n${paint(ANSI.red, `[error] ${error.message}`)}\n`);
+    },
+  };
+}
