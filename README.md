@@ -181,10 +181,11 @@ Unknown aliases throw an `AdapterError` with the list of available aliases for t
 
 ## UnifiedEvent
 
-All adapters produce the same 11 event types:
+All adapters produce the same event types:
 
 | Event | Description |
 |---|---|
+| `adapter_ready` | SDK-native config snapshot emitted once at startup (secrets redacted) |
 | `text_delta` | Incremental text output |
 | `thinking` | Model reasoning/thinking |
 | `tool_use` | Tool invocation started |
@@ -195,7 +196,31 @@ All adapters produce the same 11 event types:
 | `subagent_completed` | Subagent task finished |
 | `result` | Terminal event — output, rawMessages, usage |
 | `error` | Error event |
+| `warning` | Non-fatal notice (e.g. an option was dropped by this adapter) |
 | `flush` | Context compaction boundary |
+
+### adapter_ready — startup audit trail
+
+Every `execute()` emits exactly one `adapter_ready` event right after the adapter finishes building its SDK-native config, and before the first SDK call. It lets consumers see what the underlying library actually received — useful when options differ per adapter (e.g. Codex hardcodes `approvalPolicy='never'`, OpenCode drops `planMode`, Gemini maps `planMode → approvalMode:'plan'`).
+
+```ts
+for await (const event of adapter.execute(params)) {
+  if (event.type === 'adapter_ready') {
+    console.log(`${event.adapter} is using:`, event.sdkConfig);
+  }
+}
+```
+
+- `event.adapter` — the runtime adapter name (`'claude-code' | 'codex' | 'gemini' | 'opencode'`).
+- `event.sdkConfig` — the **adapter-specific** config object passed to the underlying SDK (not unified). Shape:
+  - claude-code: `{ options }` — the `Options` passed to `query()`.
+  - codex: `{ codexOptions, threadOptions, resumeSessionId? }` — constructor + thread options.
+  - opencode: `{ port, config }` — the `createOpencode()` input.
+  - gemini: the `ConfigParameters` passed to `new Config(...)`.
+
+**Secret redaction.** Field names matching `/apikey|api_key|token|secret|password|authorization|credential|bearer/i` have their string values replaced with `'[REDACTED]'`. Redaction is recursive through nested objects and arrays, so MCP `env` entries like `GITHUB_TOKEN` and `headers: { Authorization: 'Bearer ...' }` are also scrubbed. The payload is therefore safe to log at info level. A secret stashed under a non-matching custom field name (e.g. `{ myCustom: 'sk-xxx' }`) won't be caught — use conventional field names for credentials.
+
+If the adapter had to drop or override options (e.g. Codex emits a `warning` when `mcpServers` is provided), those `warning` events fire *before* `adapter_ready`, so the ordering reads as: "here is what I threw away → here is what I kept".
 
 ## MCP servers
 
@@ -396,7 +421,7 @@ for await (const _ of observeStream(stream, [createConsoleObserver()])) {
 }
 ```
 
-Options: `{ color?, thinking?, subagents?, usage?, toolResultMaxLen?, stream? }` — all optional; `color` auto-detects TTY, `stream` accepts any `NodeJS.WritableStream` (useful for tests).
+Options: `{ color?, thinking?, subagents?, usage?, toolResultMaxLen?, stream?, showAdapterReady?, compactAdapterReady? }` — all optional; `color` auto-detects TTY, `stream` accepts any `NodeJS.WritableStream` (useful for tests). `showAdapterReady` (default `true`) prints the SDK-native config snapshot at the start of each run; `compactAdapterReady` (default `false`) switches it from pretty-printed JSON to a single line.
 
 For custom behavior, implement `StreamObserver` yourself:
 

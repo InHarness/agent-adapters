@@ -91,6 +91,21 @@ export interface UsageStats {
  * to an unknown subagent rather than the parent.
  */
 export type UnifiedEvent =
+  /**
+   * Snapshot of the SDK-native config object the adapter is about to hand to
+   * its underlying library — emitted once per `run()`, right after config is
+   * built and before the first SDK call.
+   *
+   * `sdkConfig` is intentionally adapter-specific (not unified): it is the
+   * actual options/config object passed to e.g. `query({ options })` (claude-code),
+   * `codex.startThread(opts)` (codex), `createOpencode({ config })` (opencode),
+   * or `new Config(params)` (gemini). Consumers can diff this against their
+   * `RuntimeExecuteParams` to see what the adapter kept, dropped, or overrode.
+   *
+   * Secrets are redacted by key name (see `src/redact.ts`). Unknown custom
+   * fields whose names don't match the redaction regex are NOT filtered.
+   */
+  | { type: 'adapter_ready'; adapter: Architecture; sdkConfig: Record<string, unknown> }
   | { type: 'text_delta'; text: string; isSubagent: boolean; subagentTaskId?: string }
   | { type: 'tool_use'; toolName: string; toolUseId: string; input: unknown; isSubagent: boolean; subagentTaskId?: string }
   | { type: 'tool_result'; toolUseId: string; summary: string; isSubagent: boolean; isError?: boolean; subagentTaskId?: string }

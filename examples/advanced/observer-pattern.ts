@@ -7,9 +7,16 @@ import type { StreamObserver } from '../../src/index.js';
 // Observer 1: built-in console observer (prints text/tool/result/done/error)
 const consoleObserver = createConsoleObserver();
 
-// Observer 2: Metrics collector
+// Observer 2: Metrics collector + startup audit
 const metrics = { events: 0, tools: 0, tokens: { input: 0, output: 0 } };
+let startupConfig: { adapter: string; model?: unknown } | null = null;
 const metricsObserver: StreamObserver = {
+  onAdapterReady(adapter, sdkConfig) {
+    // Fires once per run with the SDK-native config actually passed to the
+    // underlying library. Secrets are redacted by key name.
+    const opts = (sdkConfig as { options?: { model?: unknown } }).options;
+    startupConfig = { adapter, model: opts?.model ?? (sdkConfig as { model?: unknown }).model };
+  },
   onTextDelta() { metrics.events++; },
   onToolUse() { metrics.events++; metrics.tools++; },
   onResult(_o, _m, usage) {
@@ -32,7 +39,8 @@ async function main() {
     // Events are dispatched to observers AND available here
   }
 
-  console.log('\nMetrics:', metrics);
+  console.log('\nStartup config:', startupConfig);
+  console.log('Metrics:', metrics);
 }
 
 main().catch(console.error);

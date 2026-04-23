@@ -18,11 +18,38 @@ import {
   PLAN_WRITE_SYSTEM_PROMPT,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
+import { assertAdapterReady } from '../contract.js';
 import type { UserInputHandler } from '../../types.js';
 
 const HAS_API_KEY = requireEnv('OPENAI_API_KEY');
 
 describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
+  it('emits adapter_ready with codexOptions + threadOptions before first message', async () => {
+    const adapter = createAdapter('codex');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt: SIMPLE_PROMPT,
+        systemPrompt: SIMPLE_SYSTEM_PROMPT,
+        model: 'o4-mini',
+        maxTurns: 1,
+      }),
+    );
+
+    const contractResult = assertAdapterReady(events, 'codex');
+    expect(contractResult.passed, contractResult.assertions.filter((a) => !a.passed).map((a) => a.message).join('; ')).toBe(true);
+
+    const ready = events.find((e) => e.type === 'adapter_ready') as Extract<UnifiedEvent, { type: 'adapter_ready' }>;
+    const sdk = ready.sdkConfig as {
+      codexOptions: { apiKey: string };
+      threadOptions: { model: string; sandboxMode: string; approvalPolicy: string };
+    };
+    expect(sdk.codexOptions).toBeDefined();
+    expect(sdk.codexOptions.apiKey).toBe('[REDACTED]');
+    expect(sdk.threadOptions).toBeDefined();
+    expect(sdk.threadOptions.model).toBe('o4-mini');
+    expect(sdk.threadOptions.approvalPolicy).toBe('never');
+  });
+
   it('simple text response (model alias)', async () => {
     const adapter = createAdapter('codex');
     const events = await collectEvents(

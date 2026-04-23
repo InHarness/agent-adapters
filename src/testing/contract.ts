@@ -1,8 +1,18 @@
 // Contract assertions — adapter-agnostic, operates only on AsyncIterable<UnifiedEvent>
 // Exported for custom adapter validation
 
-import type { UnifiedEvent, ContractResult, ContractAssertion } from '../types.js';
+import type { Architecture, UnifiedEvent, ContractResult, ContractAssertion } from '../types.js';
 import { collectEvents } from '../utils.js';
+
+// Known secret prefixes that should never leak through redactSecrets.
+// If any of these appear in the serialized sdkConfig, the redactor missed them.
+const SECRET_LEAK_PATTERNS: RegExp[] = [
+  /sk-[A-Za-z0-9]/i,
+  /ghp_[A-Za-z0-9]/,
+  /gho_[A-Za-z0-9]/,
+  /"Bearer\s+\S/,
+  /xoxb-[A-Za-z0-9]/,
+];
 
 function assert(name: string, condition: boolean, message?: string): ContractAssertion {
   return { name, passed: condition, message: condition ? undefined : message };
@@ -131,6 +141,59 @@ export async function assertThinking(stream: AsyncIterable<UnifiedEvent>): Promi
   assertions.push(assert('has result event', results.length === 1, `Expected 1 result, got ${results.length}`));
 
   return buildResult('thinking', events, assertions);
+}
+
+/**
+ * Validate an `adapter_ready` event in a collected stream.
+ * Checks: event is present, `adapter` matches, `sdkConfig` is a non-empty
+ * object, and no known secret patterns leak into the serialized payload.
+ */
+export function assertAdapterReady(
+  events: UnifiedEvent[],
+  expectedAdapter: Architecture,
+): ContractResult {
+  const assertions: ContractAssertion[] = [];
+  const readyEvents = events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'adapter_ready' }> => e.type === 'adapter_ready',
+  );
+  assertions.push(
+    assert('has exactly one adapter_ready event', readyEvents.length === 1, `Expected 1 adapter_ready, got ${readyEvents.length}`),
+  );
+
+  if (readyEvents.length === 1) {
+    const ready = readyEvents[0];
+    assertions.push(assert('adapter matches', ready.adapter === expectedAdapter, `Expected adapter="${expectedAdapter}", got "${ready.adapter}"`));
+    assertions.push(
+      assert(
+        'sdkConfig is a non-empty object',
+        typeof ready.sdkConfig === 'object' && ready.sdkConfig != null && Object.keys(ready.sdkConfig).length > 0,
+        'sdkConfig is empty or not an object',
+      ),
+    );
+    const serialized = JSON.stringify(ready.sdkConfig);
+    for (const pattern of SECRET_LEAK_PATTERNS) {
+      assertions.push(
+        assert(
+          `sdkConfig does not leak ${pattern}`,
+          !pattern.test(serialized),
+          `sdkConfig contains a secret matching ${pattern}`,
+        ),
+      );
+    }
+
+    const nonWarning = events.filter((e) => e.type !== 'warning');
+    const firstNonWarningIdx = events.indexOf(nonWarning[0]);
+    const readyIdx = events.indexOf(ready);
+    assertions.push(
+      assert(
+        'adapter_ready is the first non-warning event',
+        readyIdx === firstNonWarningIdx,
+        `adapter_ready at index ${readyIdx}, first non-warning at ${firstNonWarningIdx}`,
+      ),
+    );
+  }
+
+  return buildResult('adapter_ready', events, assertions);
 }
 
 /**

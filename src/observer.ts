@@ -27,6 +27,12 @@ export interface StreamObserver {
   onFlush?(): void;
   onResult?(output: string, rawMessages: NormalizedMessage[], usage: UsageStats, sessionId?: string): void;
   onError?(error: Error): void;
+  /**
+   * Called once per `run()` when the adapter has built its SDK-native config
+   * and is about to make the first SDK call. `sdkConfig` is adapter-specific
+   * (secrets redacted by key name — see `src/redact.ts`).
+   */
+  onAdapterReady?(adapter: string, sdkConfig: Record<string, unknown>): void;
 }
 
 /**
@@ -77,6 +83,9 @@ export function dispatchEvent(event: UnifiedEvent, observers: StreamObserver[]):
       case 'error':
         observer.onError?.(event.error);
         break;
+      case 'adapter_ready':
+        observer.onAdapterReady?.(event.adapter, event.sdkConfig);
+        break;
     }
   }
 }
@@ -120,6 +129,10 @@ export interface ConsoleObserverOptions {
   toolResultMaxLen?: number;
   /** Writable stream to print to. Defaults to `process.stdout`. */
   stream?: NodeJS.WritableStream;
+  /** Print the `adapter_ready` snapshot when the run starts. Defaults to `true`. */
+  showAdapterReady?: boolean;
+  /** Print `adapter_ready` sdkConfig as a single JSON line instead of pretty-printed. Defaults to `false`. */
+  compactAdapterReady?: boolean;
 }
 
 const ANSI = {
@@ -147,6 +160,8 @@ export function createConsoleObserver(options: ConsoleObserverOptions = {}): Str
   const showSubagents = options.subagents ?? true;
   const showUsage = options.usage ?? true;
   const maxLen = options.toolResultMaxLen ?? 100;
+  const showAdapterReady = options.showAdapterReady ?? true;
+  const compactAdapterReady = options.compactAdapterReady ?? false;
 
   const paint = (code: string, text: string): string =>
     color ? `${code}${text}${ANSI.reset}` : text;
@@ -191,6 +206,15 @@ export function createConsoleObserver(options: ConsoleObserverOptions = {}): Str
     },
     onError(error) {
       write(`\n${paint(ANSI.red, `[error] ${error.message}`)}\n`);
+    },
+    onAdapterReady(adapter, sdkConfig) {
+      if (!showAdapterReady) return;
+      const header = paint(ANSI.cyan, `[${adapter}] ready`);
+      if (compactAdapterReady) {
+        write(`${header} ${JSON.stringify(sdkConfig)}\n`);
+      } else {
+        write(`${header}\n${paint(ANSI.dim, JSON.stringify(sdkConfig, null, 2))}\n`);
+      }
     },
   };
 }

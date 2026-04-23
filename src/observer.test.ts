@@ -60,6 +60,7 @@ describe('dispatchEvent', () => {
       onFlush: vi.fn(),
       onResult: vi.fn(),
       onError: vi.fn(),
+      onAdapterReady: vi.fn(),
     };
 
     const events: UnifiedEvent[] = [
@@ -74,6 +75,7 @@ describe('dispatchEvent', () => {
       { type: 'flush' },
       { type: 'result', output: 'done', rawMessages: [msg], usage: { inputTokens: 1, outputTokens: 1 } },
       { type: 'error', error: new Error('test') },
+      { type: 'adapter_ready', adapter: 'claude-code', sdkConfig: { model: 'x' } },
     ];
 
     for (const event of events) {
@@ -91,6 +93,7 @@ describe('dispatchEvent', () => {
     expect(observer.onFlush).toHaveBeenCalled();
     expect(observer.onResult).toHaveBeenCalled();
     expect(observer.onError).toHaveBeenCalled();
+    expect(observer.onAdapterReady).toHaveBeenCalledWith('claude-code', { model: 'x' });
   });
 });
 
@@ -211,5 +214,44 @@ describe('createConsoleObserver', () => {
     const obs = createConsoleObserver({ stream, color: false });
     dispatchEvent({ type: 'tool_use', toolName: 'Read', toolUseId: 'tu1', input: {}, isSubagent: false }, [obs]);
     expect(output()).not.toMatch(/\x1b\[/);
+  });
+
+  it('prints adapter_ready header + pretty-printed sdkConfig by default', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: false });
+    dispatchEvent(
+      {
+        type: 'adapter_ready',
+        adapter: 'claude-code',
+        sdkConfig: { options: { model: 'claude-opus-4-7' } },
+      },
+      [obs],
+    );
+    const out = output();
+    expect(out).toContain('[claude-code] ready');
+    expect(out).toContain('"model": "claude-opus-4-7"');
+    expect(out.split('\n').length).toBeGreaterThan(2);
+  });
+
+  it('prints adapter_ready as a single line when compactAdapterReady=true', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: false, compactAdapterReady: true });
+    dispatchEvent(
+      { type: 'adapter_ready', adapter: 'codex', sdkConfig: { model: 'gpt-5' } },
+      [obs],
+    );
+    const out = output();
+    expect(out).toContain('[codex] ready {"model":"gpt-5"}');
+    expect(out.match(/\n/g)?.length).toBe(1);
+  });
+
+  it('suppresses adapter_ready when showAdapterReady=false', () => {
+    const { stream, output } = captureStream();
+    const obs = createConsoleObserver({ stream, color: false, showAdapterReady: false });
+    dispatchEvent(
+      { type: 'adapter_ready', adapter: 'gemini', sdkConfig: { model: 'gemini-pro' } },
+      [obs],
+    );
+    expect(output()).toBe('');
   });
 });

@@ -31,10 +31,38 @@ import {
   createE2eMcpServer,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
+import { assertAdapterReady } from '../contract.js';
 
 const HAS_API_KEY = requireEnv('GOOGLE_API_KEY') || requireEnv('GEMINI_API_KEY');
 
 describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
+  it('emits adapter_ready with GeminiConfig params before first message', async () => {
+    const adapter = createAdapter('gemini');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt: SIMPLE_PROMPT,
+        systemPrompt: SIMPLE_SYSTEM_PROMPT,
+        model: 'gemini-2.5-flash',
+        maxTurns: 1,
+      }),
+    );
+
+    const contractResult = assertAdapterReady(events, 'gemini');
+    expect(contractResult.passed, contractResult.assertions.filter((a) => !a.passed).map((a) => a.message).join('; ')).toBe(true);
+
+    const ready = events.find((e) => e.type === 'adapter_ready') as Extract<UnifiedEvent, { type: 'adapter_ready' }>;
+    const sdk = ready.sdkConfig as {
+      sessionId: string;
+      targetDir: string;
+      model: string;
+      debugMode: boolean;
+      approvalMode: string;
+    };
+    expect(typeof sdk.sessionId).toBe('string');
+    expect(sdk.model).toBeTruthy();
+    expect(typeof sdk.debugMode).toBe('boolean');
+  });
+
   it('simple text response (model alias)', async () => {
     const adapter = createAdapter('gemini');
     const events = await collectEvents(

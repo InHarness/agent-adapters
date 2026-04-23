@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { createAdapter } from '../../factory.js';
 import { collectEvents } from '../../utils.js';
 import { resolveModel } from '../../models.js';
-import { assertSimpleText, assertToolUse, assertThinking } from '../contract.js';
+import { assertSimpleText, assertToolUse, assertThinking, assertAdapterReady } from '../contract.js';
 import { AdapterError, AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
 import { assertNormalization } from '../normalization.js';
@@ -52,6 +52,26 @@ const MODEL = process.env.E2E_CLAUDE_MODEL || 'sonnet-4.6';
 const FULL_MODEL_ID = resolveModel('claude-code', MODEL);
 
 describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
+  it('emits adapter_ready with SDK-native options before first message', async () => {
+    const adapter = createAdapter('claude-code');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt: SIMPLE_PROMPT,
+        systemPrompt: SIMPLE_SYSTEM_PROMPT,
+        model: MODEL,
+        maxTurns: 1,
+      }),
+    );
+
+    const contractResult = assertAdapterReady(events, 'claude-code');
+    expect(contractResult.passed, contractResult.assertions.filter((a) => !a.passed).map((a) => a.message).join('; ')).toBe(true);
+
+    const ready = events.find((e) => e.type === 'adapter_ready') as Extract<UnifiedEvent, { type: 'adapter_ready' }>;
+    const sdk = ready.sdkConfig as { options: { model: string; systemPrompt?: unknown; cwd?: string } };
+    expect(sdk.options).toBeDefined();
+    expect(sdk.options.model).toBe(FULL_MODEL_ID);
+  });
+
   it('simple text response (model alias)', async () => {
     const adapter = createAdapter('claude-code');
     const events = await collectEvents(

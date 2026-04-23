@@ -1,6 +1,6 @@
 // @inharness-ai/agent-adapters/testing — exported test utilities
 
-export { assertSimpleText, assertToolUse, assertThinking, assertMultiTurn } from './contract.js';
+export { assertSimpleText, assertToolUse, assertThinking, assertMultiTurn, assertAdapterReady } from './contract.js';
 export { MockAdapter, createTestParams } from './helpers.js';
 export {
   assertNormalization,

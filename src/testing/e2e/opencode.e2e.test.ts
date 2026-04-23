@@ -25,11 +25,37 @@ import {
   assertTodoListUpdated,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
+import { assertAdapterReady } from '../contract.js';
 
 const HAS_API_KEY = requireEnv('OPENROUTER_API_KEY');
 const HAS_CLI = isOpencodeAvailable();
 
 describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
+  it('emits adapter_ready with opencode config before first message', async () => {
+    const adapter = createAdapter('opencode-openrouter');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt: SIMPLE_PROMPT,
+        systemPrompt: SIMPLE_SYSTEM_PROMPT,
+        model: 'claude-sonnet-4',
+        maxTurns: 1,
+      }),
+    );
+
+    const contractResult = assertAdapterReady(events, 'opencode');
+    expect(contractResult.passed, contractResult.assertions.filter((a) => !a.passed).map((a) => a.message).join('; ')).toBe(true);
+
+    const ready = events.find((e) => e.type === 'adapter_ready') as Extract<UnifiedEvent, { type: 'adapter_ready' }>;
+    const sdk = ready.sdkConfig as {
+      port: number;
+      config: { provider: Record<string, { api?: string }>; agent: { build: { model: string } } };
+    };
+    expect(typeof sdk.port).toBe('number');
+    expect(sdk.config.agent.build.model).toBeTruthy();
+    const providerEntry = Object.values(sdk.config.provider)[0] as { api?: string };
+    expect(providerEntry.api).not.toBe(process.env.OPENROUTER_API_KEY);
+  });
+
   it('simple text response (model alias)', async () => {
     const adapter = createAdapter('opencode-openrouter');
     const events = await collectEvents(
