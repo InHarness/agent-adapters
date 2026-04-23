@@ -50,8 +50,8 @@ export { GeminiAdapter } from './adapters/gemini.js';
 export { createAdapter, registerAdapter, listArchitectures } from './factory.js';
 
 // Observer
-export type { StreamObserver } from './observer.js';
-export { dispatchEvent, observeStream } from './observer.js';
+export type { StreamObserver, ConsoleObserverOptions } from './observer.js';
+export { dispatchEvent, observeStream, createConsoleObserver } from './observer.js';
 
 // MCP server builder
 export { createMcpServer, mcpTool } from './mcp.js';

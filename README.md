@@ -382,10 +382,25 @@ import { GeminiAdapter } from '@inharness-ai/agent-adapters/gemini';
 
 ## Observer pattern
 
-Attach observers to the event stream without consuming it:
+Attach observers to the event stream without consuming it. For quick debugging, use the built-in `createConsoleObserver`:
 
 ```ts
-import { createAdapter, observeStream } from '@inharness-ai/agent-adapters';
+import { createAdapter, observeStream, createConsoleObserver } from '@inharness-ai/agent-adapters';
+
+const adapter = createAdapter('claude-code');
+const stream = adapter.execute(params);
+
+for await (const _ of observeStream(stream, [createConsoleObserver()])) {
+  // text deltas, tool calls, tool results, subagent lifecycle and usage
+  // are printed to process.stdout as they arrive
+}
+```
+
+Options: `{ color?, thinking?, subagents?, usage?, toolResultMaxLen?, stream? }` — all optional; `color` auto-detects TTY, `stream` accepts any `NodeJS.WritableStream` (useful for tests).
+
+For custom behavior, implement `StreamObserver` yourself:
+
+```ts
 import type { StreamObserver } from '@inharness-ai/agent-adapters';
 
 const logger: StreamObserver = {
@@ -393,9 +408,6 @@ const logger: StreamObserver = {
   onToolUse(name, id) { console.log(`\nTool: ${name}`); },
   onResult(output, msgs, usage) { console.log(`\nTokens: ${usage.inputTokens}+${usage.outputTokens}`); },
 };
-
-const adapter = createAdapter('claude-code');
-const stream = adapter.execute(params);
 
 for await (const event of observeStream(stream, [logger])) {
   // events are dispatched to observers AND available here
