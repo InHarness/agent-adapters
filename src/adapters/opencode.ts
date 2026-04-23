@@ -20,6 +20,7 @@ import type {
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
+import { redactSecrets } from '../redact.js';
 import { execSync } from 'node:child_process';
 
 /** Check if the opencode CLI is available in PATH */
@@ -119,6 +120,12 @@ export class OpencodeAdapter implements RuntimeAdapter {
       if (Object.keys(mcpConfig).length > 0) {
         opencodeConfig.mcp = mcpConfig;
       }
+
+      yield {
+        type: 'adapter_ready',
+        adapter: 'opencode',
+        sdkConfig: redactSecrets({ port, config: opencodeConfig }),
+      };
 
       const result = await createOpencode({
         signal,

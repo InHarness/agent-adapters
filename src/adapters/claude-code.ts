@@ -22,6 +22,7 @@ import type {
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
+import { redactSecrets } from '../redact.js';
 
 // Re-export SDK MCP primitives for consumers building in-process MCP servers
 export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -441,6 +442,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         this.abortController?.abort();
       }, params.timeoutMs);
     }
+
+    yield {
+      type: 'adapter_ready',
+      adapter: 'claude-code',
+      sdkConfig: redactSecrets({ options }),
+    };
 
     let q: Query;
     try {

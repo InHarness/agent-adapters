@@ -19,6 +19,7 @@ import type {
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
+import { redactSecrets } from '../redact.js';
 
 // --- Adapter ---
 
@@ -87,6 +88,16 @@ export class CodexAdapter implements RuntimeAdapter {
       modelReasoningEffort: config.codex_reasoningEffort as
         | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
         | undefined,
+    };
+
+    yield {
+      type: 'adapter_ready',
+      adapter: 'codex',
+      sdkConfig: redactSecrets({
+        codexOptions,
+        threadOptions,
+        ...(params.resumeSessionId ? { resumeSessionId: params.resumeSessionId } : {}),
+      }),
     };
 
     const thread = params.resumeSessionId

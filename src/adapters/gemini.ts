@@ -18,6 +18,7 @@ import type {
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
+import { redactSecrets } from '../redact.js';
 
 // Dynamic type — SDK structure may change
 type AgentEvent = {
@@ -215,25 +216,33 @@ export class GeminiAdapter implements RuntimeAdapter {
     const { randomUUID } = await import('node:crypto');
     const effectiveSessionId = params.resumeSessionId ?? randomUUID();
 
-    try {
-      // Only exclude ask_user when the consumer didn't wire a handler — otherwise
-      // allow the model to invoke it and bridge responses via MessageBus below.
-      const excludeTools = params.onUserInput ? undefined : ['ask_user'];
+    // Only exclude ask_user when the consumer didn't wire a handler — otherwise
+    // allow the model to invoke it and bridge responses via MessageBus below.
+    const excludeTools = params.onUserInput ? undefined : ['ask_user'];
 
-      const geminiConfig = new GeminiConfig({
-        sessionId: effectiveSessionId,
-        targetDir: cwd,
-        cwd,
-        debugMode: debug,
-        model: resolvedModel,
-        approvalMode,
-        excludeTools,
-        maxSessionTurns: params.maxTurns ?? -1,
-        mcpServers: Object.keys(mappedMcpServers).length > 0 ? mappedMcpServers : undefined,
-        modelConfigServiceConfig: hasModelParams
-          ? { overrides: [{ match: { model: resolvedModel }, modelConfig: { generateContentConfig } }] }
-          : undefined,
-      });
+    const geminiConfigParams: Record<string, unknown> = {
+      sessionId: effectiveSessionId,
+      targetDir: cwd,
+      cwd,
+      debugMode: debug,
+      model: resolvedModel,
+      approvalMode,
+      excludeTools,
+      maxSessionTurns: params.maxTurns ?? -1,
+      mcpServers: Object.keys(mappedMcpServers).length > 0 ? mappedMcpServers : undefined,
+      modelConfigServiceConfig: hasModelParams
+        ? { overrides: [{ match: { model: resolvedModel }, modelConfig: { generateContentConfig } }] }
+        : undefined,
+    };
+
+    yield {
+      type: 'adapter_ready',
+      adapter: 'gemini',
+      sdkConfig: redactSecrets(geminiConfigParams),
+    };
+
+    try {
+      const geminiConfig = new GeminiConfig(geminiConfigParams);
 
       await geminiConfig.initialize();
       await geminiConfig.refreshAuth(AuthType.USE_GEMINI, apiKey);
