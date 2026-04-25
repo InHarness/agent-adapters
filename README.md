@@ -367,6 +367,87 @@ import type {
 } from '@inharness-ai/agent-adapters';
 ```
 
+## Inline skills
+
+Pass skill definitions directly via `RuntimeExecuteParams.skills` instead of writing files into `.claude/skills/` ahead of time. Each skill is a `{ name, description, content }` triple — content is the Markdown body the model would normally read from a `SKILL.md` file. The library materializes them to a per-call tmpdir, wires the running SDK to load them, and removes everything in `finally` (abort-safe — works through SDK errors, timeouts, and `AbortController.abort()`).
+
+```ts
+import { createAdapter } from '@inharness-ai/agent-adapters';
+
+const adapter = createAdapter('claude-code');
+
+for await (const event of adapter.execute({
+  prompt: 'Use the rhyme skill on "potato".',
+  systemPrompt: 'Be playful.',
+  model: 'sonnet-4.5',
+  skills: [
+    {
+      name: 'rhyme',
+      description: 'Generate three rhymes for a given word.',
+      content: '# Rhyme\n\nReturn three words that rhyme with the input, one per line.\n',
+    },
+  ],
+})) {
+  // handle events...
+}
+```
+
+### How each adapter receives the skill
+
+| Adapter | Mechanism | Pollutes user cwd? |
+|---|---|---|
+| **claude-code** | tmpdir registered as a `local` plugin via `Options.plugins` | No |
+| **gemini** | passed inline via `Config.skills: SkillDefinition[]` (`body` is the content) | No |
+| **opencode** | mirrored into `<cwd>/.opencode/skills/agent-adapters-<uuid>-<slug>/SKILL.md` | Yes — uuid-prefixed, removed in `finally` |
+| **codex** | mirrored into `<cwd>/.agents/skills/agent-adapters-<uuid>-<slug>/SKILL.md` | Yes — uuid-prefixed, removed in `finally` |
+
+OpenCode and Codex SDKs have no programmatic skills API, so the library mirrors the SKILL.md files into the directories those agents auto-scan. The `agent-adapters-<uuid>-` prefix guarantees no collision with skills the user already keeps under those paths, and cleanup removes only the directories this call created.
+
+### InlineSkill type
+
+```ts
+import type { InlineSkill } from '@inharness-ai/agent-adapters';
+
+interface InlineSkill {
+  name: string;                // kebab-case identifier, must be unique within the call
+  description: string;         // one-line summary shown to the model in the skill listing
+  content: string;             // Markdown body without frontmatter — the helper prepends it
+  files?: Record<string, string>; // extra files placed alongside SKILL.md (POSIX-style relative paths)
+  metadata?: Record<string, string | number | boolean>; // optional extra frontmatter keys
+}
+```
+
+Validation: names with `/`, `\`, or `..` are rejected (path traversal); slugs longer than 64 chars or that collide within the same call throw. `files` keys must be relative (no leading `/`, no absolute paths), must not contain `..` segments, must not equal `SKILL.md` (use `content` for the main body), and are capped at 200 chars.
+
+### Multi-file skills
+
+Real Claude Code skills are often directories — a main `SKILL.md` plus helper files the model can `Read`/`Glob`. Pass them via `files`:
+
+```ts
+{
+  name: 'codereview',
+  description: 'Reviews a TypeScript file against project conventions.',
+  content: '# Code review\n\nWhen invoked, read CHECKLIST.md and apply each item to the target file.\n',
+  files: {
+    'CHECKLIST.md': '- [ ] Imports sorted\n- [ ] No `any` types\n- [ ] ...\n',
+    'examples/good.ts': '// idiomatic example\n',
+    'examples/bad.ts':  '// anti-pattern\n',
+  },
+}
+```
+
+Materialized layout:
+```
+<tmpRoot>/skills/codereview/
+  SKILL.md         ← built from `content`
+  CHECKLIST.md     ← from files
+  examples/
+    good.ts
+    bad.ts
+```
+
+For codex/opencode the entire tree is mirrored under `<cwd>/<subdir>/agent-adapters-<uuid>-codereview/`. **Gemini exception:** its `SkillDefinition.body` API takes a single string, so extra `files` are written to disk for parity but the model only sees `content`. The gemini adapter emits a `console.warn` when `files` is non-empty.
+
 ## Error handling
 
 All adapters emit typed errors via the `error` event. The error hierarchy lets you distinguish failure causes:
@@ -531,6 +612,7 @@ interface RuntimeExecuteParams {
   builtinMCPServers?: string[];                // builtin MCP server names (consumer hint)
   allowedMCPTools?: string[];                  // allowed MCP tools (consumer hint)
   mcpServers?: Record<string, McpServerConfig>; // MCP servers — adapters read this
+  skills?: InlineSkill[];                      // inline skills materialized to a tmpdir for this call
   cwd?: string;                                // working directory
   resumeSessionId?: string;                    // session resumption
   maxTurns?: number;                           // max conversation turns

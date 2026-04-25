@@ -3,7 +3,7 @@
 // Auth: SDK manages internally (OAuth, cached credentials, ANTHROPIC_API_KEY)
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKMessage, Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, Options, Query, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import type {
   RuntimeAdapter,
   RuntimeExecuteParams,
@@ -23,6 +23,7 @@ import type {
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
 import { redactSecrets } from '../redact.js';
+import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 
 // Re-export SDK MCP primitives for consumers building in-process MCP servers
 export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -453,6 +454,25 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       }, params.timeoutMs);
     }
 
+    // Materialize inline skills into a per-call tmpdir registered as a local
+    // plugin. Cleanup runs in the finally below (covers normal completion,
+    // SDK errors, and AbortController.abort()).
+    let materialized: MaterializedSkills | undefined;
+    if (params.skills?.length) {
+      try {
+        materialized = await materializeSkills(params.skills);
+        const existing = (options as { plugins?: SdkPluginConfig[] }).plugins ?? [];
+        (options as { plugins?: SdkPluginConfig[] }).plugins = [
+          ...existing,
+          { type: 'local', path: materialized.tmpRoot },
+        ];
+      } catch (err) {
+        clearTimeout(timeoutId);
+        yield { type: 'error', error: new AdapterInitError('claude-code', err), phase: 'init' };
+        return;
+      }
+    }
+
     yield {
       type: 'adapter_ready',
       adapter: 'claude-code',
@@ -464,6 +484,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       q = query({ prompt: params.prompt, options });
     } catch (err) {
       clearTimeout(timeoutId);
+      await materialized?.cleanup().catch(() => {});
       yield { type: 'error', error: new AdapterInitError('claude-code', err), phase: 'init' };
       return;
     }
@@ -759,6 +780,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);
+      await materialized?.cleanup().catch((err) =>
+        console.warn('[agent-adapters] claude-code skill cleanup failed', err),
+      );
     }
   }
 }

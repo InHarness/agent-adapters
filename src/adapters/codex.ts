@@ -20,6 +20,7 @@ import type {
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
+import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 
 // --- Adapter ---
 
@@ -97,11 +98,30 @@ export class CodexAdapter implements RuntimeAdapter {
       return;
     }
 
+    const userCwd = params.cwd ?? process.cwd();
+
+    // Materialize inline skills BEFORE thread start so codex CLI's first scan
+    // of <cwd>/.agents/skills/ picks them up. The Codex SDK has no programmatic
+    // skills API; we mirror under uuid-prefixed dirs and remove only what we
+    // wrote in the finally below.
+    let materialized: MaterializedSkills | undefined;
+    let mirrored: MirroredSkills | undefined;
+    if (params.skills?.length) {
+      try {
+        materialized = await materializeSkills(params.skills);
+        mirrored = await materialized.mirrorTo(userCwd, '.agents/skills');
+      } catch (err) {
+        await materialized?.cleanup().catch(() => {});
+        yield { type: 'error', error: new AdapterInitError('codex', err), phase: 'init' };
+        return;
+      }
+    }
+
     // Session resumption: resumeThread if sessionId provided
     const threadOptions = {
       model: resolvedModel,
       sandboxMode: sandboxMode as 'read-only' | 'workspace-write',
-      workingDirectory: params.cwd ?? process.cwd(),
+      workingDirectory: userCwd,
       approvalPolicy: 'never' as const,
       modelReasoningEffort: config.codex_reasoningEffort as
         | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
@@ -281,6 +301,12 @@ export class CodexAdapter implements RuntimeAdapter {
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);
+      await mirrored?.cleanupMirror().catch((err) =>
+        console.warn('[agent-adapters] codex mirrored skill cleanup failed', err),
+      );
+      await materialized?.cleanup().catch((err) =>
+        console.warn('[agent-adapters] codex skill cleanup failed', err),
+      );
     }
   }
 }

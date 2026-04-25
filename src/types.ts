@@ -329,6 +329,39 @@ export type ElicitationHandler = (req: ElicitationRequest) => Promise<Elicitatio
 
 // --- Runtime Adapter ---
 
+/**
+ * Inline skill definition passed at execute() time. Materialized to a tmpdir for
+ * the duration of the call and removed in finally — no persistent files.
+ *
+ * Per-adapter mapping:
+ * - claude-code: tmpdir registered as a `local` plugin (Options.plugins).
+ * - gemini: passed as `Config.skills` SkillDefinition[] with `body` inline.
+ * - opencode: mirrored to `<cwd>/.opencode/skills/agent-adapters-<uuid>-<slug>/SKILL.md`.
+ * - codex: mirrored to `<cwd>/.agents/skills/agent-adapters-<uuid>-<slug>/SKILL.md`.
+ */
+export interface InlineSkill {
+  /** kebab-case identifier, must be unique within the call */
+  name: string;
+  /** one-line summary shown to the model in the skill listing */
+  description: string;
+  /** Markdown body without frontmatter — the helper prepends frontmatter */
+  content: string;
+  /**
+   * Additional files placed alongside SKILL.md in the same skill directory.
+   * Keyed by relative path (POSIX-style separators); values are file contents.
+   * Models can reference them with Read/Glob just like assets in a real
+   * `.claude/skills/<name>/` directory. Keys must be relative, must not contain
+   * `..` segments, and must not equal `SKILL.md` (use `content` for that).
+   *
+   * Caveat: Gemini consumes skills via `SkillDefinition.body` (single string),
+   * so the gemini adapter emits a `console.warn` when this field is non-empty —
+   * the extra files are written to disk but the model only sees `content`.
+   */
+  files?: Record<string, string>;
+  /** Optional extra string/number/boolean keys merged into frontmatter */
+  metadata?: Record<string, string | number | boolean>;
+}
+
 export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   prompt: string;
   systemPrompt: string;
@@ -351,6 +384,13 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
 
   /** MCP servers to connect — adapters read this field. */
   mcpServers?: Record<string, McpServerConfig>;
+
+  /**
+   * Inline skill definitions materialized to a tmpdir for this call only and
+   * removed in `finally` (abort-safe). See {@link InlineSkill} for per-adapter wiring.
+   */
+  skills?: InlineSkill[];
+
   cwd?: string;
   resumeSessionId?: string;
   maxTurns?: number;

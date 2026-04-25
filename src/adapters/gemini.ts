@@ -19,6 +19,7 @@ import type {
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
+import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 
 // Dynamic type — SDK structure may change
 type AgentEvent = {
@@ -228,6 +229,32 @@ export class GeminiAdapter implements RuntimeAdapter {
     // allow the model to invoke it and bridge responses via MessageBus below.
     const excludeTools = params.onUserInput ? undefined : ['ask_user'];
 
+    // Materialize inline skills. Gemini consumes them programmatically via
+    // Config.skills with `body` inline; `location` still has to be a real path
+    // on disk because the SDK's loader reads it lazily. Cleanup runs in the
+    // finally below.
+    let materialized: MaterializedSkills | undefined;
+    if (params.skills?.length) {
+      try {
+        materialized = await materializeSkills(params.skills);
+      } catch (err) {
+        yield { type: 'error', error: new AdapterInitError('gemini', err), phase: 'init' };
+        return;
+      }
+      // Gemini consumes skills via SkillDefinition.body (a single string), so
+      // any extra files in InlineSkill.files are written to disk for parity
+      // but the model only sees `content`. Other adapters honor multi-file.
+      const hasMultiFile = params.skills.some(
+        (s) => s.files && Object.keys(s.files).length > 0,
+      );
+      if (hasMultiFile) {
+        console.warn(
+          '[agent-adapters] gemini: InlineSkill.files is not honored — Gemini consumes only ' +
+            'SKILL.md body. Extra files are written to disk for parity but the model only sees `content`.',
+        );
+      }
+    }
+
     const geminiConfigParams: Record<string, unknown> = {
       sessionId: effectiveSessionId,
       targetDir: cwd,
@@ -242,6 +269,16 @@ export class GeminiAdapter implements RuntimeAdapter {
         ? { overrides: [{ match: { model: resolvedModel }, modelConfig: { generateContentConfig } }] }
         : undefined,
     };
+
+    if (materialized && params.skills?.length) {
+      geminiConfigParams.skills = params.skills.map((s, i) => ({
+        name: s.name,
+        description: s.description,
+        body: s.content,
+        location: materialized!.files[i],
+      }));
+      geminiConfigParams.skillsSupport = true;
+    }
 
     yield {
       type: 'adapter_ready',
@@ -315,6 +352,7 @@ export class GeminiAdapter implements RuntimeAdapter {
         };
       };
     } catch (err) {
+      await materialized?.cleanup().catch(() => {});
       yield {
         type: 'error',
         error: new AdapterInitError('gemini', err instanceof Error ? err : new Error(String(err))),
@@ -648,6 +686,9 @@ export class GeminiAdapter implements RuntimeAdapter {
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);
+      await materialized?.cleanup().catch((err) =>
+        console.warn('[agent-adapters] gemini skill cleanup failed', err),
+      );
     }
   }
 }

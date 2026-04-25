@@ -17,6 +17,7 @@ export type {
   RuntimeExecuteParams,
   RuntimeAdapter,
   AdapterFactory,
+  InlineSkill,
   ProviderConfig,
   ProviderPreset,
   ContractAssertion,
