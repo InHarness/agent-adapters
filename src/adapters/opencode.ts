@@ -21,6 +21,7 @@ import type {
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
+import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 import { execSync } from 'node:child_process';
 
 /** Check if the opencode CLI is available in PATH */
@@ -99,6 +100,26 @@ export class OpencodeAdapter implements RuntimeAdapter {
       }
     }
 
+    // Materialize inline skills BEFORE the server starts so opencode's first
+    // skill scan picks them up. OpenCode has no server-level cwd override
+    // (ServerOptions only takes hostname/port/signal/timeout/config), and the
+    // server + v2 client both key by per-request `directory: cwd`. So we
+    // mirror into <cwd>/.opencode/skills/agent-adapters-<uuid>-<slug>/SKILL.md
+    // and remove only what we wrote in the finally below.
+    const userCwd = params.cwd ?? process.cwd();
+    let materialized: MaterializedSkills | undefined;
+    let mirrored: MirroredSkills | undefined;
+    if (params.skills?.length) {
+      try {
+        materialized = await materializeSkills(params.skills);
+        mirrored = await materialized.mirrorTo(userCwd, '.opencode/skills');
+      } catch (err) {
+        await materialized?.cleanup().catch(() => {});
+        yield { type: 'error', error: new AdapterInitError('opencode', err), phase: 'init' };
+        return;
+      }
+    }
+
     let client: OpencodeClient;
     try {
       // Build provider entry — may include baseURL for custom backends
@@ -142,6 +163,8 @@ export class OpencodeAdapter implements RuntimeAdapter {
       client = result.client;
       this.serverClose = result.server.close;
     } catch (err) {
+      await mirrored?.cleanupMirror().catch(() => {});
+      await materialized?.cleanup().catch(() => {});
       yield { type: 'error', error: new AdapterInitError('opencode', err), phase: 'init' };
       return;
     }
@@ -595,6 +618,12 @@ export class OpencodeAdapter implements RuntimeAdapter {
       clearTimeout(timeoutId);
       this.serverClose?.();
       this.serverClose = null;
+      await mirrored?.cleanupMirror().catch((err) =>
+        console.warn('[agent-adapters] opencode mirrored skill cleanup failed', err),
+      );
+      await materialized?.cleanup().catch((err) =>
+        console.warn('[agent-adapters] opencode skill cleanup failed', err),
+      );
     }
   }
 }
