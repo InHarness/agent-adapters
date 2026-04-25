@@ -241,6 +241,18 @@ export class GeminiAdapter implements RuntimeAdapter {
         yield { type: 'error', error: new AdapterInitError('gemini', err), phase: 'init' };
         return;
       }
+      // Gemini consumes skills via SkillDefinition.body (a single string), so
+      // any extra files in InlineSkill.files are written to disk for parity
+      // but the model only sees `content`. Other adapters honor multi-file.
+      const hasMultiFile = params.skills.some(
+        (s) => s.files && Object.keys(s.files).length > 0,
+      );
+      if (hasMultiFile) {
+        console.warn(
+          '[agent-adapters] gemini: InlineSkill.files is not honored — Gemini consumes only ' +
+            'SKILL.md body. Extra files are written to disk for parity but the model only sees `content`.',
+        );
+      }
     }
 
     const geminiConfigParams: Record<string, unknown> = {

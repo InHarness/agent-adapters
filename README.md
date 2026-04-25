@@ -412,11 +412,41 @@ interface InlineSkill {
   name: string;                // kebab-case identifier, must be unique within the call
   description: string;         // one-line summary shown to the model in the skill listing
   content: string;             // Markdown body without frontmatter — the helper prepends it
+  files?: Record<string, string>; // extra files placed alongside SKILL.md (POSIX-style relative paths)
   metadata?: Record<string, string | number | boolean>; // optional extra frontmatter keys
 }
 ```
 
-Validation: names with `/`, `\`, or `..` are rejected (path traversal); slugs longer than 64 chars or that collide within the same call throw.
+Validation: names with `/`, `\`, or `..` are rejected (path traversal); slugs longer than 64 chars or that collide within the same call throw. `files` keys must be relative (no leading `/`, no absolute paths), must not contain `..` segments, must not equal `SKILL.md` (use `content` for the main body), and are capped at 200 chars.
+
+### Multi-file skills
+
+Real Claude Code skills are often directories — a main `SKILL.md` plus helper files the model can `Read`/`Glob`. Pass them via `files`:
+
+```ts
+{
+  name: 'codereview',
+  description: 'Reviews a TypeScript file against project conventions.',
+  content: '# Code review\n\nWhen invoked, read CHECKLIST.md and apply each item to the target file.\n',
+  files: {
+    'CHECKLIST.md': '- [ ] Imports sorted\n- [ ] No `any` types\n- [ ] ...\n',
+    'examples/good.ts': '// idiomatic example\n',
+    'examples/bad.ts':  '// anti-pattern\n',
+  },
+}
+```
+
+Materialized layout:
+```
+<tmpRoot>/skills/codereview/
+  SKILL.md         ← built from `content`
+  CHECKLIST.md     ← from files
+  examples/
+    good.ts
+    bad.ts
+```
+
+For codex/opencode the entire tree is mirrored under `<cwd>/<subdir>/agent-adapters-<uuid>-codereview/`. **Gemini exception:** its `SkillDefinition.body` API takes a single string, so extra `files` are written to disk for parity but the model only sees `content`. The gemini adapter emits a `console.warn` when `files` is non-empty.
 
 ## Error handling
 

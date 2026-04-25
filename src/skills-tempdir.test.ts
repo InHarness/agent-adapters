@@ -72,6 +72,45 @@ describe('materializeSkills', () => {
     await expect(materializeSkills([])).rejects.toThrow(/empty array/);
   });
 
+  it('writes extra files at nested paths next to SKILL.md', async () => {
+    const m = await materializeSkills([
+      {
+        ...sample,
+        files: {
+          'helper.md': '# Helper\nDetails here.\n',
+          'examples/foo.md': 'foo example',
+          'scripts/run.sh': '#!/bin/bash\necho hi\n',
+        },
+      },
+    ]);
+    try {
+      const skillDir = m.skillDirs[0]!;
+      expect(skillDir).toBe(join(m.skillsDir, 'echo-hi'));
+
+      expect(await readFile(join(skillDir, 'SKILL.md'), 'utf8')).toContain('EPHEMERAL-OK');
+      expect(await readFile(join(skillDir, 'helper.md'), 'utf8')).toContain('Details here');
+      expect(await readFile(join(skillDir, 'examples', 'foo.md'), 'utf8')).toBe('foo example');
+      expect(await readFile(join(skillDir, 'scripts', 'run.sh'), 'utf8')).toContain('echo hi');
+    } finally {
+      await m.cleanup();
+    }
+  });
+
+  it.each([
+    ['..', /must not contain ".." segments/],
+    ['subdir/../escape.md', /must not contain ".." segments/],
+    ['/abs.md', /must be relative/],
+    ['\\abs.md', /must be relative/],
+    ['SKILL.md', /collides with the main content/],
+    ['has\0null', /null byte/],
+    ['', /empty file key/],
+    ['x'.repeat(201), /exceeds 200 chars/],
+  ])('rejects file key %j', async (badKey, expectedRe) => {
+    await expect(
+      materializeSkills([{ ...sample, files: { [badKey]: 'x' } }]),
+    ).rejects.toThrow(expectedRe);
+  });
+
   it('writes metadata into frontmatter', async () => {
     const m = await materializeSkills([
       {
@@ -124,6 +163,28 @@ describe('mirrorTo', () => {
       const baseDir = join(fakeCwd, '.opencode/skills');
       const remaining = await readdir(baseDir);
       expect(remaining).toEqual([]);
+    } finally {
+      await m.cleanup();
+    }
+  });
+
+  it('mirror copies the entire per-skill directory tree (not just SKILL.md)', async () => {
+    const fakeCwd = await mkdtemp(join(tmpdir(), 'agent-adapters-mirror-multifile-'));
+    const m = await materializeSkills([
+      {
+        ...sample,
+        files: {
+          'helper.md': 'helper body',
+          'examples/foo.md': 'foo',
+        },
+      },
+    ]);
+    try {
+      const mirror = await m.mirrorTo(fakeCwd, '.agents/skills');
+      const mirroredSkillDir = join(mirror.mirroredPaths[0]!, '..');
+      expect(await readFile(join(mirroredSkillDir, 'helper.md'), 'utf8')).toBe('helper body');
+      expect(await readFile(join(mirroredSkillDir, 'examples', 'foo.md'), 'utf8')).toBe('foo');
+      await mirror.cleanupMirror();
     } finally {
       await m.cleanup();
     }

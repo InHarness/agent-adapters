@@ -346,6 +346,18 @@ export interface InlineSkill {
   description: string;
   /** Markdown body without frontmatter — the helper prepends frontmatter */
   content: string;
+  /**
+   * Additional files placed alongside SKILL.md in the same skill directory.
+   * Keyed by relative path (POSIX-style separators); values are file contents.
+   * Models can reference them with Read/Glob just like assets in a real
+   * `.claude/skills/<name>/` directory. Keys must be relative, must not contain
+   * `..` segments, and must not equal `SKILL.md` (use `content` for that).
+   *
+   * Caveat: Gemini consumes skills via `SkillDefinition.body` (single string),
+   * so the gemini adapter emits a `console.warn` when this field is non-empty —
+   * the extra files are written to disk but the model only sees `content`.
+   */
+  files?: Record<string, string>;
   /** Optional extra string/number/boolean keys merged into frontmatter */
   metadata?: Record<string, string | number | boolean>;
 }

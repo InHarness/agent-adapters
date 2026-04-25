@@ -4,26 +4,29 @@
 // Layout produced:
 //   <tmpRoot>/
 //     .claude-plugin/plugin.json   ← Claude Code consumes this as a local plugin
-//     skills/<slug>/SKILL.md       ← one file per skill, with YAML frontmatter
+//     skills/<slug>/                ← one directory per skill
+//       SKILL.md                    ← always present, built from `content`
+//       <relative path>             ← any extra `files` entries, nested as given
 //
 // The same directory doubles as the source for `mirrorTo()`, which copies the
-// SKILL.md files into a target cwd (e.g. <userCwd>/.opencode/skills/) under
-// uniquely-prefixed folders so opencode/codex servers that auto-discover from
-// fixed cwd locations pick them up. Mirror cleanup removes only what we wrote.
+// entire per-skill directory tree into a target cwd (e.g. <userCwd>/.opencode/skills/)
+// under uniquely-prefixed folders so opencode/codex servers that auto-discover
+// from fixed cwd locations pick them up. Mirror cleanup removes only what we
+// wrote.
 //
 // Cleanup is idempotent — `force: true` on `fs.rm` swallows ENOENT.
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 
 import type { InlineSkill } from './types.js';
 
 export interface MaterializedSkills {
   /** Absolute path to the per-call tmpdir; doubles as Claude Code plugin root. */
   tmpRoot: string;
-  /** `<tmpRoot>/skills` — parent of all `<slug>/SKILL.md` files. */
+  /** `<tmpRoot>/skills` — parent of every `<slug>/` directory. */
   skillsDir: string;
   /** `<tmpRoot>/.claude-plugin/plugin.json` */
   pluginManifestPath: string;
@@ -31,14 +34,17 @@ export interface MaterializedSkills {
   pluginName: string;
   /** Slugified skill names, in the same order as the input array. */
   skillSlugs: string[];
+  /** Absolute paths to every per-skill directory, parallel to skillSlugs. */
+  skillDirs: string[];
   /** Absolute paths to every SKILL.md file written, parallel to input order. */
   files: string[];
   /** Removes the entire tmpRoot. Idempotent, swallows ENOENT. */
   cleanup: () => Promise<void>;
   /**
-   * Mirrors the materialized SKILL.md files into `<targetCwd>/<subdir>/` under
-   * uuid-prefixed folders so SDK auto-discovery (codex, opencode) picks them
-   * up. Cleanup removes only the directories this call created.
+   * Mirrors each per-skill directory tree (SKILL.md + any extra files) into
+   * `<targetCwd>/<subdir>/` under uuid-prefixed folders so SDK auto-discovery
+   * (codex, opencode) picks them up. Cleanup removes only the directories
+   * this call created.
    */
   mirrorTo: (targetCwd: string, subdir: string) => Promise<MirroredSkills>;
 }
@@ -96,6 +102,43 @@ function validateSkill(skill: InlineSkill): void {
   if (typeof skill.content !== 'string') {
     throw new Error(`InlineSkill "${skill.name}" content must be a string`);
   }
+  if (skill.files) {
+    for (const key of Object.keys(skill.files)) {
+      validateFileKey(key, skill.name);
+    }
+  }
+}
+
+function validateFileKey(key: string, skillName: string): void {
+  if (!key) {
+    throw new Error(`InlineSkill "${skillName}" has an empty file key`);
+  }
+  if (key.length > 200) {
+    throw new Error(`InlineSkill "${skillName}" file key "${key}" exceeds 200 chars`);
+  }
+  if (key === 'SKILL.md') {
+    throw new Error(
+      `InlineSkill "${skillName}" file key "SKILL.md" collides with the main content — use the \`content\` field instead`,
+    );
+  }
+  if (key.includes('\0')) {
+    throw new Error(`InlineSkill "${skillName}" file key "${key}" contains a null byte`);
+  }
+  if (key.startsWith('/') || key.startsWith('\\')) {
+    throw new Error(`InlineSkill "${skillName}" file key "${key}" must be relative (no leading slash)`);
+  }
+  if (isAbsolute(key)) {
+    throw new Error(`InlineSkill "${skillName}" file key "${key}" must be relative (got absolute path)`);
+  }
+  for (const segment of key.split(/[/\\]/)) {
+    if (segment === '..') {
+      throw new Error(`InlineSkill "${skillName}" file key "${key}" must not contain ".." segments`);
+    }
+  }
+}
+
+function fileKeyToPathParts(key: string): string[] {
+  return key.split(/[/\\]/).filter((s) => s.length > 0);
 }
 
 export async function materializeSkills(skills: InlineSkill[]): Promise<MaterializedSkills> {
@@ -137,6 +180,7 @@ export async function materializeSkills(skills: InlineSkill[]): Promise<Material
     );
 
     const files: string[] = [];
+    const skillDirs: string[] = [];
     for (let i = 0; i < skills.length; i++) {
       const skill = skills[i]!;
       const slug = slugs[i]!;
@@ -144,7 +188,20 @@ export async function materializeSkills(skills: InlineSkill[]): Promise<Material
       const file = join(dir, 'SKILL.md');
       await mkdir(dir, { recursive: true });
       await writeFile(file, `${buildFrontmatter(skill)}${skill.content}`, 'utf8');
+      skillDirs.push(dir);
       files.push(file);
+
+      if (skill.files) {
+        for (const [key, body] of Object.entries(skill.files)) {
+          const parts = fileKeyToPathParts(key);
+          if (!parts.length) {
+            throw new Error(`InlineSkill "${skill.name}" file key "${key}" resolved to no path segments`);
+          }
+          const target = join(dir, ...parts);
+          await mkdir(dirname(target), { recursive: true });
+          await writeFile(target, body, 'utf8');
+        }
+      }
     }
 
     return {
@@ -153,9 +210,10 @@ export async function materializeSkills(skills: InlineSkill[]): Promise<Material
       pluginManifestPath,
       pluginName,
       skillSlugs: slugs,
+      skillDirs,
       files,
       cleanup: () => rm(tmpRoot, { recursive: true, force: true }),
-      mirrorTo: (targetCwd, subdir) => mirrorTo(targetCwd, subdir, skills, slugs, files),
+      mirrorTo: (targetCwd, subdir) => mirrorTo(targetCwd, subdir, slugs, skillDirs),
     };
   } catch (err) {
     // Best-effort: if we crashed mid-write, don't leak the partial tmpdir.
@@ -167,9 +225,8 @@ export async function materializeSkills(skills: InlineSkill[]): Promise<Material
 async function mirrorTo(
   targetCwd: string,
   subdir: string,
-  skills: InlineSkill[],
   slugs: string[],
-  sourceFiles: string[],
+  sourceSkillDirs: string[],
 ): Promise<MirroredSkills> {
   const baseDir = join(targetCwd, subdir);
   const mirrorPrefix = `agent-adapters-${randomUUID().slice(0, 8)}`;
@@ -179,17 +236,14 @@ async function mirrorTo(
   await mkdir(baseDir, { recursive: true });
 
   try {
-    const { readFile } = await import('node:fs/promises');
-    for (let i = 0; i < skills.length; i++) {
+    for (let i = 0; i < slugs.length; i++) {
       const slug = slugs[i]!;
-      const sourceFile = sourceFiles[i]!;
-      const skillDir = join(baseDir, `${mirrorPrefix}-${slug}`);
-      const targetFile = join(skillDir, 'SKILL.md');
-      await mkdir(skillDir, { recursive: true });
-      createdDirs.push(skillDir);
-      const body = await readFile(sourceFile, 'utf8');
-      await writeFile(targetFile, body, 'utf8');
-      mirroredPaths.push(targetFile);
+      const sourceSkillDir = sourceSkillDirs[i]!;
+      const targetSkillDir = join(baseDir, `${mirrorPrefix}-${slug}`);
+      // Recursive copy preserves any nested files placed via InlineSkill.files.
+      await cp(sourceSkillDir, targetSkillDir, { recursive: true });
+      createdDirs.push(targetSkillDir);
+      mirroredPaths.push(join(targetSkillDir, 'SKILL.md'));
     }
   } catch (err) {
     for (const dir of createdDirs) {
