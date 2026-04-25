@@ -346,8 +346,6 @@ export interface InlineSkill {
   description: string;
   /** Markdown body without frontmatter — the helper prepends frontmatter */
   content: string;
-  /** Optional; written into frontmatter as `allowed-tools:` */
-  allowedTools?: string[];
   /** Optional extra string/number/boolean keys merged into frontmatter */
   metadata?: Record<string, string | number | boolean>;
 }

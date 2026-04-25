@@ -385,7 +385,6 @@ for await (const event of adapter.execute({
       name: 'rhyme',
       description: 'Generate three rhymes for a given word.',
       content: '# Rhyme\n\nReturn three words that rhyme with the input, one per line.\n',
-      allowedTools: ['Read'], // optional — written into frontmatter as `allowed-tools:`
     },
   ],
 })) {
@@ -413,7 +412,6 @@ interface InlineSkill {
   name: string;                // kebab-case identifier, must be unique within the call
   description: string;         // one-line summary shown to the model in the skill listing
   content: string;             // Markdown body without frontmatter — the helper prepends it
-  allowedTools?: string[];     // optional; written as `allowed-tools:` in frontmatter
   metadata?: Record<string, string | number | boolean>; // optional extra frontmatter keys
 }
 ```

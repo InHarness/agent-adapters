@@ -69,12 +69,9 @@ function escapeYamlSingleLine(value: string): string {
 
 function buildFrontmatter(skill: InlineSkill): string {
   const lines: string[] = ['---', `name: ${skill.name}`, `description: ${escapeYamlSingleLine(skill.description)}`];
-  if (skill.allowedTools?.length) {
-    lines.push(`allowed-tools: ${skill.allowedTools.join(', ')}`);
-  }
   if (skill.metadata) {
     for (const [key, value] of Object.entries(skill.metadata)) {
-      if (key === 'name' || key === 'description' || key === 'allowed-tools') continue;
+      if (key === 'name' || key === 'description') continue;
       const rendered = typeof value === 'string' ? escapeYamlSingleLine(value) : String(value);
       lines.push(`${key}: ${rendered}`);
     }

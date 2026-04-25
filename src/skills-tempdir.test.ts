@@ -72,17 +72,15 @@ describe('materializeSkills', () => {
     await expect(materializeSkills([])).rejects.toThrow(/empty array/);
   });
 
-  it('writes allowed-tools and metadata into frontmatter', async () => {
+  it('writes metadata into frontmatter', async () => {
     const m = await materializeSkills([
       {
         ...sample,
-        allowedTools: ['Read', 'Grep'],
         metadata: { license: 'MIT', version: 1 },
       },
     ]);
     try {
       const body = await readFile(m.files[0]!, 'utf8');
-      expect(body).toContain('allowed-tools: Read, Grep');
       expect(body).toContain("license: 'MIT'");
       expect(body).toContain('version: 1');
     } finally {
