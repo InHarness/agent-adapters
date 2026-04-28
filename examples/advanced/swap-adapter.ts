@@ -9,7 +9,7 @@ const architecture = (process.argv[2] ?? 'claude-code') as Architecture;
 // Use model aliases — each architecture resolves these to full model IDs
 const models: Record<string, string> = {
   'claude-code': 'sonnet-4.5',
-  'codex': 'o4-mini',
+  'codex': 'gpt-5.5',
   'opencode-openrouter': 'claude-sonnet-4',
   'gemini': 'gemini-2.5-flash',
 };

@@ -21,15 +21,14 @@ import {
 } from './__fixtures__/codex-events.js';
 
 // Per-test container so `vi.mock` factory can read the active fixture.
-let currentFixture: ReadonlyArray<unknown> = [];
+// A thunk so individual tests can plug in generators that throw mid-stream
+// (used to exercise the SDK's "subprocess exited" rethrow path).
+let currentFixture: () => AsyncIterable<unknown> = async function* () {};
 
 vi.mock('@openai/codex-sdk', () => {
   class FakeThread {
     async runStreamed(_prompt: string, _opts: unknown) {
-      const events = (async function* () {
-        for (const e of currentFixture) yield e;
-      })();
-      return { events };
+      return { events: currentFixture() };
     }
   }
   class Codex {
@@ -49,10 +48,12 @@ beforeEach(() => {
 });
 
 async function runCodex(fixture: ReadonlyArray<unknown>): Promise<UnifiedEvent[]> {
-  currentFixture = fixture;
+  currentFixture = async function* () {
+    for (const e of fixture) yield e;
+  };
   const { CodexAdapter } = await import('./codex.js');
   const adapter = new CodexAdapter();
-  return collectEvents(adapter.execute(createTestParams({ model: 'codex-mini' })));
+  return collectEvents(adapter.execute(createTestParams({ model: 'gpt-5.5-codex' })));
 }
 
 describe('codex normalization (fixture replay)', () => {
@@ -125,6 +126,57 @@ describe('codex normalization (fixture replay)', () => {
     expect(allBlocks.every((b) => b.type === 'text')).toBe(true);
   });
 
+  it('dedups subprocess-exit rethrow when SDK already emitted turn.failed', async () => {
+    // The codex CLI exits non-zero after API rejection (e.g. unsupported
+    // model on a ChatGPT-OAuth account) and the SDK rethrows
+    // "Codex Exec exited with code N: <stderr>" — that's a duplicate of the
+    // structured turn.failed already on the wire. The adapter must surface
+    // exactly one error.
+    currentFixture = async function* () {
+      yield {
+        type: 'turn.failed',
+        error: {
+          message:
+            "The 'gpt-5.5-codex' model is not supported when using Codex with a ChatGPT account.",
+        },
+      };
+      throw new Error('Codex Exec exited with code 1: Reading prompt from stdin...');
+    };
+    const { CodexAdapter } = await import('./codex.js');
+    const adapter = new CodexAdapter();
+    const events = await collectEvents(
+      adapter.execute(createTestParams({ model: 'gpt-5.5-codex' })),
+    );
+
+    const errors = events.filter(
+      (e) => e.type === 'error',
+    ) as Extract<UnifiedEvent, { type: 'error' }>[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error.message).toContain('not supported when using Codex with a ChatGPT account');
+    expect(errors[0].phase).toBe('runtime');
+  });
+
+  it('passes through non-dedup errors when no turn.failed was emitted', async () => {
+    // If the SDK throws without first emitting a structured failure, the
+    // adapter must still surface the error — the dedup heuristic only kicks
+    // in when a turn.failed/error event was already yielded for this run.
+    currentFixture = async function* () {
+      yield { type: 'turn.started' };
+      throw new Error('spawn ENOENT codex');
+    };
+    const { CodexAdapter } = await import('./codex.js');
+    const adapter = new CodexAdapter();
+    const events = await collectEvents(
+      adapter.execute(createTestParams({ model: 'gpt-5.5-codex' })),
+    );
+
+    const errors = events.filter(
+      (e) => e.type === 'error',
+    ) as Extract<UnifiedEvent, { type: 'error' }>[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error.message).toBe('spawn ENOENT codex');
+  });
+
   it('SCENARIO_FAILED_COMMAND: non-zero exit_code → tool_result.isError=true', async () => {
     const events = await runCodex(SCENARIO_FAILED_COMMAND);
     const toolResult = events.find((e) => e.type === 'tool_result') as
@@ -148,10 +200,12 @@ describe('codex normalization (fixture replay)', () => {
     const prev = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
-      currentFixture = SCENARIO_TEXT_ONLY;
+      currentFixture = async function* () {
+        for (const e of SCENARIO_TEXT_ONLY) yield e;
+      };
       const { CodexAdapter } = await import('./codex.js');
       const adapter = new CodexAdapter();
-      const events = await collectEvents(adapter.execute(createTestParams({ model: 'codex-mini' })));
+      const events = await collectEvents(adapter.execute(createTestParams({ model: 'gpt-5.5-codex' })));
 
       // No init error.
       const initErrors = events.filter(

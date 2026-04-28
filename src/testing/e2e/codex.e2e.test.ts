@@ -32,7 +32,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
-        model: 'o4-mini',
+        model: 'gpt-5.5',
         maxTurns: 1,
       }),
     );
@@ -48,7 +48,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
     expect(sdk.codexOptions).toBeDefined();
     expect(sdk.codexOptions.apiKey).toBe('[REDACTED]');
     expect(sdk.threadOptions).toBeDefined();
-    expect(sdk.threadOptions.model).toBe('o4-mini');
+    expect(sdk.threadOptions.model).toBe('gpt-5.5');
     expect(sdk.threadOptions.approvalPolicy).toBe('never');
   });
 
@@ -58,7 +58,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
-        model: 'o4-mini',
+        model: 'gpt-5.5',
         maxTurns: 1,
       }),
     );
@@ -86,7 +86,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
-        model: 'o4-mini',
+        model: 'gpt-5.5',
         maxTurns: 1,
       }),
     );
@@ -105,7 +105,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
     for await (const event of adapter.execute({
       prompt: 'Write a long essay about the history of computing. Make it very detailed.',
       systemPrompt: 'Write at least 2000 words.',
-      model: 'o4-mini',
+      model: 'gpt-5.5',
       maxTurns: 1,
     })) {
       events.push(event);
@@ -166,7 +166,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
           adapter.execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
-            model: 'o4-mini',
+            model: 'gpt-5.5',
             maxTurns: 3,
             cwd: dir,
             planMode: true,
@@ -187,7 +187,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
           adapter.execute({
             prompt: 'List the files in the current directory using ls. Then report what you see.',
             systemPrompt: 'Use the shell tool with `ls` to list files.',
-            model: 'o4-mini',
+            model: 'gpt-5.5',
             maxTurns: 3,
             cwd: dir,
             planMode: true,
@@ -207,7 +207,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
-        model: 'o4-mini',
+        model: 'gpt-5.5',
         maxTurns: 1,
       }),
     );
@@ -236,7 +236,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
         adapter.execute({
           prompt: SIMPLE_PROMPT,
           systemPrompt: SIMPLE_SYSTEM_PROMPT,
-          model: 'o4-mini',
+          model: 'gpt-5.5',
           maxTurns: 1,
           onUserInput: handler,
         }),
@@ -254,7 +254,7 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
     it('turn 2 recalls a number set in turn 1', async () => {
       const { turn2Events, sessionId } = await runResumeScenario(
         () => createAdapter('codex'),
-        { model: 'o4-mini', maxTurns: 1 },
+        { model: 'gpt-5.5', maxTurns: 1 },
       );
 
       expect(typeof sessionId).toBe('string');

@@ -161,6 +161,8 @@ export class CodexAdapter implements RuntimeAdapter {
       }, params.timeoutMs);
     }
 
+    let turnFailureEmitted = false;
+
     try {
       const { events } = await thread.runStreamed(fullPrompt, {
         signal: this.abortController.signal,
@@ -239,6 +241,7 @@ export class CodexAdapter implements RuntimeAdapter {
             } else if (item.type === 'reasoning') {
               yield { type: 'thinking', text: item.text, isSubagent: false };
             } else if (item.type === 'error') {
+              turnFailureEmitted = true;
               yield { type: 'error', error: new Error(item.message), phase: 'runtime' };
             }
             break;
@@ -276,11 +279,13 @@ export class CodexAdapter implements RuntimeAdapter {
           }
 
           case 'turn.failed': {
+            turnFailureEmitted = true;
             yield { type: 'error', error: new Error(event.error.message), phase: 'runtime' };
             break;
           }
 
           case 'error': {
+            turnFailureEmitted = true;
             yield { type: 'error', error: new Error(event.message), phase: 'runtime' };
             break;
           }
@@ -296,6 +301,18 @@ export class CodexAdapter implements RuntimeAdapter {
         } else {
           yield { type: 'error', error: new AdapterAbortError('codex'), phase: 'runtime' };
         }
+        return;
+      }
+      // The codex-sdk rethrows `Codex Exec exited with <detail>: <stderr>`
+      // after the subprocess exits non-zero, even when the underlying cause
+      // (e.g. unsupported model) was already surfaced as a turn.failed/error
+      // event. Suppress the duplicate so consumers see exactly one structured
+      // error per failure.
+      if (
+        turnFailureEmitted &&
+        err instanceof Error &&
+        err.message.startsWith('Codex Exec exited with')
+      ) {
         return;
       }
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };

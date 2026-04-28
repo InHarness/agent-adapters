@@ -25,9 +25,12 @@ export const MODEL_ALIASES = {
     'minimax-m2.7': 'MiniMax-M2.7',
   },
   codex: {
-    'o4-mini': 'o4-mini',
-    'o3': 'o3',
-    'codex-mini': 'codex-mini-latest',
+    'gpt-5.5': 'gpt-5.5',
+    'gpt-5.5-codex': 'gpt-5.5-codex',
+    'gpt-5.5-mini': 'gpt-5.5-mini',
+    'gpt-5': 'gpt-5',
+    'gpt-5-codex': 'gpt-5-codex',
+    'gpt-5-mini': 'gpt-5-mini',
   },
   'opencode-openrouter': {
     // Sorted by popularity (most-used first). Top entries match the
@@ -111,9 +114,12 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, Record<string, number>> = {
     'haiku-4.5': 200_000,
   },
   codex: {
-    'o4-mini': 200_000,
-    'o3': 200_000,
-    'codex-mini': 200_000,
+    'gpt-5.5': 400_000,
+    'gpt-5.5-codex': 400_000,
+    'gpt-5.5-mini': 400_000,
+    'gpt-5': 400_000,
+    'gpt-5-codex': 400_000,
+    'gpt-5-mini': 400_000,
   },
   gemini: {
     'gemini-3.1-pro': 1_048_576,

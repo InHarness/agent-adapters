@@ -13,7 +13,7 @@ async function main() {
   for await (const event of adapter.execute({
     prompt: 'Read the package.json and summarize what this project does.',
     systemPrompt: 'Be concise.',
-    model: 'o4-mini',
+    model: 'gpt-5.5',
     maxTurns: 3,
     cwd: process.cwd(),
     architectureConfig: {
