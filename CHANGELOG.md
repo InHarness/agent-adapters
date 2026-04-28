@@ -2,6 +2,14 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.3.0] — 2026-04-28
+
+### Added
+- **User message handling in the OpenCode adapter** — assistant text deltas now filter out the `PROMPT_ECHO` prefix so user input doesn't leak back as model output. The adapter tracks message roles to scope this filter to user messages only, with a new SSE fixture scenario and unit + E2E coverage.
+
+### Changed
+- README no longer shows `new ClaudeCodeAdapter()` and SDK-native MCP helpers as a parallel path to the unified API — keeping docs aligned with the package's one-interface-across-adapters pitch.
+
 ## [0.2.2] — 2026-04-28
 
 ### Added
@@ -36,6 +44,7 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 
 Initial public release on npm under the `@inharness-ai` scope. Baseline feature set: Claude Code, Codex, OpenCode, and Gemini adapters; MCP server integration; E2E testing framework.
 
+[0.3.0]: https://github.com/InHarness/agent-adapters/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/InHarness/agent-adapters/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/InHarness/agent-adapters/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/InHarness/agent-adapters/releases/tag/v0.2.0

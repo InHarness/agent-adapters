@@ -1,6 +1,6 @@
 {
   "name": "@inharness-ai/agent-adapters",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Unified TypeScript interface for AI agent SDKs — Claude Code, Codex, OpenCode, Gemini",
   "type": "module",
   "main": "./dist/index.cjs",
