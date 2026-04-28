@@ -2,6 +2,22 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.2.2] — 2026-04-28
+
+### Added
+- **Session resumption across all adapters** (`claude-code`, `codex`, `opencode`, `gemini`) via a unified `sessionId` / resume contract, plus expanded test coverage.
+- **Unified inline skills** parameter (`InlineSkill`) wired through every adapter, including multi-file inline skills via `InlineSkill.files`. Documented in the README inline-skills section.
+- **`adapter_ready` event** — startup snapshot of SDK-native config (secrets redacted) emitted once before the first message.
+- **`createConsoleObserver` factory** with SDK-config filtering options for opt-in verbosity.
+- **Try it** section in README pointing to `@inharness-ai/agent-chat` for an interactive multi-adapter demo (`npx @inharness-ai/agent-chat basic`).
+
+### Changed
+- Unified pre-SDK error handling across adapters — config / availability / resolution failures now surface as a typed `AdapterError` before any SDK call.
+- Refactored model resolution so unknown aliases throw consistently with the list of valid aliases for that architecture.
+
+### Removed
+- `allowedTools` field on `InlineSkill` (pre-public, dropped in same release window as inline-skill landing).
+
 ## [0.2.1] — 2026-04-22
 
 ### Added
@@ -20,5 +36,6 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 
 Initial public release on npm under the `@inharness-ai` scope. Baseline feature set: Claude Code, Codex, OpenCode, and Gemini adapters; MCP server integration; E2E testing framework.
 
+[0.2.2]: https://github.com/InHarness/agent-adapters/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/InHarness/agent-adapters/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/InHarness/agent-adapters/releases/tag/v0.2.0

@@ -17,6 +17,16 @@ for await (const event of adapter.execute({
 }
 ```
 
+## Try it
+
+Want to see all adapters in action? Spin up an interactive chat that lets you talk to each one in turn:
+
+```bash
+npx @inharness-ai/agent-chat basic
+```
+
+See [`@inharness-ai/agent-chat`](https://www.npmjs.com/package/@inharness-ai/agent-chat) for details.
+
 ## Why
 
 Every AI agent SDK has its own event protocol. Claude Code emits `SDKMessage`, Codex emits `ThreadEvent`, OpenCode uses SSE, Gemini has `AgentEvent`. This package normalizes all of them into a single typed stream — `AsyncIterable<UnifiedEvent>` — so your application code doesn't change when you swap agents.
