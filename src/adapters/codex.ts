@@ -25,6 +25,31 @@ import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 
+// Codex CLI emits error events whose `message` is sometimes a JSON-stringified
+// API response body (e.g. `{"type":"error","status":400,"error":{...}}`).
+// Walk into nested `.error.message` / `.message` so consumers see the human-
+// readable text, not the raw envelope.
+function extractCodexErrorMessage(raw: unknown, fallback = 'Codex error'): string {
+  if (raw == null) return fallback;
+  if (typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    const nested = (obj.error as Record<string, unknown> | undefined)?.message;
+    if (typeof nested === 'string' && nested.trim()) return nested;
+    if (typeof obj.message === 'string') return extractCodexErrorMessage(obj.message, fallback);
+    return fallback;
+  }
+  if (typeof raw !== 'string') return fallback;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return extractCodexErrorMessage(JSON.parse(trimmed), trimmed);
+    } catch {
+      return trimmed;
+    }
+  }
+  return trimmed || fallback;
+}
+
 // --- Adapter ---
 
 export class CodexAdapter implements RuntimeAdapter {
@@ -161,7 +186,7 @@ export class CodexAdapter implements RuntimeAdapter {
       }, params.timeoutMs);
     }
 
-    let turnFailureEmitted = false;
+    let lastErrorMessage: string | null = null;
 
     try {
       const { events } = await thread.runStreamed(fullPrompt, {
@@ -241,8 +266,11 @@ export class CodexAdapter implements RuntimeAdapter {
             } else if (item.type === 'reasoning') {
               yield { type: 'thinking', text: item.text, isSubagent: false };
             } else if (item.type === 'error') {
-              turnFailureEmitted = true;
-              yield { type: 'error', error: new Error(item.message), phase: 'runtime' };
+              const msg = extractCodexErrorMessage(item.message);
+              if (msg !== lastErrorMessage) {
+                lastErrorMessage = msg;
+                yield { type: 'error', error: new Error(msg), phase: 'runtime' };
+              }
             }
             break;
           }
@@ -279,14 +307,20 @@ export class CodexAdapter implements RuntimeAdapter {
           }
 
           case 'turn.failed': {
-            turnFailureEmitted = true;
-            yield { type: 'error', error: new Error(event.error.message), phase: 'runtime' };
+            const msg = extractCodexErrorMessage(event.error);
+            if (msg !== lastErrorMessage) {
+              lastErrorMessage = msg;
+              yield { type: 'error', error: new Error(msg), phase: 'runtime' };
+            }
             break;
           }
 
           case 'error': {
-            turnFailureEmitted = true;
-            yield { type: 'error', error: new Error(event.message), phase: 'runtime' };
+            const msg = extractCodexErrorMessage(event.message);
+            if (msg !== lastErrorMessage) {
+              lastErrorMessage = msg;
+              yield { type: 'error', error: new Error(msg), phase: 'runtime' };
+            }
             break;
           }
 
@@ -309,7 +343,7 @@ export class CodexAdapter implements RuntimeAdapter {
       // event. Suppress the duplicate so consumers see exactly one structured
       // error per failure.
       if (
-        turnFailureEmitted &&
+        lastErrorMessage !== null &&
         err instanceof Error &&
         err.message.startsWith('Codex Exec exited with')
       ) {

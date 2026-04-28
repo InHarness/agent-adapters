@@ -156,6 +156,75 @@ describe('codex normalization (fixture replay)', () => {
     expect(errors[0].phase).toBe('runtime');
   });
 
+  it('extracts human-readable message when stream error.message is a JSON-stringified API body', async () => {
+    // Production codex CLI emits the OpenAI error envelope as a JSON string
+    // inside `event.message`. We must surface only the inner `error.message`.
+    currentFixture = async function* () {
+      yield {
+        type: 'error',
+        message:
+          '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-5.5\' model is not supported when using Codex with a ChatGPT account."}}',
+      };
+    };
+    const { CodexAdapter } = await import('./codex.js');
+    const adapter = new CodexAdapter();
+    const events = await collectEvents(
+      adapter.execute(createTestParams({ model: 'gpt-5.5-codex' })),
+    );
+
+    const errors = events.filter(
+      (e) => e.type === 'error',
+    ) as Extract<UnifiedEvent, { type: 'error' }>[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error.message).toBe(
+      "The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account.",
+    );
+  });
+
+  it('dedups two identical stream error events', async () => {
+    // Codex CLI sometimes emits the same error JSONL twice (multiple log
+    // sites in the Rust binary). Adapter must collapse to one.
+    const errLine = {
+      type: 'error',
+      message:
+        '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"duplicate-error"}}',
+    };
+    currentFixture = async function* () {
+      yield errLine;
+      yield errLine;
+    };
+    const { CodexAdapter } = await import('./codex.js');
+    const adapter = new CodexAdapter();
+    const events = await collectEvents(
+      adapter.execute(createTestParams({ model: 'gpt-5.5-codex' })),
+    );
+
+    const errors = events.filter(
+      (e) => e.type === 'error',
+    ) as Extract<UnifiedEvent, { type: 'error' }>[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error.message).toBe('duplicate-error');
+  });
+
+  it('keeps two distinct stream error events (regression guard for content-based dedup)', async () => {
+    currentFixture = async function* () {
+      yield { type: 'error', message: 'first failure' };
+      yield { type: 'error', message: 'second failure' };
+    };
+    const { CodexAdapter } = await import('./codex.js');
+    const adapter = new CodexAdapter();
+    const events = await collectEvents(
+      adapter.execute(createTestParams({ model: 'gpt-5.5-codex' })),
+    );
+
+    const errors = events.filter(
+      (e) => e.type === 'error',
+    ) as Extract<UnifiedEvent, { type: 'error' }>[];
+    expect(errors).toHaveLength(2);
+    expect(errors[0].error.message).toBe('first failure');
+    expect(errors[1].error.message).toBe('second failure');
+  });
+
   it('passes through non-dedup errors when no turn.failed was emitted', async () => {
     // If the SDK throws without first emitting a structured failure, the
     // adapter must still surface the error — the dedup heuristic only kicks
