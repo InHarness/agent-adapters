@@ -80,12 +80,13 @@ No native subagent events → `subagent_*` events are **not emitted**. Consequen
 3. **`approvalPolicy` is hardcoded `'never'`** regardless of `planMode`. `planMode` is mapped to `sandboxMode: 'read-only'` instead. So plan mode ≠ approval mode here.
 4. **System prompt is concatenated.** Codex has no native system-prompt field; the adapter prefixes the prompt with `systemPrompt + '\n\n' + prompt`. Long system prompts burn user tokens and may displace context. Prefer short, directive system prompts.
 5. **`architectureConfig` keys** (`src/adapters/codex.ts:39+`):
-   - `codex_apiKey` — API key (fallback `process.env.OPENAI_API_KEY`)
+   - `codex_apiKey` — API key, **optional**; fallback `process.env.OPENAI_API_KEY`, then local ChatGPT OAuth from `~/.codex/auth.json` (after `codex login`). Adapter no longer hard-fails when none is set — see quirk #8.
    - `codex_baseUrl` — base URL override
    - `codex_sandboxMode` — `'read-only' | 'workspace-write'` (default `'workspace-write'`); `planMode: true` forces `'read-only'`
    - `codex_reasoningEffort` — `'minimal' | 'low' | 'medium' | 'high'`
 6. **Session resumption is partial.** `codex.resumeThread(threadId)` exists but the adapter doesn't currently persist/expose `threadId` in `result.sessionId`. Resumption from outside is unreliable; prefer keeping the `Codex` + `Thread` instance alive in-process.
 7. **`codex-mini` alias** → `codex-mini-latest` (a rolling tag). Pin to a full ID (e.g. via `resolveModel` pass-through) if you need reproducibility.
+8. **Auth: API key OR local ChatGPT OAuth.** The SDK is a thin wrapper over the `codex` CLI binary — when neither `codex_apiKey` nor `OPENAI_API_KEY` is set, the adapter omits the `apiKey` field from `CodexOptions` entirely and the CLI resolves auth from `~/.codex/auth.json` (written by `codex login`, ChatGPT subscription). The adapter does **not** read or parse `auth.json` itself; if the CLI can't find any credential, it surfaces an auth error through the runtime catch path. Analogous to claude-code, where `ANTHROPIC_API_KEY` is also optional.
 
 <!-- anchor: jpscelad -->
 ## Skills support
@@ -155,6 +156,9 @@ TODO (add to version watch): track `@openai/codex-sdk` changelog for a `skills` 
 
 - **"`turn.failed` with no error detail"**
   → Upstream — open an issue at https://github.com/openai/codex with the thread id. Our adapter just forwards to `error`.
+
+- **"No `OPENAI_API_KEY` set, but I ran `codex login` — does it work?"**
+  → Yes. When neither `codex_apiKey` nor `OPENAI_API_KEY` is present, the adapter omits the `apiKey` field from `CodexOptions` and the underlying `codex` CLI reads the OAuth token from `~/.codex/auth.json`. If you still see an auth error, run `codex login status` (or re-run `codex login`) and verify the spawned CLI process can read `$HOME`. The adapter does not pre-validate the file — by design, auth resolution lives in the CLI.
 
 <!-- anchor: ptwasc3h -->
 ## Key files

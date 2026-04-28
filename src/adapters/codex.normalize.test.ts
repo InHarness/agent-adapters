@@ -142,22 +142,33 @@ describe('codex normalization (fixture replay)', () => {
     expect(result?.output).toBe('Hello world');
   });
 
-  it('missing OPENAI_API_KEY yields {type:error, phase:init} instead of throwing', async () => {
+  it('missing OPENAI_API_KEY does not block init — adapter falls through to CLI for local OAuth', async () => {
+    // The Codex CLI resolves auth from ~/.codex/auth.json (after `codex login`)
+    // when no api key is provided. The adapter must not pre-empt that path.
     const prev = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
+      currentFixture = SCENARIO_TEXT_ONLY;
       const { CodexAdapter } = await import('./codex.js');
       const adapter = new CodexAdapter();
-      // Must not throw — the generator should yield an error event and return.
       const events = await collectEvents(adapter.execute(createTestParams({ model: 'codex-mini' })));
-      const errors = events.filter((e) => e.type === 'error') as Extract<UnifiedEvent, { type: 'error' }>[];
-      expect(errors).toHaveLength(1);
-      expect(errors[0].phase).toBe('init');
-      expect(errors[0].error.message).toMatch(/Failed to initialize codex adapter/);
-      const cause = (errors[0].error as Error & { cause?: Error }).cause;
-      expect(cause?.message).toMatch(/OPENAI_API_KEY/);
-      // Pre-SDK failure: no adapter_ready should precede it.
-      expect(events.some((e) => e.type === 'adapter_ready')).toBe(false);
+
+      // No init error.
+      const initErrors = events.filter(
+        (e) => e.type === 'error' && (e as Extract<UnifiedEvent, { type: 'error' }>).phase === 'init',
+      );
+      expect(initErrors).toHaveLength(0);
+
+      // adapter_ready was emitted, and codexOptions has no apiKey field.
+      const ready = events.find((e) => e.type === 'adapter_ready') as
+        | Extract<UnifiedEvent, { type: 'adapter_ready' }>
+        | undefined;
+      expect(ready).toBeDefined();
+      const sdkConfig = ready!.sdkConfig as { codexOptions: Record<string, unknown> };
+      expect(sdkConfig.codexOptions).not.toHaveProperty('apiKey');
+
+      // Run continued through the mocked SDK and produced a result.
+      expect(events.some((e) => e.type === 'result')).toBe(true);
     } finally {
       if (prev !== undefined) process.env.OPENAI_API_KEY = prev;
     }

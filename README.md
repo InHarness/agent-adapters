@@ -592,7 +592,7 @@ console.log(result.assertions); // detailed per-assertion results
 | Adapter | Default auth | With provider |
 |---|---|---|
 | claude-code | SDK manages internally (OAuth, cached credentials, or `ANTHROPIC_API_KEY`) | Provider sets env vars via `custom_env` |
-| codex | `OPENAI_API_KEY` env var | `providerConfig.apiKey` or `codex_apiKey` in architectureConfig |
+| codex | `OPENAI_API_KEY` env var, or local ChatGPT OAuth via `codex login` (`~/.codex/auth.json`) | `providerConfig.apiKey` or `codex_apiKey` in architectureConfig |
 | opencode | `OPENROUTER_API_KEY` env var + `opencode` CLI in PATH | `providerConfig.apiKey` or `opencode_apiKey` in architectureConfig |
 | gemini | `GOOGLE_API_KEY` or `GEMINI_API_KEY` env var | — |
 

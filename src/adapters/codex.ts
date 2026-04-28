@@ -1,6 +1,9 @@
 // Codex adapter — sandbox-based adapter for OpenAI models
 // SDK: @openai/codex-sdk
-// Auth: OPENAI_API_KEY env var
+// Auth: OPENAI_API_KEY env var OR local ChatGPT OAuth via `codex login`
+//       (~/.codex/auth.json). When neither codex_apiKey nor OPENAI_API_KEY is
+//       present, the adapter omits the apiKey field and lets the underlying
+//       Codex CLI resolve auth from its local token store.
 //
 // MCP limitations: The Codex SDK does not support dynamic MCP server configuration.
 // MCP servers must be pre-configured via `codex mcp add` CLI command or ~/.codex/config.toml.
@@ -43,14 +46,8 @@ export class CodexAdapter implements RuntimeAdapter {
     const config = { ...this._providerConfig, ...params.architectureConfig };
 
     const apiKey = (config.codex_apiKey as string) ?? process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      yield {
-        type: 'error',
-        error: new AdapterInitError('codex', new Error('OPENAI_API_KEY env var is required')),
-        phase: 'init',
-      };
-      return;
-    }
+    // No api key? Fall through and let the Codex CLI resolve auth from
+    // ~/.codex/auth.json (set by `codex login` for ChatGPT OAuth).
 
     // Warn if MCP servers are provided — Codex SDK does not support dynamic MCP configuration
     if (params.mcpServers && Object.keys(params.mcpServers).length > 0) {
@@ -73,7 +70,10 @@ export class CodexAdapter implements RuntimeAdapter {
       ? 'read-only'
       : ((config.codex_sandboxMode as string) ?? 'workspace-write');
 
-    const codexOptions: Record<string, unknown> = { apiKey };
+    const codexOptions: Record<string, unknown> = {};
+    if (apiKey) {
+      codexOptions.apiKey = apiKey;
+    }
     if (config.codex_baseUrl) {
       codexOptions.baseURL = config.codex_baseUrl as string;
     }
