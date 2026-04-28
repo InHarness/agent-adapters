@@ -44,8 +44,8 @@ npm install @modelcontextprotocol/sdk zod
 |---|---|---|---|---|---|---|
 | `claude-code` | @anthropic-ai/claude-agent-sdk | Native deltas | Native streaming | Full (stdio, SSE, HTTP, in-process) | Yes (sessionId) | Native (Agent tool) |
 | `codex` | @openai/codex-sdk | Synthesized (full text) | Post-hoc summary | Pre-configured only | Yes (resumeThread) | No |
-| `opencode` | @opencode-ai/sdk | Native SSE | Native (reasoning) | Stdio only | No | Native (task tool) |
-| `gemini` | @google/gemini-cli-core | Native | Native (thought) | Full (stdio, SSE, HTTP) | No | Via threadId |
+| `opencode` | @opencode-ai/sdk | Native SSE | Native (reasoning) | Stdio only | Yes (session.get) | Native (task tool) |
+| `gemini` | @google/gemini-cli-core | Native | Native (thought) | Full (stdio, SSE, HTTP) | Yes (resumeChat) | Via threadId |
 
 ## Providers
 

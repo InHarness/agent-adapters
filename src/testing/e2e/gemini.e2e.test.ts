@@ -29,6 +29,8 @@ import {
   assertUserInputRequest,
   assertSubagentTaskIdConsistency,
   createE2eMcpServer,
+  runResumeScenario,
+  RESUME_EXPECTED_NUMBER,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady } from '../contract.js';
@@ -153,9 +155,12 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     const events: UnifiedEvent[] = [];
     let aborted = false;
 
+    // gemini-2.5-flash routes "write a long essay" through its internal
+    // complete_task tool flow and emits zero text_delta events, so we use a
+    // counting prompt that forces token-level text streaming instead.
     for await (const event of adapter.execute({
-      prompt: 'Write a long essay about the history of computing. Make it very detailed.',
-      systemPrompt: 'Write at least 2000 words.',
+      prompt: 'Count from 1 to 200, writing each number on its own line. Output the numbers as plain text only — do not use any tool.',
+      systemPrompt: 'Reply with plain text only. Do not invoke complete_task or any other tool.',
       model: 'gemini-2.5-flash',
       maxTurns: 1,
     })) {
@@ -304,6 +309,23 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
       expect(handlerCalls, 'onUserInput should fire at least once').toBeGreaterThanOrEqual(1);
       const req = assertUserInputRequest(events, 'model-tool');
       expect(req.request.origin).toBe('gemini');
+    });
+  });
+
+  describe('resume_session (resumeSessionId round-trip)', () => {
+    it('turn 2 recalls a number set in turn 1', async () => {
+      const { turn2Events, sessionId } = await runResumeScenario(
+        () => createAdapter('gemini'),
+        { model: 'gemini-2.5-flash', maxTurns: 1 },
+      );
+
+      expect(typeof sessionId).toBe('string');
+      expect(sessionId.length).toBeGreaterThan(0);
+
+      const result2 = turn2Events.find(
+        (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
+      )!;
+      expect(result2.output).toContain(RESUME_EXPECTED_NUMBER);
     });
   });
 });

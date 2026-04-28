@@ -2,7 +2,11 @@
 // Shows: result.sessionId capture + resumeSessionId param
 // Usage: npx tsx examples/advanced/session-resumption.ts
 // Auth: ANTHROPIC_API_KEY or SDK-managed OAuth
-// Note: session resumption is supported by claude-code and codex adapters
+// Note: session resumption is supported by all four adapters
+//   - claude-code: native options.resume
+//   - codex:       resumeThread(id, options)
+//   - gemini:      resumeChat() reading ~/.gemini/projects/*/chats/
+//   - opencode:    session.get({ id }) before session.promptAsync
 
 import { createAdapter, extractText } from '../../src/index.js';
 

@@ -156,6 +156,7 @@ npx vitest run --config vitest.config.e2e.ts --testTimeout 240000 claude-code
 - MCP: `createE2eMcpServer()` (echo tool for tool-use tests)
 - Plan-mode helpers: `createPlanModeTmpDir`, `findWriteToolUses`, `assertNoFileCreated`
 - User-input scenario: `runUserQuestionScenario`, `assertUserInputRequest`
+- Session-resume scenario: `runResumeScenario`, `RESUME_EXPECTED_NUMBER` — runs a memorize-and-recall round-trip; turn 2 resumes via `resumeSessionId` captured from turn 1's `result` event
 - Env guard: `requireEnv(...vars)` — returns `true` only when all vars are set
 
 ## Troubleshooting

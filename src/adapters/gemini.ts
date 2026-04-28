@@ -192,9 +192,24 @@ export class GeminiAdapter implements RuntimeAdapter {
 
     const archConfig = params.architectureConfig ?? {};
     const debug = (archConfig.debug as boolean | undefined) ?? false;
-    const approvalMode = params.planMode
-      ? 'plan'
-      : ((archConfig.gemini_approvalMode as string | undefined) ?? 'yolo');
+    // approvalMode trade-offs:
+    //   - 'yolo' : policy auto-allows every tool, never publishes
+    //              TOOL_CONFIRMATION_REQUEST — fast path, but ask_user can't
+    //              fire its question dialog because the confirmation bus is
+    //              skipped entirely.
+    //   - 'plan' : injects a "plan-first workflow" system prompt that makes
+    //              the model defer all actions (including reads) until a plan
+    //              is approved. Violates our planMode contract.
+    //   - 'default' : reads are allowed without confirmation; writes/edits/
+    //              exec + ask_user go through TOOL_CONFIRMATION_REQUEST. Good
+    //              for ask_user (we win the race in our subscribe + publish
+    //              monkey-patch below).
+    // We pick 'default' when an onUserInput handler is wired (so ask_user
+    // works) and 'yolo' otherwise. planMode is enforced via excludeTools (next
+    // block) regardless of approvalMode, so mutating builtins are removed at
+    // the tool-list level.
+    const approvalMode =
+      (archConfig.gemini_approvalMode as string | undefined) ?? (params.onUserInput ? 'default' : 'yolo');
     const cwd = params.cwd ?? process.cwd();
 
     const generateContentConfig: Record<string, unknown> = {};
@@ -225,9 +240,16 @@ export class GeminiAdapter implements RuntimeAdapter {
     const { randomUUID } = await import('node:crypto');
     const effectiveSessionId = params.resumeSessionId ?? randomUUID();
 
-    // Only exclude ask_user when the consumer didn't wire a handler — otherwise
-    // allow the model to invoke it and bridge responses via MessageBus below.
-    const excludeTools = params.onUserInput ? undefined : ['ask_user'];
+    // ask_user is only allowed when the consumer wired a handler.
+    // In planMode we additionally hide gemini-cli's mutating builtins so the
+    // model can't even attempt to write/edit/exec — the plan-mode contract is
+    // "reads allowed, writes blocked" enforced at the tool-list level (matches
+    // the unified contract; see approvalMode comment above).
+    const PLAN_MODE_MUTATING_TOOLS = ['write_file', 'replace', 'run_shell_command', 'save_memory'];
+    const baseExcluded = params.onUserInput ? [] : ['ask_user'];
+    const planExcluded = params.planMode ? PLAN_MODE_MUTATING_TOOLS : [];
+    const merged = [...baseExcluded, ...planExcluded];
+    const excludeTools = merged.length > 0 ? merged : undefined;
 
     // Materialize inline skills. Gemini consumes them programmatically via
     // Config.skills with `body` inline; `location` still has to be a real path
@@ -263,6 +285,14 @@ export class GeminiAdapter implements RuntimeAdapter {
       model: resolvedModel,
       approvalMode,
       excludeTools,
+      // interactive: required when ask_user is wired. gemini-cli's policy
+      // engine (scheduler/policy.js:53) throws "Tool execution requires user
+      // confirmation, which is not supported in non-interactive mode" when
+      // approvalMode='default' resolves to ASK_USER for ask_user. Setting
+      // interactive=true unblocks the confirmation flow so resolveConfirmation
+      // runs, state moves to AwaitingApproval, and our TOOL_CALLS_UPDATE
+      // subscriber (below) can pick up the correlationId.
+      interactive: !!params.onUserInput,
       maxSessionTurns: params.maxTurns ?? -1,
       mcpServers: Object.keys(mappedMcpServers).length > 0 ? mappedMcpServers : undefined,
       modelConfigServiceConfig: hasModelParams
@@ -285,6 +315,12 @@ export class GeminiAdapter implements RuntimeAdapter {
       adapter: 'gemini',
       sdkConfig: redactSecrets(geminiConfigParams),
     };
+
+    // ask_user bridge state — declared early so the messageBus subscriber
+    // (set up before LegacyAgentSession construction below) can push into it.
+    type PendingUserInput = { req: UserInputRequest; correlationId: string };
+    const pendingUserInputs: PendingUserInput[] = [];
+    let userInputWaker: (() => void) | null = null;
 
     try {
       const geminiConfig = new GeminiConfig(geminiConfigParams);
@@ -343,14 +379,99 @@ export class GeminiAdapter implements RuntimeAdapter {
         await client.initialize();
       }
 
-      session = new LegacyAgentSession({ config: geminiConfig, client });
-      this.abortFn = () => session.abort();
+      // ask_user uses gemini-cli's internal scheduler flow, NOT
+      // getMessageBusDecision: ask_user.shouldConfirmExecute returns details
+      // directly to resolveConfirmation, which generates a fresh correlationId,
+      // updates state to AwaitingApproval (firing a TOOL_CALLS_UPDATE message
+      // with the snapshot — including correlationId + confirmationDetails),
+      // and waits on messageBus for a TOOL_CONFIRMATION_RESPONSE with that
+      // correlationId. The CLI normally publishes that response from its UI.
+      // We don't have a UI, so we listen on TOOL_CALLS_UPDATE for ask_user
+      // confirmations awaiting approval, run onUserInput, then publish the
+      // response (in the main loop below). Subscribing before
+      // LegacyAgentSession constructs is required because the scheduler — and
+      // its emitUpdate calls — live inside the session.
+      // Note: requires approvalMode='default' (set above when onUserInput is
+      // provided) so the policy engine returns ASK_USER for ask_user; in
+      // 'yolo' the policy auto-allows and the confirmation flow is skipped
+      // entirely so no AwaitingApproval state ever fires.
       geminiConfigRef = geminiConfig as unknown as {
         messageBus?: {
           subscribe(type: string, listener: (msg: Record<string, unknown>) => void): void;
           publish(msg: Record<string, unknown>): Promise<void>;
         };
       };
+      if (params.onUserInput && MessageBusType && ToolConfirmationOutcome && geminiConfigRef.messageBus) {
+        const bus = geminiConfigRef.messageBus;
+        const handledCorrelationIds = new Set<string>();
+        bus.subscribe(MessageBusType.TOOL_CALLS_UPDATE, (rawMsg) => {
+          const m = rawMsg as {
+            toolCalls?: Array<{
+              status?: string;
+              correlationId?: string;
+              confirmationDetails?: { type?: string; questions?: Array<Record<string, unknown>> };
+            }>;
+          };
+          if (!m.toolCalls) return;
+          for (const call of m.toolCalls) {
+            if (call.status !== 'awaiting_approval') continue;
+            if (!call.correlationId) continue;
+            const details = call.confirmationDetails;
+            if (!details || details.type !== 'ask_user') continue;
+            if (handledCorrelationIds.has(call.correlationId)) continue;
+            handledCorrelationIds.add(call.correlationId);
+            const correlationId = call.correlationId;
+            const rawQuestions = Array.isArray(details.questions) ? details.questions : [];
+            const questions: UserInputQuestion[] = rawQuestions.map((q) => {
+              const qType = q.type as 'choice' | 'text' | 'yesno' | undefined;
+              if (qType === 'yesno') {
+                return {
+                  question: q.question as string,
+                  header: q.header as string | undefined,
+                  options: [{ label: 'Yes' }, { label: 'No' }],
+                  allowCustom: true,
+                  placeholder: q.placeholder as string | undefined,
+                };
+              }
+              if (qType === 'text') {
+                return {
+                  question: q.question as string,
+                  header: q.header as string | undefined,
+                  options: [],
+                  allowCustom: true,
+                  placeholder: q.placeholder as string | undefined,
+                };
+              }
+              // choice (default)
+              const opts = Array.isArray(q.options) ? (q.options as Array<Record<string, unknown>>) : [];
+              return {
+                question: q.question as string,
+                header: q.header as string | undefined,
+                options: opts.map((o) => ({
+                  label: o.label as string,
+                  description: o.description as string | undefined,
+                })),
+                multiSelect: q.multiSelect as boolean | undefined,
+                allowCustom: q.allowCustom as boolean | undefined,
+                placeholder: q.placeholder as string | undefined,
+              };
+            });
+            const req: UserInputRequest = {
+              requestId: correlationId,
+              source: 'model-tool',
+              origin: 'gemini',
+              questions,
+              native: call,
+            };
+            pendingUserInputs.push({ req, correlationId });
+            userInputWaker?.();
+            userInputWaker = null;
+          }
+        });
+      }
+
+      session = new LegacyAgentSession({ config: geminiConfig, client });
+      this.abortFn = () => session.abort();
     } catch (err) {
       await materialized?.cleanup().catch(() => {});
       yield {
@@ -363,83 +484,6 @@ export class GeminiAdapter implements RuntimeAdapter {
 
     const rawMessages: NormalizedMessage[] = [];
     let totalUsage: UsageStats = { inputTokens: 0, outputTokens: 0 };
-
-    // User-input bridge via Gemini's MessageBus (ask_user tool ↔ onUserInput).
-    type PendingUserInput = { req: UserInputRequest; correlationId: string };
-    const pendingUserInputs: PendingUserInput[] = [];
-    let userInputWaker: (() => void) | null = null;
-
-    // ask_user in Gemini doesn't publish to ASK_USER_REQUEST — it publishes a
-    // TOOL_CONFIRMATION_REQUEST with `details.type === 'ask_user'` and waits for
-    // TOOL_CONFIRMATION_RESPONSE. The scheduler ALSO subscribes and immediately
-    // replies with `requiresUserConfirmation: true` (which awaitConfirmation maps
-    // to Cancel). To win, we subscribe FIRST (before sendStream → scheduler init)
-    // and publish a ProceedOnce response with payload.answers as soon as we get
-    // the user's answer back from onUserInput.
-    // KNOWN LIMITATION: gemini ask_user integration is partial.
-    //
-    // The SDK routes ask_user through TOOL_CONFIRMATION_REQUEST with `details.type === 'ask_user'`,
-    // not the (defined-but-unused) ASK_USER_REQUEST channel. Worse, the Scheduler subscribes to
-    // TOOL_CONFIRMATION_REQUEST during construction and IMMEDIATELY publishes a default response
-    // with `requiresUserConfirmation: true` (which awaitConfirmation maps to Cancel). Because our
-    // onUserInput callback is async, our real reply loses the race.
-    //
-    // We still wire the subscription so the unified UnifiedEvent fires (consumers can observe the
-    // request), but the model will see a Cancel and the tool will return "User dismissed dialog".
-    // A complete fix requires either monkey-patching messageBus.publish or replacing the Scheduler's
-    // subscriber — both invasive. Tracked separately.
-    if (params.onUserInput && MessageBusType && ToolConfirmationOutcome && geminiConfigRef?.messageBus) {
-      const bus = geminiConfigRef.messageBus;
-      bus.subscribe(MessageBusType.TOOL_CONFIRMATION_REQUEST, (rawMsg) => {
-        const msg = rawMsg as {
-          correlationId: string;
-          details?: { type?: string; questions?: Array<Record<string, unknown>> };
-        };
-        const details = msg.details;
-        if (!details || details.type !== 'ask_user') return;
-        const correlationId = msg.correlationId;
-        const rawQuestions = Array.isArray(details.questions) ? details.questions : [];
-        const questions: UserInputQuestion[] = rawQuestions.map((q) => {
-          const qType = q.type as 'choice' | 'text' | 'yesno' | undefined;
-          if (qType === 'yesno') {
-            return {
-              question: q.question as string,
-              header: q.header as string | undefined,
-              options: [{ label: 'Yes' }, { label: 'No' }],
-              allowCustom: true,
-              placeholder: q.placeholder as string | undefined,
-            };
-          }
-          if (qType === 'text') {
-            return {
-              question: q.question as string,
-              header: q.header as string | undefined,
-              placeholder: q.placeholder as string | undefined,
-            };
-          }
-          const opts = Array.isArray(q.options) ? (q.options as Array<Record<string, unknown>>) : [];
-          return {
-            question: q.question as string,
-            header: q.header as string | undefined,
-            options: opts.map((o) => ({
-              label: o.label as string,
-              description: o.description as string | undefined,
-            })),
-            multiSelect: q.multiSelect as boolean | undefined,
-          };
-        });
-        const req: UserInputRequest = {
-          requestId: correlationId,
-          source: 'model-tool',
-          origin: 'gemini',
-          questions,
-          native: msg,
-        };
-        pendingUserInputs.push({ req, correlationId });
-        userInputWaker?.();
-        userInputWaker = null;
-      });
-    }
 
     // Timeout handling
     let timedOut = false;

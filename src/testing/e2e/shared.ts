@@ -195,6 +195,65 @@ export const TODO_PROMPT =
 export const TODO_SYSTEM_PROMPT =
   'You have a native TodoWrite / task-planning tool available. When the user gives you a multi-step job, you MUST call it exactly once with all steps before doing anything else. Do not execute the steps — just plan them.';
 
+// --- Session resume scenario ---
+
+// Phrasing avoids "remember"/"memorize" — Gemini interprets those as a directive to
+// call its built-in save_memory tool, which (a) produces no text on turn 1 and (b)
+// persists across sessions, making the recall on turn 2 ambiguous.
+export const RESUME_TURN1_PROMPT =
+  'Reply with exactly this sentence and nothing else: My code is 92517.';
+export const RESUME_TURN1_SYSTEM_PROMPT =
+  'You echo back exactly what you are asked to say. Do not save anything to memory or call any tools.';
+export const RESUME_TURN2_PROMPT =
+  'Repeat the number from your previous reply in this conversation. Answer with only the digits, nothing else.';
+export const RESUME_TURN2_SYSTEM_PROMPT =
+  'Recall what you said in the previous turn of this conversation.';
+export const RESUME_EXPECTED_NUMBER = '92517';
+
+/**
+ * Run the memorize-and-recall resume scenario. Caller passes a factory so each
+ * call gets a fresh adapter instance (the adapter is single-use — execute()
+ * sets up an AbortController and adapters like opencode spawn per-call servers).
+ *
+ * Returns the captured sessionId from turn 1 and both turns' events so tests
+ * can make their own assertions on the recall.
+ */
+export async function runResumeScenario(
+  factory: () => RuntimeAdapter,
+  baseParams: Omit<RuntimeExecuteParams, 'prompt' | 'systemPrompt' | 'resumeSessionId'>,
+): Promise<{
+  turn1Events: UnifiedEvent[];
+  turn2Events: UnifiedEvent[];
+  sessionId: string;
+}> {
+  const turn1Events: UnifiedEvent[] = [];
+  for await (const e of factory().execute({
+    ...baseParams,
+    prompt: RESUME_TURN1_PROMPT,
+    systemPrompt: RESUME_TURN1_SYSTEM_PROMPT,
+  })) {
+    turn1Events.push(e);
+  }
+  const result1 = turn1Events.find(
+    (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
+  );
+  if (!result1?.sessionId) {
+    throw new Error('turn 1 did not yield a sessionId on the result event');
+  }
+
+  const turn2Events: UnifiedEvent[] = [];
+  for await (const e of factory().execute({
+    ...baseParams,
+    prompt: RESUME_TURN2_PROMPT,
+    systemPrompt: RESUME_TURN2_SYSTEM_PROMPT,
+    resumeSessionId: result1.sessionId,
+  })) {
+    turn2Events.push(e);
+  }
+
+  return { turn1Events, turn2Events, sessionId: result1.sessionId };
+}
+
 // --- User-input (ask-user tool) scenario ---
 
 export const USER_QUESTION_PROMPT =

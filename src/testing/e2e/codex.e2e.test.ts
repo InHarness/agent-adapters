@@ -16,6 +16,8 @@ import {
   SIMPLE_SYSTEM_PROMPT,
   PLAN_WRITE_PROMPT,
   PLAN_WRITE_SYSTEM_PROMPT,
+  runResumeScenario,
+  RESUME_EXPECTED_NUMBER,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady } from '../contract.js';
@@ -245,6 +247,23 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
       expect(warnings.length).toBeGreaterThanOrEqual(1);
       expect(warnings[0].message).toMatch(/codex.*not supported/i);
       expect(events.some((e) => e.type === 'result')).toBe(true);
+    });
+  });
+
+  describe('resume_session (resumeSessionId round-trip)', () => {
+    it('turn 2 recalls a number set in turn 1', async () => {
+      const { turn2Events, sessionId } = await runResumeScenario(
+        () => createAdapter('codex'),
+        { model: 'o4-mini', maxTurns: 1 },
+      );
+
+      expect(typeof sessionId).toBe('string');
+      expect(sessionId.length).toBeGreaterThan(0);
+
+      const result2 = turn2Events.find(
+        (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
+      )!;
+      expect(result2.output).toContain(RESUME_EXPECTED_NUMBER);
     });
   });
 });

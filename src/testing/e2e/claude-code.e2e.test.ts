@@ -41,6 +41,8 @@ import {
   TODO_PROMPT,
   TODO_SYSTEM_PROMPT,
   assertTodoListUpdated,
+  runResumeScenario,
+  RESUME_EXPECTED_NUMBER,
 } from './shared.js';
 
 // Claude Code SDK manages auth internally (OAuth, cached credentials, or ANTHROPIC_API_KEY).
@@ -479,7 +481,10 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
           prompt: TODO_PROMPT,
           systemPrompt: TODO_SYSTEM_PROMPT,
           model: MODEL,
-          maxTurns: 2,
+          // 3 turns: deferred-tool discovery (ToolSearch) → TodoWrite → final response.
+          // Recent SDK versions register ToolSearch as a built-in for newer Claude
+          // models, so the model burns one turn discovering tools before TodoWrite.
+          maxTurns: 3,
         }),
       );
 
@@ -513,6 +518,23 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       // 4. result.todoListSnapshot matches the last todo_list_updated items.
       expect(result!.todoListSnapshot).toBeDefined();
       expect(result!.todoListSnapshot).toEqual(todoEvent.items);
+    });
+  });
+
+  describe('resume_session (resumeSessionId round-trip)', () => {
+    it('turn 2 recalls a number set in turn 1', async () => {
+      const { turn2Events, sessionId } = await runResumeScenario(
+        () => createAdapter('claude-code'),
+        { model: MODEL, maxTurns: 1 },
+      );
+
+      expect(typeof sessionId).toBe('string');
+      expect(sessionId.length).toBeGreaterThan(0);
+
+      const result2 = turn2Events.find(
+        (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
+      )!;
+      expect(result2.output).toContain(RESUME_EXPECTED_NUMBER);
     });
   });
 });

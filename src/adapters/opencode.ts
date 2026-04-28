@@ -298,12 +298,32 @@ export class OpencodeAdapter implements RuntimeAdapter {
     }
 
     try {
-      // 1. Create session
+      // 1. Create or resume session
       const cwd = params.cwd ?? process.cwd();
-      const sessionResult = await client.session.create({
-        query: { directory: cwd },
-      });
-      const session = (sessionResult as { data?: { id?: string } }).data;
+      let session: { id?: string } | undefined;
+      if (params.resumeSessionId) {
+        const got = await client.session.get({
+          path: { id: params.resumeSessionId },
+          query: { directory: cwd },
+        });
+        session = (got as { data?: { id?: string } }).data;
+        if (!session?.id) {
+          yield {
+            type: 'error',
+            error: new AdapterInitError(
+              'opencode',
+              new Error(`OpenCode session not found: ${params.resumeSessionId}`),
+            ),
+            phase: 'init',
+          };
+          return;
+        }
+      } else {
+        const sessionResult = await client.session.create({
+          query: { directory: cwd },
+        });
+        session = (sessionResult as { data?: { id?: string } }).data;
+      }
       sessionId = session?.id;
 
       if (!sessionId) {

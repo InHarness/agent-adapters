@@ -23,6 +23,8 @@ import {
   TODO_PROMPT,
   TODO_SYSTEM_PROMPT,
   assertTodoListUpdated,
+  runResumeScenario,
+  RESUME_EXPECTED_NUMBER,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady } from '../contract.js';
@@ -291,6 +293,23 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
       // 4. Snapshot matches the last event.
       expect(result!.todoListSnapshot).toBeDefined();
       expect(result!.todoListSnapshot).toEqual(todoEvent.items);
+    });
+  });
+
+  describe('resume_session (resumeSessionId round-trip)', () => {
+    it('turn 2 recalls a number set in turn 1', async () => {
+      const { turn2Events, sessionId } = await runResumeScenario(
+        () => createAdapter('opencode-openrouter'),
+        { model: 'claude-sonnet-4', maxTurns: 1, cwd: process.cwd() },
+      );
+
+      expect(typeof sessionId).toBe('string');
+      expect(sessionId.length).toBeGreaterThan(0);
+
+      const result2 = turn2Events.find(
+        (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
+      )!;
+      expect(result2.output).toContain(RESUME_EXPECTED_NUMBER);
     });
   });
 });
