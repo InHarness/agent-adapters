@@ -303,35 +303,6 @@ for await (const event of adapter.execute({
 
 `createMcpServer` requires `@modelcontextprotocol/sdk` and `zod` as peer dependencies. Input schemas must be Zod raw shapes (e.g. `{ name: z.string() }`).
 
-### Claude Code SDK tools
-
-For Claude Code specifically, you can also use the SDK's native `createSdkMcpServer` and `tool` helpers (re-exported from the claude-code subpath):
-
-```ts
-import { z } from 'zod';
-import { ClaudeCodeAdapter, createSdkMcpServer, tool } from '@inharness-ai/agent-adapters/claude-code';
-
-const server = createSdkMcpServer({
-  name: 'notes',
-  tools: [
-    tool('add_note', 'Add a note', { text: z.string() }, async (args) => {
-      return { content: [{ type: 'text', text: `Added: ${args.text}` }] };
-    }),
-  ],
-});
-
-const adapter = new ClaudeCodeAdapter();
-
-for await (const event of adapter.execute({
-  prompt: 'Add a note saying hello.',
-  systemPrompt: 'Use the notes tools.',
-  model: 'sonnet-4.5',
-  mcpServers: { notes: server },
-})) {
-  // handle events...
-}
-```
-
 ### Mixing server types
 
 You can combine different server types in a single execution:
