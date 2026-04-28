@@ -14,6 +14,7 @@ import {
   scenarioMultiMessage,
   scenarioThinking,
   scenarioToolError,
+  scenarioWithUserEcho,
 } from './__fixtures__/opencode-sse.js';
 
 const FAKE_SESSION_ID = 'sess_test_1';
@@ -133,6 +134,26 @@ describe('opencode normalization (fixture replay)', () => {
       .flatMap((m) => m.content)
       .find((b) => b.type === 'toolResult') as { isError?: boolean } | undefined;
     expect(errBlock?.isError).toBe(true);
+  });
+
+  it('skips text_delta and rawMessages for user message parts (no prompt echo)', async () => {
+    const events = await runOpencode(scenarioWithUserEcho(FAKE_SESSION_ID));
+
+    const textDeltas = events.filter(
+      (e): e is Extract<UnifiedEvent, { type: 'text_delta' }> => e.type === 'text_delta',
+    );
+    expect(textDeltas.map((e) => e.text)).not.toContain('PROMPT_ECHO');
+    expect(textDeltas).toHaveLength(1);
+    expect(textDeltas[0].text).toBe('Hi');
+
+    const result = events.find((e) => e.type === 'result') as
+      | Extract<UnifiedEvent, { type: 'result' }>
+      | undefined;
+    expect(result?.rawMessages).toHaveLength(1);
+    expect(result?.rawMessages[0].role).toBe('assistant');
+    expect(result?.output).toBe('Hi');
+    expect(result?.output).not.toContain('PROMPT_ECHO');
+    expect(result?.usage).toEqual({ inputTokens: 5, outputTokens: 1 });
   });
 
   it('missing OPENROUTER_API_KEY yields {type:error, phase:init} instead of throwing', async () => {

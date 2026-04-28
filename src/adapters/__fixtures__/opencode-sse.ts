@@ -166,6 +166,64 @@ export function scenarioThinking(sessionID: string): SseEvent[] {
   ];
 }
 
+export function scenarioWithUserEcho(sessionID: string): SseEvent[] {
+  return [
+    {
+      type: 'message.updated',
+      properties: {
+        info: { id: 'msg_user_1', sessionID, role: 'user' },
+      },
+    },
+    {
+      type: 'message.part.updated',
+      properties: {
+        delta: 'PROMPT_ECHO',
+        part: {
+          id: 'part_user_text',
+          type: 'text',
+          messageID: 'msg_user_1',
+          sessionID,
+          text: 'PROMPT_ECHO',
+        },
+      },
+    },
+    {
+      type: 'message.updated',
+      properties: {
+        info: { id: 'msg_assistant_1', sessionID, role: 'assistant' },
+      },
+    },
+    {
+      type: 'message.part.updated',
+      properties: {
+        delta: 'Hi',
+        part: {
+          id: 'part_assistant_text',
+          type: 'text',
+          messageID: 'msg_assistant_1',
+          sessionID,
+          text: 'Hi',
+        },
+      },
+    },
+    {
+      type: 'message.part.updated',
+      properties: {
+        part: {
+          type: 'step-finish',
+          messageID: 'msg_assistant_1',
+          sessionID,
+          tokens: { input: 5, output: 1 },
+        },
+      },
+    },
+    {
+      type: 'session.idle',
+      properties: { sessionID },
+    },
+  ];
+}
+
 export function scenarioToolError(sessionID: string): SseEvent[] {
   return [
     {

@@ -354,6 +354,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
 
       const currentBlocks: ContentBlock[] = [];
       let lastMessageId: string | undefined;
+      const messageRoleById = new Map<string, 'user' | 'assistant'>();
       // OpenCode's SSE does not attach a task/call ID to text/reasoning deltas.
       // We correlate by ordering: deltas observed between a task tool's
       // running → completed/error window are attributed to that task.
@@ -413,6 +414,13 @@ export class OpencodeAdapter implements RuntimeAdapter {
         const evt = event as { type: string; properties?: Record<string, unknown> };
 
         switch (evt.type) {
+          case 'message.updated': {
+            const props = evt.properties as { info: { id: string; sessionID: string; role: 'user' | 'assistant' } };
+            const info = props.info;
+            if (info.sessionID !== sessionId) break;
+            messageRoleById.set(info.id, info.role);
+            break;
+          }
           case 'message.part.updated': {
             const props = evt.properties as { part: Record<string, unknown>; delta?: string };
             const part = props.part;
@@ -422,6 +430,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
             if (partSessionId !== sessionId) break;
 
             const messageId = part.messageID as string;
+            if (messageRoleById.get(messageId) === 'user') break;
             if (messageId !== lastMessageId) {
               if (lastMessageId && currentBlocks.length > 0) {
                 const msg: NormalizedMessage = {

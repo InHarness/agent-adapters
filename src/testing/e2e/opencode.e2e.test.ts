@@ -71,6 +71,12 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
 
     assertSimpleTextStream(events);
 
+    const result = events.find(
+      (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
+    );
+    expect(result?.output).not.toContain(SIMPLE_PROMPT);
+    expect(result?.rawMessages.every((m) => m.role === 'assistant')).toBe(true);
+
     // OpenCode bundles all blocks (text, thinking, toolUse, toolResult) into
     // a single accumulating NormalizedMessage that flushes on message-id change.
     assertNormalization(events, {
