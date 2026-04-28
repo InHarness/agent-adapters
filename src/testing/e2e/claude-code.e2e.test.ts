@@ -3,12 +3,12 @@
 // Run: npm run test:e2e:claude
 // Run specific model: E2E_CLAUDE_MODEL=opus-4.7 npm run test:e2e:claude
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createAdapter } from '../../factory.js';
 import { collectEvents } from '../../utils.js';
 import { resolveModel } from '../../models.js';
 import { assertSimpleText, assertToolUse, assertThinking, assertAdapterReady } from '../contract.js';
-import { AdapterError, AdapterAbortError } from '../../types.js';
+import { AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
 import { assertNormalization } from '../normalization.js';
 import {
@@ -288,29 +288,39 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     expect(errorEvents[0].error).toBeInstanceOf(AdapterAbortError);
   });
 
-  it('unknown model alias throws', async () => {
-    const adapter = createAdapter('claude-code');
-
-    const events: UnifiedEvent[] = [];
-    let threwError = false;
-
+  it('unknown model alias warns and passes through (SDK rejects)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      for await (const event of adapter.execute({
-        prompt: SIMPLE_PROMPT,
-        systemPrompt: SIMPLE_SYSTEM_PROMPT,
-        model: 'glm-5.1',
-        maxTurns: 1,
-      })) {
-        events.push(event);
-      }
-    } catch (err) {
-      threwError = true;
-      expect(err).toBeInstanceOf(AdapterError);
-      expect((err as Error).message).toContain('Unknown model');
-      expect((err as Error).message).toContain('glm-5.1');
-    }
+      const adapter = createAdapter('claude-code');
+      const events: UnifiedEvent[] = [];
+      let threwError = false;
 
-    expect(threwError, 'Expected AdapterError to be thrown for unknown model alias').toBe(true);
+      try {
+        for await (const event of adapter.execute({
+          prompt: SIMPLE_PROMPT,
+          systemPrompt: SIMPLE_SYSTEM_PROMPT,
+          model: 'glm-5.1',
+          maxTurns: 1,
+        })) {
+          events.push(event);
+        }
+      } catch {
+        threwError = true;
+      }
+
+      expect(threwError).toBe(false);
+      const passthroughWarns = warnSpy.mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          c[0].includes('Unknown model "glm-5.1"') &&
+          c[0].includes('passing through'),
+      );
+      expect(passthroughWarns.length).toBeGreaterThanOrEqual(1);
+      const errorEvents = events.filter((e) => e.type === 'error');
+      expect(errorEvents.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   describe('plan mode', () => {

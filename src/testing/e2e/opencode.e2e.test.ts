@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createAdapter } from '../../factory.js';
 import { collectEvents } from '../../utils.js';
 import { isOpencodeAvailable } from '../../adapters/opencode.js';
-import { AdapterError, AdapterAbortError } from '../../types.js';
+import { AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
 import {
   requireEnv,
@@ -119,26 +119,39 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
     expect(errorEvents[0].error).toBeInstanceOf(AdapterAbortError);
   });
 
-  it('unknown model alias throws', async () => {
-    const adapter = createAdapter('opencode-openrouter');
-    let threwError = false;
-
+  it('unknown model alias warns and passes through (SDK rejects)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      for await (const _event of adapter.execute({
-        prompt: SIMPLE_PROMPT,
-        systemPrompt: SIMPLE_SYSTEM_PROMPT,
-        model: 'glm-5.1',
-        maxTurns: 1,
-      })) {
-        // consume
-      }
-    } catch (err) {
-      threwError = true;
-      expect(err).toBeInstanceOf(AdapterError);
-      expect((err as Error).message).toContain('Unknown model');
-    }
+      const adapter = createAdapter('opencode-openrouter');
+      const events: UnifiedEvent[] = [];
+      let threwError = false;
 
-    expect(threwError).toBe(true);
+      try {
+        for await (const event of adapter.execute({
+          prompt: SIMPLE_PROMPT,
+          systemPrompt: SIMPLE_SYSTEM_PROMPT,
+          model: 'glm-5.1',
+          maxTurns: 1,
+        })) {
+          events.push(event);
+        }
+      } catch {
+        threwError = true;
+      }
+
+      expect(threwError).toBe(false);
+      const passthroughWarns = warnSpy.mock.calls.filter(
+        (c) =>
+          typeof c[0] === 'string' &&
+          c[0].includes('Unknown model "glm-5.1"') &&
+          c[0].includes('passing through'),
+      );
+      expect(passthroughWarns.length).toBeGreaterThanOrEqual(1);
+      const errorEvents = events.filter((e) => e.type === 'error');
+      expect(errorEvents.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   describe('plan mode', () => {

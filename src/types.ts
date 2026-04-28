@@ -462,8 +462,23 @@ export class AdapterError extends Error {
 
 export class AdapterInitError extends AdapterError {
   constructor(adapter: string, cause?: unknown) {
-    super(`Failed to initialize ${adapter} adapter`, adapter, cause);
+    const reason = causeToReason(cause);
+    const message = reason
+      ? `Failed to initialize ${adapter} adapter: ${reason}`
+      : `Failed to initialize ${adapter} adapter`;
+    super(message, adapter, cause);
     this.name = 'AdapterInitError';
+  }
+}
+
+function causeToReason(cause: unknown): string | undefined {
+  if (cause === undefined || cause === null) return undefined;
+  if (cause instanceof Error) return cause.message || undefined;
+  if (typeof cause === 'string') return cause || undefined;
+  try {
+    return JSON.stringify(cause);
+  } catch {
+    return String(cause);
   }
 }
 

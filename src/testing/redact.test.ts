@@ -88,6 +88,48 @@ describe('redactSecrets', () => {
     expect(redactSecrets(input)).toEqual({ apiKey: '' });
   });
 
+  it('redacts secrets stashed under non-conventional field names by value prefix', () => {
+    // OpenCode uses `api` (not `apiKey`); without value-side detection
+    // the OpenRouter key would leak into adapter_ready.sdkConfig.
+    const input = {
+      port: 8080,
+      config: {
+        provider: { openrouter: { api: 'sk-or-v1-abcdef0123' } },
+        model: 'anthropic/claude-sonnet-4',
+      },
+    };
+    const out = redactSecrets(input) as {
+      port: number;
+      config: { provider: { openrouter: { api: string } }; model: string };
+    };
+    expect(out.config.provider.openrouter.api).toBe('[REDACTED]');
+    expect(out.port).toBe(8080);
+    expect(out.config.model).toBe('anthropic/claude-sonnet-4');
+  });
+
+  it('value-prefix detection covers common credential families', () => {
+    const input = {
+      openai: 'sk-abcdef0123',
+      slack_bot: 'xoxb-12345-abcdef',
+      gh_pat: 'ghp_abcdef0123',
+      aws_key: 'AKIAIOSFODNN7EXAMPLE',
+      google: 'AIzaSyDOCAbC123dEf456GhIJKL789MnoPQRsTUV',
+    };
+    const out = redactSecrets(input) as Record<string, string>;
+    for (const v of Object.values(out)) expect(v).toBe('[REDACTED]');
+  });
+
+  it('does not false-positive on innocuous urls or substrings containing sk-', () => {
+    // Anchored regex: `^sk-` only matches at string start, so URLs/text
+    // that mention `sk-` mid-string pass through.
+    const input = {
+      docsUrl: 'https://platform.openai.com/docs/api-keys',
+      note: 'use sk-... format for OpenAI keys',
+      model: 'gpt-5',
+    };
+    expect(redactSecrets(input)).toEqual(input);
+  });
+
   it('handles circular references without stack overflow', () => {
     const input: Record<string, unknown> = { name: 'server', apiKey: 'sk-xxx' };
     input.self = input;

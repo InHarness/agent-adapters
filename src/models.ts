@@ -2,7 +2,6 @@
 // Provides compile-time autocomplete and runtime resolution/validation
 
 import type { Architecture } from './types.js';
-import { AdapterError } from './types.js';
 
 // --- Alias catalog ---
 
@@ -31,6 +30,18 @@ export const MODEL_ALIASES = {
     'codex-mini': 'codex-mini-latest',
   },
   'opencode-openrouter': {
+    // Sorted by popularity (most-used first). Top entries match the
+    // OpenRouter "Popular models" leaderboard at the time of writing.
+    'kimi-k2.6': 'moonshotai/kimi-k2.6',
+    'step-3.5-flash': 'stepfun/step-3.5-flash',
+    'ling-2.6-1t-free': 'inclusionai/ling-2.6-1t:free',
+    'minimax-m2.7': 'minimax/minimax-m2.7',
+    'claude-sonnet-4.6': 'anthropic/claude-sonnet-4.6',
+    'hy3-preview-free': 'tencent/hy3-preview:free',
+    'gemini-2.5-flash': 'google/gemini-2.5-flash',
+    'nemotron-3-super-free': 'nvidia/nemotron-3-super:free',
+    'claude-opus-4.7': 'anthropic/claude-opus-4.7',
+    // Existing aliases retained for backwards compatibility.
     'claude-sonnet-4': 'anthropic/claude-sonnet-4',
     'claude-opus-4': 'anthropic/claude-opus-4',
     'gemini-2.5-pro': 'google/gemini-2.5-pro',
@@ -114,10 +125,16 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, Record<string, number>> = {
     'gemini-2.0-flash': 1_048_576,
   },
   'opencode-openrouter': {
+    'kimi-k2.6': 200_000,
+    'claude-sonnet-4.6': 200_000,
+    'gemini-2.5-flash': 1_048_576,
+    'claude-opus-4.7': 200_000,
     'claude-sonnet-4': 200_000,
     'claude-opus-4': 200_000,
     'gemini-2.5-pro': 2_097_152,
     'deepseek-r1': 64_000,
+    // step-3.5-flash, ling-2.6-1t-free, minimax-m2.7, hy3-preview-free,
+    // nemotron-3-super-free: context windows unknown, intentionally omitted.
   },
   // claude-code-ollama, claude-code-minimax: intentionally empty
   // (depends on local/provider configuration, not on model name alone)
@@ -148,7 +165,7 @@ export function getModelContextWindow(architecture: Architecture, model: string)
  *
  * - Known alias → resolved to full ID
  * - Known full ID → pass-through
- * - Unknown string → throws AdapterError with available aliases
+ * - Unknown string → pass-through with a console.warn (the SDK validates)
  * - Architecture without aliases (custom) → pass-through
  *
  * @example
@@ -160,8 +177,12 @@ export function getModelContextWindow(architecture: Architecture, model: string)
  * // → 'claude-sonnet-4-7-20250219' (pass-through)
  *
  * resolveModel('claude-code', 'glm-5.1')
- * // → throws AdapterError
+ * // → 'glm-5.1' (pass-through; warns)
  * ```
+ *
+ * Pass-through enables UIs to send a custom model ID (e.g. an OpenRouter
+ * `provider/name` not yet listed in MODEL_ALIASES). The underlying SDK is
+ * the source of truth for what's actually accepted.
  */
 export function resolveModel(architecture: Architecture, model: string): string {
   const aliases = (MODEL_ALIASES as Record<string, Record<string, string>>)[architecture];
@@ -176,12 +197,14 @@ export function resolveModel(architecture: Architecture, model: string): string 
     return model;
   }
 
-  const available = Object.keys(aliases).join(', ');
-  throw new AdapterError(
-    `Unknown model "${model}" for architecture "${architecture}". ` +
-      `Available aliases: ${available}. You can also pass a full model ID directly.`,
-    architecture,
-  );
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    const available = Object.keys(aliases).join(', ');
+    console.warn(
+      `[agent-adapters] Unknown model "${model}" for architecture "${architecture}" — ` +
+        `passing through to the SDK. Known aliases: ${available}.`,
+    );
+  }
+  return model;
 }
 
 /**

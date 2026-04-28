@@ -75,11 +75,27 @@ export class OpencodeAdapter implements RuntimeAdapter {
     // Resolve model alias to full ID before splitting into provider/model
     const resolvedModel = resolveModel(this.architecture, params.model);
 
-    // Provider ID and model can be overridden by provider config (e.g. MiniMax uses 'anthropic' provider)
+    // Provider ID and model can be overridden by provider config (e.g. MiniMax uses 'anthropic' provider).
+    // When an override is set, the full resolved model is the modelID — the provider config key is
+    // independent of the model namespace. OpenRouter is the canonical example: providerID='openrouter'
+    // routes to the openrouter `provider:` config, while the API model is the full slug like
+    // 'anthropic/claude-sonnet-4'. Stripping the prefix would mangle OpenRouter slugs.
     const overrideProviderID = config.opencode_providerID as string | undefined;
-    const modelParts = resolvedModel.split('/');
-    const providerID = overrideProviderID ?? (modelParts.length > 1 ? modelParts[0] : 'openrouter');
-    const modelID = modelParts.length > 1 ? modelParts.slice(1).join('/') : resolvedModel;
+    let providerID: string;
+    let modelID: string;
+    if (overrideProviderID) {
+      providerID = overrideProviderID;
+      modelID = resolvedModel;
+    } else {
+      const modelParts = resolvedModel.split('/');
+      if (modelParts.length > 1) {
+        providerID = modelParts[0];
+        modelID = modelParts.slice(1).join('/');
+      } else {
+        providerID = 'openrouter';
+        modelID = resolvedModel;
+      }
+    }
 
     const port = getAvailablePort();
 
@@ -593,7 +609,14 @@ export class OpencodeAdapter implements RuntimeAdapter {
           case 'session.error': {
             const props = evt.properties as { sessionID?: string; error?: Record<string, unknown> };
             if (props.sessionID && props.sessionID !== sessionId) break;
-            const errMsg = (props.error as Record<string, unknown>)?.message as string ?? 'Session error';
+            // OpenCode wraps upstream errors as { name, data: { message } }; fall back to a
+            // top-level message for older shapes, then to a generic label.
+            const errObj = props.error as Record<string, unknown> | undefined;
+            const errData = errObj?.data as Record<string, unknown> | undefined;
+            const errMsg =
+              (errData?.message as string | undefined) ??
+              (errObj?.message as string | undefined) ??
+              'Session error';
             yield { type: 'error', error: new Error(errMsg), phase: 'runtime' };
             return;
           }
