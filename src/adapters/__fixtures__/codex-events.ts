@@ -78,6 +78,15 @@ export const SCENARIO_REASONING = [
   },
 ] as const;
 
+export const SCENARIO_THREAD_RESUMPTION = [
+  { type: 'thread.started', thread_id: 'T-test-123' },
+  {
+    type: 'item.completed',
+    item: { type: 'agent_message', id: 'msg_1', text: 'OK' },
+  },
+  { type: 'turn.completed', usage: { input_tokens: 3, output_tokens: 1 } },
+] as const;
+
 export const SCENARIO_FAILED_COMMAND = [
   {
     type: 'item.completed',

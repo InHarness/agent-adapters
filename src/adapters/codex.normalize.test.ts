@@ -18,6 +18,7 @@ import {
   SCENARIO_MCP_TOOL,
   SCENARIO_REASONING,
   SCENARIO_FAILED_COMMAND,
+  SCENARIO_THREAD_RESUMPTION,
 } from './__fixtures__/codex-events.js';
 
 // Per-test container so `vi.mock` factory can read the active fixture.
@@ -252,6 +253,14 @@ describe('codex normalization (fixture replay)', () => {
       | Extract<UnifiedEvent, { type: 'tool_result' }>
       | undefined;
     expect(toolResult?.isError).toBe(true);
+  });
+
+  it('captures thread_id from thread.started and propagates it as result.sessionId', async () => {
+    const events = await runCodex(SCENARIO_THREAD_RESUMPTION);
+    const result = events.find((e) => e.type === 'result') as
+      | Extract<UnifiedEvent, { type: 'result' }>
+      | undefined;
+    expect(result?.sessionId).toBe('T-test-123');
   });
 
   it('result event aggregates usage from turn.completed', async () => {

@@ -275,8 +275,8 @@ export class CodexAdapter implements RuntimeAdapter {
             break;
           }
 
-          case 'turn.started': {
-            threadId = (event as Record<string, unknown>).threadId as string | undefined ?? threadId;
+          case 'thread.started': {
+            threadId = (event as { thread_id?: string }).thread_id ?? threadId;
             break;
           }
 
@@ -295,6 +295,8 @@ export class CodexAdapter implements RuntimeAdapter {
                   .join(''),
               )
               .join('\n');
+
+            threadId = threadId ?? thread.id ?? undefined;
 
             yield {
               type: 'result',
