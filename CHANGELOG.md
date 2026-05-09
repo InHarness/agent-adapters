@@ -2,6 +2,18 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.3.1] — 2026-05-09
+
+### Added
+- **Cumulative-usage helpers** (`addUsage`, `sumUsage`, `sumUsageFromEvents`) exported from the public API, so consumers can aggregate `UsageStats` across multiple `execute()` calls. Documented that `result.usage` is the per-call delta on every adapter; an `assertResumeUsageIndependence` e2e helper verifies this on all four adapters.
+- **Codex local ChatGPT OAuth** — adapter now falls back to `~/.codex/auth.json` (after `codex login`) when `OPENAI_API_KEY` is not set, mirroring the claude-code subscription pattern.
+- **Codex thread resumption** — adapter captures `thread_id` from `thread.started` events and propagates it as `sessionId` so resumed sessions reattach to the same thread.
+- **New Codex model aliases** — `gpt-5.4`, `gpt-5.4-codex`, `gpt-5.4-mini`, and `gpt-5.5` variants.
+
+### Changed
+- **Codex error handling** — extracts and de-duplicates human-readable messages from JSON-stringified API responses; suppresses duplicates when a turn-failure event is also emitted.
+- **Codex e2e gating** — suite no longer skips on missing `OPENAI_API_KEY` (skips only on explicit `SKIP_CODEX_E2E`), so OAuth-only setups run the full test matrix.
+
 ## [0.3.0] — 2026-04-28
 
 ### Added
@@ -44,6 +56,7 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 
 Initial public release on npm under the `@inharness-ai` scope. Baseline feature set: Claude Code, Codex, OpenCode, and Gemini adapters; MCP server integration; E2E testing framework.
 
+[0.3.1]: https://github.com/InHarness/agent-adapters/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/InHarness/agent-adapters/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/InHarness/agent-adapters/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/InHarness/agent-adapters/compare/v0.2.0...v0.2.1
