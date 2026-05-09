@@ -73,6 +73,24 @@ function rememberCodexCumulative(threadId: string, cumulative: UsageStats): void
   codexSessionLastUsage.set(threadId, cumulative);
 }
 
+/** Test-only: clear the module-scoped usage LRU to simulate a process restart. */
+export function _clearCodexUsageLruForTest(): void {
+  codexSessionLastUsage.clear();
+}
+
+// Debug logging for cumulative-as-delta usage flow (issue #17539, quirk #9 in
+// .claude/skills/codex-sdk/SKILL.md). Enable by setting any non-empty value:
+//   AGENT_ADAPTERS_DEBUG_USAGE=1   ← any architecture
+//   DEBUG=agent-adapters:codex     ← debug-style namespace
+// Logs go to stderr so they don't pollute stdout streams.
+function debugUsage(): boolean {
+  const flag = process.env.AGENT_ADAPTERS_DEBUG_USAGE;
+  if (flag && flag !== '0' && flag.toLowerCase() !== 'false') return true;
+  const debug = process.env.DEBUG;
+  if (debug && /(^|,)agent-adapters(:|,|$)|agent-adapters:codex/.test(debug)) return true;
+  return false;
+}
+
 // --- Adapter ---
 
 export class CodexAdapter implements RuntimeAdapter {
@@ -197,13 +215,33 @@ export class CodexAdapter implements RuntimeAdapter {
 
     const rawMessages: NormalizedMessage[] = [];
     // Per-execute() delta = current cumulative (from turn.completed.usage) - prior
-    // cumulative tracked in codexSessionLastUsage. On a fresh thread (no
-    // resumeSessionId), priorUsage is zero, so delta == current cumulative.
-    // On adapter restart, the Map is empty → first resume turn after restart
-    // returns full cumulative as "delta" (one-shot artifact; subsequent turns OK).
-    const priorUsage: UsageStats = params.resumeSessionId
-      ? codexSessionLastUsage.get(params.resumeSessionId) ?? { inputTokens: 0, outputTokens: 0 }
-      : { inputTokens: 0, outputTokens: 0 };
+    // cumulative. Lookup priority:
+    //   1. params.priorUsage  — caller-supplied (cross-process: LRU starts empty
+    //      every turn, so the caller persists the prior cumulative themselves
+    //      and passes it back; see RuntimeExecuteParams.priorUsage JSDoc)
+    //   2. codexSessionLastUsage  — module-scoped LRU (single-process resume)
+    //   3. {0,0}  — fresh thread, or first resume after process restart with
+    //      no priorUsage supplied (yields cumulative-as-delta one-shot artifact)
+    const lruPrior = params.resumeSessionId
+      ? codexSessionLastUsage.get(params.resumeSessionId)
+      : undefined;
+    const priorSource: 'params' | 'lru' | 'zero-fallback' = params.priorUsage
+      ? 'params'
+      : lruPrior
+        ? 'lru'
+        : 'zero-fallback';
+    const priorUsage: UsageStats =
+      params.priorUsage ?? lruPrior ?? { inputTokens: 0, outputTokens: 0 };
+
+    if (debugUsage()) {
+      console.error('[agent-adapters codex] execute() priorUsage', {
+        resumeSessionId: params.resumeSessionId,
+        priorSource,
+        priorUsage,
+        paramsPriorUsageProvided: params.priorUsage !== undefined,
+        lruSize: codexSessionLastUsage.size,
+      });
+    }
     let threadId: string | undefined;
 
     // Timeout handling
@@ -313,11 +351,28 @@ export class CodexAdapter implements RuntimeAdapter {
           case 'turn.completed': {
             // event.usage is cumulative session usage from `codex exec` JSONL — compute
             // per-execute() delta against last-seen cumulative for this thread.
+            // OpenAI convention: `cached_input_tokens` is a sub-field of
+            // `input_tokens` (cache reads count toward `input_tokens`, just at a
+            // discounted rate). Forward it as `cacheReadInputTokens` so callers
+            // can compute "fresh" input as `inputTokens - (cacheReadInputTokens ?? 0)`.
             const currentCumulative: UsageStats = {
               inputTokens: event.usage?.input_tokens ?? 0,
               outputTokens: event.usage?.output_tokens ?? 0,
+              ...(event.usage?.cached_input_tokens != null
+                ? { cacheReadInputTokens: event.usage.cached_input_tokens }
+                : {}),
             };
             const deltaUsage = subtractUsage(currentCumulative, priorUsage);
+
+            if (debugUsage()) {
+              console.error('[agent-adapters codex] turn.completed', {
+                rawSdkUsage: event.usage,
+                currentCumulative,
+                priorUsage,
+                emittedDelta: deltaUsage,
+                threadId: threadId ?? thread.id ?? null,
+              });
+            }
 
             const lastText = rawMessages
               .filter((m) => m.role === 'assistant')
@@ -339,6 +394,7 @@ export class CodexAdapter implements RuntimeAdapter {
               output: lastText,
               rawMessages,
               usage: deltaUsage,
+              contextSize: deltaUsage.inputTokens + deltaUsage.outputTokens,
               sessionId: threadId,
             };
             break;

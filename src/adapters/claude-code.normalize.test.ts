@@ -134,7 +134,13 @@ describe('normalizeAssistantMessage', () => {
     expect(out.content).toEqual([]);
   });
 
-  it('extracts per-message usage (cache_read_input_tokens → cacheReadInputTokens)', () => {
+  it('extracts per-message usage (Anthropic 3-bucket → unified subset shape)', () => {
+    // Anthropic API exposes input_tokens (fresh), cache_read_input_tokens,
+    // and cache_creation_input_tokens as three ADDITIVE buckets. The unified
+    // UsageStats contract follows OpenAI convention: inputTokens = total
+    // posted to LLM, with cache fields as SUBSETS (see UsageStats JSDoc in
+    // src/types.ts). The adapter rolls all three into inputTokens so the
+    // library-wide contextSize / fresh formulas work uniformly.
     const out = normalizeAssistantMessage(
       buildSdkAssistant({
         usage: {
@@ -146,11 +152,18 @@ describe('normalizeAssistantMessage', () => {
       }),
     );
     expect(out.usage).toEqual({
-      inputTokens: 10,
+      inputTokens: 4431, // 10 + 4321 + 100
       outputTokens: 20,
       cacheReadInputTokens: 4321,
       cacheCreationInputTokens: 100,
     });
+    // Sanity: fresh = inputTokens − cacheRead − cacheWrite recovers the
+    // raw Anthropic input_tokens.
+    expect(
+      out.usage!.inputTokens -
+        (out.usage!.cacheReadInputTokens ?? 0) -
+        (out.usage!.cacheCreationInputTokens ?? 0),
+    ).toBe(10);
   });
 
   it('omits usage when SDK message has no usage field', () => {

@@ -13,7 +13,11 @@ for await (const event of adapter.execute({
   model: 'sonnet-4.6', // alias → 'claude-sonnet-4-6'
 })) {
   if (event.type === 'text_delta') process.stdout.write(event.text);
-  if (event.type === 'result') console.log('\n\nDone. Tokens:', event.usage);
+  if (event.type === 'result') {
+    // Two distinct metrics — see "Token usage" section below.
+    console.log(`\n\nBilling: ${event.usage.inputTokens}in / ${event.usage.outputTokens}out`);
+    console.log(`Context window used: ${event.contextSize} tokens`);
+  }
 }
 ```
 
@@ -204,7 +208,7 @@ All adapters produce the same event types:
 | `subagent_started` | Subagent task began |
 | `subagent_progress` | Subagent progress update |
 | `subagent_completed` | Subagent task finished |
-| `result` | Terminal event — output, rawMessages, usage |
+| `result` | Terminal event — output, rawMessages, usage (BILLING tokens), contextSize (CONTEXT WINDOW utilization) |
 | `error` | Error event |
 | `warning` | Non-fatal notice (e.g. an option was dropped by this adapter) |
 | `flush` | Context compaction boundary |
@@ -538,14 +542,52 @@ const { main, subagent } = await splitBySubagent(stream);
 const text = await extractText(stream);
 ```
 
-## Usage aggregation
+## Token usage
 
-`result.usage` reports tokens for **a single `execute()` call only** — every adapter (claude-code, codex, gemini, opencode) follows this contract. On a resumed session (`resumeSessionId`), the new turn's `usage` does **not** include prior turns. To show a running cumulative for a logical session that spans multiple `execute()` calls, sum across calls yourself:
+Every `result` event carries **two distinct metrics** — pick the right one for your UI:
+
+| Metric                 | Field on `result`                       | Bounded by              | Use for                                          |
+|------------------------|-----------------------------------------|-------------------------|--------------------------------------------------|
+| **USAGE BILLING TOKENS**  | `result.usage` (per-`execute()` call) | unbounded across turns  | cost, billing alarms, USD estimation             |
+| **USAGE CONTEXT WINDOW**  | `result.contextSize`                  | model's context window  | "tokens left", IDE-style `12.6k / 200k` bars     |
+
+Both are emitted by every adapter (claude-code, codex, gemini, opencode) on every `result`. They mean different things: billing totals can grow without bound across resumed turns (replayed history is re-billed, often at a cache-discounted rate), while context-window utilization is capped by the model and can never exceed it.
+
+### USAGE CONTEXT WINDOW — show "X / 200k" utilization
+
+Take the LAST turn's `contextSize` and divide by the model's window. `getModelContextWindow(architecture, model)` returns the cap.
+
+```ts
+import { createAdapter, getModelContextWindow } from '@inharness-ai/agent-adapters';
+
+const architecture = 'claude-code';
+const model = 'sonnet-4.6';
+const adapter = createAdapter(architecture);
+
+let lastContextSize = 0;
+for await (const event of adapter.execute({
+  prompt: 'Summarize today\'s standup.',
+  systemPrompt: 'Be concise.',
+  model,
+})) {
+  if (event.type === 'result') lastContextSize = event.contextSize;
+}
+
+const cap = getModelContextWindow(architecture, model) ?? 200_000;
+const pct = ((lastContextSize / cap) * 100).toFixed(1);
+console.log(`Context: ${lastContextSize.toLocaleString()} / ${cap.toLocaleString()} (${pct}%)`);
+// → Context: 12,624 / 200,000 (6.3%)
+```
+
+`contextSize = usage.inputTokens + usage.outputTokens` after THIS turn — do NOT sum it across turns. Each turn's `inputTokens` already includes the full conversation up to that point (the model is re-fed the history every turn); adding `outputTokens` gives the post-turn conversation size. The `contextSize()` helper from `@inharness-ai/agent-adapters` exposes the same calculation if you only have a `UsageStats` in hand.
+
+### USAGE BILLING TOKENS — sum across turns for session totals
+
+`result.usage` is the cost of THIS `execute()` call only. On a resumed session (`resumeSessionId`), the new turn's `usage` does NOT include prior turns. To show a running session-level total, sum across calls:
 
 ```ts
 import { addUsage, sumUsage, sumUsageFromEvents } from '@inharness-ai/agent-adapters';
 
-// Two-turn resumed session — show grand total tokens to the user
 const turn1 = await collectEvents(adapter.execute({ prompt: '...' }));
 const r1 = turn1.find((e) => e.type === 'result')!;
 
@@ -556,13 +598,50 @@ const turn2 = await collectEvents(adapter.execute({
 const r2 = turn2.find((e) => e.type === 'result')!;
 
 const total = sumUsage(r1.usage, r2.usage);
-console.log(`session total: ${total.inputTokens} in / ${total.outputTokens} out`);
+console.log(`session billing: ${total.inputTokens} in / ${total.outputTokens} out`);
 
 // Equivalent if you keep the raw event lists:
 const total2 = addUsage(sumUsageFromEvents(turn1), sumUsageFromEvents(turn2));
 ```
 
-Cache fields (`cacheReadInputTokens`, `cacheCreationInputTokens` — Anthropic-only) are preserved when present in any operand and summed when present in both. The helpers are pure, stateless, and don't mutate inputs.
+This pattern matches the [Anthropic Agent SDK cost-tracking docs](https://code.claude.com/docs/en/agent-sdk/cost-tracking): *"each result only reflects the cost of that individual call… accumulate the totals yourself."*
+
+### Cache fields
+
+`cacheReadInputTokens` and `cacheCreationInputTokens` are **subsets** of `inputTokens`, not separate buckets (OpenAI convention; the claude-code adapter normalizes Anthropic's three additive fields to match). To compute "fresh" input billed at the full rate:
+
+```ts
+const fresh = usage.inputTokens - (usage.cacheReadInputTokens ?? 0) - (usage.cacheCreationInputTokens ?? 0);
+```
+
+Per-adapter coverage: codex surfaces `cacheReadInputTokens`; claude-code surfaces both; gemini and opencode currently surface neither.
+
+### Helpers
+
+All exported from `@inharness-ai/agent-adapters`:
+
+| Helper                                             | Purpose                                                                  |
+|----------------------------------------------------|--------------------------------------------------------------------------|
+| `addUsage(a, b)` / `sumUsage(...)` / `sumUsageFromEvents(events)` | Aggregate per-call usage across turns (BILLING totals)         |
+| `subtractUsage(a, b)`                              | Field-wise floored subtraction (used internally by codex; exposed for symmetry) |
+| `contextSize(usage)`                               | `usage.inputTokens + usage.outputTokens` — same as `result.contextSize`  |
+| `getModelContextWindow(architecture, model)` / `MODEL_CONTEXT_WINDOWS` | Per-model context-window caps (returns `undefined` for unknown models)  |
+
+All are pure, stateless, and never mutate their inputs.
+
+### Cross-process resume (codex only)
+
+Codex's underlying SDK reports session-level cumulative usage (issue [openai/codex#17539](https://github.com/openai/codex/issues/17539)); the adapter converts it to per-`execute()` delta via a module-scoped LRU. In a single long-running process this is transparent. If your runtime spawns a new Node process per `execute()` call (per-request workers, serverless, CLI invoked per turn), pass the prior turn's raw cumulative as `priorUsage` so the per-call delta stays accurate:
+
+```ts
+const r2 = await adapter.execute({
+  prompt: '...',
+  resumeSessionId,
+  priorUsage: priorTurnRawCumulative, // your own bookkeeping
+});
+```
+
+Without `priorUsage` in a cross-process setup, the first resumed turn after each restart returns the full session cumulative as `result.usage` — a known artifact, documented in `.claude/skills/codex-sdk/SKILL.md` quirk #9. Other adapters ignore `priorUsage` (their SDKs already report per-call).
 
 ## Factory API
 
@@ -636,7 +715,8 @@ interface RuntimeExecuteParams {
   skills?: InlineSkill[];                      // inline skills materialized to a tmpdir for this call
   cwd?: string;                                // working directory
   resumeSessionId?: string;                    // session resumption
-  maxTurns?: number;                           // max conversation turns
+  priorUsage?: UsageStats;                     // codex cross-process resume only — see "Token usage"
+  maxTurns?: number;                           // max conversation turns (claude-code: cumulative across resume)
   timeoutMs?: number;                          // execution timeout
   architectureConfig?: Record<string, unknown>; // architecture-specific config
 }

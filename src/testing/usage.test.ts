@@ -33,7 +33,13 @@ const dummyMessages: NormalizedMessage[] = [
 ];
 
 function resultEvent(usage: UsageStats): UnifiedEvent {
-  return { type: 'result', output: 'ok', rawMessages: dummyMessages, usage };
+  return {
+    type: 'result',
+    output: 'ok',
+    rawMessages: dummyMessages,
+    usage,
+    contextSize: usage.inputTokens + usage.outputTokens,
+  };
 }
 
 describe('addUsage', () => {

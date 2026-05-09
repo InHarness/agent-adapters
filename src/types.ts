@@ -62,12 +62,44 @@ export interface NormalizedMessage {
   native?: unknown;
 }
 
+/**
+ * Token counts for a single LLM turn / `execute()` call.
+ *
+ * Library-wide convention (OpenAI shape — applied uniformly across all
+ * adapters by their normalization helpers):
+ *   - `inputTokens` is the TOTAL input posted to the LLM on this turn,
+ *     INCLUDING any tokens served from prompt cache and any tokens that
+ *     wrote new cache entries.
+ *   - `cacheReadInputTokens` is a SUBSET of `inputTokens` (overlap, not
+ *     additive): tokens served from prompt cache, typically billed at a
+ *     fraction of the full input rate.
+ *   - `cacheCreationInputTokens` is a SUBSET of `inputTokens` (overlap, not
+ *     additive): tokens that wrote new prompt-cache entries on this turn.
+ *     Anthropic surfaces these; OpenAI does not.
+ *   - "Fresh" input billed at the full rate:
+ *       `inputTokens − (cacheReadInputTokens ?? 0) − (cacheCreationInputTokens ?? 0)`
+ *
+ * Per-adapter source of truth:
+ *   - codex (OpenAI Responses API): `input_tokens` is already total; the
+ *     `cached_input_tokens` sub-field maps to `cacheReadInputTokens`. The
+ *     adapter additionally subtracts the prior cumulative on resumed turns
+ *     (codex SDK reports session-cumulative usage; see `priorUsage` and the
+ *     codex-sdk skill quirk #9).
+ *   - claude-code (Anthropic): Anthropic's API exposes `input_tokens`,
+ *     `cache_read_input_tokens`, and `cache_creation_input_tokens` as three
+ *     additive buckets. The adapter rolls all three into a single
+ *     `inputTokens` (and preserves the cache fields as subsets) so this
+ *     contract holds.
+ *   - gemini, opencode: SDKs do not currently surface a cache split; the
+ *     reported `inputTokens` is whatever the underlying provider returns,
+ *     and cache fields are absent.
+ */
 export interface UsageStats {
   inputTokens: number;
   outputTokens: number;
-  /** Input tokens read from prompt cache (Anthropic). */
+  /** Subset of `inputTokens` served from prompt cache. */
   cacheReadInputTokens?: number;
-  /** Input tokens that created cache entries (Anthropic). */
+  /** Subset of `inputTokens` that wrote new prompt-cache entries (Anthropic). */
   cacheCreationInputTokens?: number;
 }
 
@@ -119,17 +151,57 @@ export type UnifiedEvent =
       output: string;
       rawMessages: NormalizedMessage[];
       /**
-       * Token usage for THIS `execute()` call only (per-call delta). On a
-       * resumed session (`resumeSessionId`), this does NOT include prior
-       * turns' usage — every wrapped SDK reports per-call cost only.
-       * Verified per @anthropic-ai/claude-agent-sdk cost-tracking docs
-       * (https://code.claude.com/docs/en/agent-sdk/cost-tracking) and
-       * per-adapter empirical resume tests.
+       * USAGE BILLING TOKENS — token cost of THIS `execute()` call only
+       * (per-call delta). On a resumed session (`resumeSessionId`), this
+       * does NOT include prior turns' usage — every wrapped SDK reports
+       * per-call cost only. For Codex, where the underlying SDK reports
+       * cumulative session usage in `turn.completed.usage`, the adapter
+       * subtracts the prior cumulative to recover per-call delta (see
+       * `RuntimeExecuteParams.priorUsage` and the codex-sdk skill quirk #9).
        *
-       * To get cumulative usage across multiple `execute()` calls, sum
-       * `result.usage` via `sumUsage()` / `addUsage()` from the public API.
+       * Verified per @anthropic-ai/claude-agent-sdk cost-tracking docs
+       * (https://code.claude.com/docs/en/agent-sdk/cost-tracking — "each
+       * result only reflects the cost of that individual call… accumulate
+       * the totals yourself") and per-adapter empirical resume tests.
+       *
+       * For session-level billing, sum `result.usage` across calls via
+       * `sumUsage()` / `addUsage()` from the public API.
+       *
+       * NOT to be confused with USAGE CONTEXT WINDOW (`result.contextSize`):
+       *   - billing (this field): how much you paid for THIS turn. Sum-of-
+       *     billing across resumed turns can exceed the model's context
+       *     window because replayed history is re-billed (at a cache-
+       *     discounted rate where supported).
+       *   - context window (`contextSize`): how full the model's context
+       *     window is now. Bounded by the window — when full, the
+       *     conversation must be compacted.
+       *
+       * For USD cost: claude-code's underlying SDK exposes `total_cost_usd`
+       * natively (Anthropic price table); this library does not surface a
+       * USD field — compute from token counts × the model's pricing if
+       * needed.
        */
       usage: UsageStats;
+      /**
+       * USAGE CONTEXT WINDOW — total tokens occupying the model's context
+       * window after this turn. Equals `usage.inputTokens + usage.outputTokens`
+       * (also computable via `contextSize()` from the public API). Bounded by
+       * the model's window size (e.g. 400k for `gpt-5-codex`, 200k for
+       * `claude-sonnet-4.5`); see `MODEL_CONTEXT_WINDOWS` / `getModelContextWindow()`
+       * for the per-model limit. Use this to render an IDE-style "X / 400k"
+       * utilization bar.
+       *
+       * Do NOT sum across turns — take the LAST turn's value. Each turn's
+       * `inputTokens` already includes the full conversation up to that
+       * turn (replayed system + history posted to the LLM); adding
+       * `outputTokens` (the assistant response just appended) gives the
+       * post-turn conversation size.
+       *
+       * Distinct from `usage` (USAGE BILLING TOKENS) which is the per-call
+       * cost of THIS turn — see the `usage` JSDoc above for the full
+       * distinction.
+       */
+      contextSize: number;
       sessionId?: string;
       /**
        * Last known snapshot of the todo list at run end. `undefined` means the
@@ -404,9 +476,46 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
 
   cwd?: string;
   resumeSessionId?: string;
+  /**
+   * Upper bound on internal LLM turns the adapter will let the SDK take
+   * before terminating. Per-adapter semantics differ — read carefully:
+   *
+   * - **claude-code**: maps to SDK `Options.maxTurns`, which counts
+   *   CUMULATIVELY across the resumed session — prior turns loaded from
+   *   `resumeSessionId` are included in the counter. Passing a low value
+   *   (e.g. `maxTurns: 1`) on a resumed call will typically error with
+   *   "Reached maximum number of turns (N)" before the model can respond.
+   *   For resumed calls either omit `maxTurns` or set it generously above
+   *   the prior turn count. See claude-code-sdk SKILL.md.
+   * - **gemini**: maps to `Config.maxSessionTurns`. `undefined` resolves to
+   *   `-1` (no limit). Per-session semantics; same caveat may apply on
+   *   resumed sessions.
+   * - **codex**: ignored. Codex's `runStreamed` is naturally one
+   *   `execute()` = one turn; the SDK has no equivalent option.
+   * - **opencode**: ignored. The OpenCode SDK does not expose a turn cap.
+   */
   maxTurns?: number;
   timeoutMs?: number;
   architectureConfig?: Record<string, unknown>;
+
+  /**
+   * Prior cumulative usage for this resumed thread, for cross-process scenarios.
+   *
+   * Codex SDK is the only wrapped SDK that reports session-level cumulative
+   * usage in `turn.completed.usage` (openai/codex#17539); the codex adapter
+   * converts it to per-`execute()` delta by subtracting the prior cumulative
+   * tracked in a module-scoped LRU. In a single long-running process the LRU
+   * works transparently. If your runtime spawns a new process per `execute()`
+   * call (the LRU starts empty every turn), persist the previous turn's raw
+   * cumulative on your side and pass it here so the per-call delta stays
+   * accurate. Without `priorUsage` in a cross-process setup, the first
+   * resumed-turn `result.usage` after each restart is the full session
+   * cumulative — a known artifact of the LRU being in-memory only.
+   *
+   * Ignored by claude-code, gemini, opencode — those SDKs already report
+   * per-`execute()` usage natively.
+   */
+  priorUsage?: UsageStats;
 
   /**
    * When true, adapter runs in plan-only mode: read-only tools allowed,

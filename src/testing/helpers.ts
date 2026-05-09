@@ -10,7 +10,7 @@ import type { RuntimeAdapter, RuntimeExecuteParams, UnifiedEvent } from '../type
  * ```ts
  * const mock = new MockAdapter('test', [
  *   { type: 'text_delta', text: 'Hello', isSubagent: false },
- *   { type: 'result', output: 'Hello', rawMessages: [], usage: { inputTokens: 10, outputTokens: 5 } },
+ *   { type: 'result', output: 'Hello', rawMessages: [], usage: { inputTokens: 10, outputTokens: 5 }, contextSize: 15 },
  * ]);
  * const result = await assertSimpleText(mock.execute(params));
  * ```

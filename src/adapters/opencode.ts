@@ -629,6 +629,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
               output,
               rawMessages,
               usage: totalUsage,
+              contextSize: totalUsage.inputTokens + totalUsage.outputTokens,
               sessionId,
               ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),
             };

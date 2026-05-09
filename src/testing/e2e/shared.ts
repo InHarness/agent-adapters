@@ -77,11 +77,11 @@ export function assertUsageStats(usage: UsageStats): void {
  * leaks cumulative-as-delta (the codex bug fixed alongside this helper —
  * see openai/codex#17539) makes turn 2 report `t1_cumulative + t2_true_delta`,
  * which is ≥ 2× turn 1 in any non-trivial conversation. We bound turn 2 at
- * `2 × turn1 + 100` (absolute floor handles tiny-prompt cases like
- * claude-code/opencode where most input lives in cache fields and
- * `inputTokens` is single-digit). Real-call ratios observed across all four
- * adapters on the standard resume scenario sit at 1.0–1.01, so the bound has
- * ~50–100% headroom while still catching the 2× cumulative regression.
+ * `max(1.3 × turn1, turn1 + 5000)`: the multiplicative term catches
+ * non-trivial conversations (real-call ratios across all four adapters sit at
+ * 1.0–1.01, so 1.3× has ~30% headroom for natural variance / replay growth);
+ * the additive floor handles cache-heavy adapters (claude-code/opencode)
+ * where `inputTokens` is single-digit and a 30% bound would be flaky.
  */
 export function assertResumeUsageIndependence(
   result1: Extract<UnifiedEvent, { type: 'result' }>,
@@ -91,9 +91,10 @@ export function assertResumeUsageIndependence(
   assertUsageStats(result2.usage);
   const total = sumUsage(result1.usage, result2.usage);
   // Bug catcher: cumulative-as-delta would push t2.inputTokens to ≈ t1 + t2_true.
-  // Bound t2 at max(2× t1, t1 + 100) so adapters with single-digit inputTokens
-  // (cache-heavy SDKs) aren't flaky from natural ±few-token variance.
-  const inputBound = Math.max(result1.usage.inputTokens * 2, result1.usage.inputTokens + 100);
+  // Bound t2 at max(1.3× t1, t1 + 5000): tight enough to catch a linear leak
+  // (12k→25k→38k…), loose enough to absorb the additive floor that protects
+  // cache-heavy adapters with tiny inputTokens.
+  const inputBound = Math.max(result1.usage.inputTokens * 1.3, result1.usage.inputTokens + 5000);
   expect(
     result2.usage.inputTokens,
     `turn 2 inputTokens=${result2.usage.inputTokens} exceeds cumulative-leak bound ${inputBound} (turn 1 inputTokens=${result1.usage.inputTokens}); per-execute() usage must be delta, not cumulative`,

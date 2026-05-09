@@ -16,7 +16,7 @@ describe('collectEvents', () => {
   it('collects all events', async () => {
     const events: UnifiedEvent[] = [
       { type: 'text_delta', text: 'Hi', isSubagent: false },
-      { type: 'result', output: 'Hi', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 } },
+      { type: 'result', output: 'Hi', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 }, contextSize: 2 },
     ];
     const collected = await collectEvents(fromArray(events));
     expect(collected).toHaveLength(2);
@@ -29,7 +29,7 @@ describe('filterByType', () => {
       { type: 'text_delta', text: 'a', isSubagent: false },
       { type: 'thinking', text: 'b', isSubagent: false },
       { type: 'text_delta', text: 'c', isSubagent: false },
-      { type: 'result', output: 'ac', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 } },
+      { type: 'result', output: 'ac', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 }, contextSize: 2 },
     ];
     const deltas: UnifiedEvent[] = [];
     for await (const e of filterByType(fromArray(events), 'text_delta')) {
@@ -43,7 +43,7 @@ describe('takeUntilResult', () => {
   it('stops after result event', async () => {
     const events: UnifiedEvent[] = [
       { type: 'text_delta', text: 'a', isSubagent: false },
-      { type: 'result', output: 'a', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 } },
+      { type: 'result', output: 'a', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 }, contextSize: 2 },
       { type: 'text_delta', text: 'should not appear', isSubagent: false },
     ];
     const collected: UnifiedEvent[] = [];
@@ -61,7 +61,7 @@ describe('splitBySubagent', () => {
       { type: 'text_delta', text: 'main', isSubagent: false },
       { type: 'text_delta', text: 'sub', isSubagent: true },
       { type: 'subagent_started', taskId: 't1', description: 'test', toolUseId: 'tu1' },
-      { type: 'result', output: 'main', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 } },
+      { type: 'result', output: 'main', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 }, contextSize: 2 },
     ];
     const { main, subagent } = await splitBySubagent(fromArray(events));
     expect(main).toHaveLength(2); // text_delta(main) + result
@@ -73,7 +73,7 @@ describe('extractText', () => {
   it('returns result output when available', async () => {
     const events: UnifiedEvent[] = [
       { type: 'text_delta', text: 'partial', isSubagent: false },
-      { type: 'result', output: 'final output', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 } },
+      { type: 'result', output: 'final output', rawMessages: [], usage: { inputTokens: 1, outputTokens: 1 }, contextSize: 2 },
     ];
     const text = await extractText(fromArray(events));
     expect(text).toBe('final output');

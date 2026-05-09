@@ -15,7 +15,7 @@ describe('contract assertions with MockAdapter', () => {
       { type: 'text_delta', text: 'Hello', isSubagent: false },
       { type: 'text_delta', text: ' world', isSubagent: false },
       { type: 'assistant_message', message: assistantMsg },
-      { type: 'result', output: 'Hello world', rawMessages: [assistantMsg], usage: { inputTokens: 10, outputTokens: 5 } },
+      { type: 'result', output: 'Hello world', rawMessages: [assistantMsg], usage: { inputTokens: 10, outputTokens: 5 }, contextSize: 15 },
     ];
 
     const mock = new MockAdapter('test', events);
@@ -27,7 +27,7 @@ describe('contract assertions with MockAdapter', () => {
   it('assertSimpleText fails without text_delta', async () => {
     const events: UnifiedEvent[] = [
       { type: 'assistant_message', message: assistantMsg },
-      { type: 'result', output: 'Hello', rawMessages: [assistantMsg], usage: { inputTokens: 10, outputTokens: 5 } },
+      { type: 'result', output: 'Hello', rawMessages: [assistantMsg], usage: { inputTokens: 10, outputTokens: 5 }, contextSize: 15 },
     ];
 
     const mock = new MockAdapter('test', events);
@@ -40,7 +40,7 @@ describe('contract assertions with MockAdapter', () => {
       { type: 'tool_use', toolName: 'Read', toolUseId: 'tu_1', input: { path: '/tmp' }, isSubagent: false },
       { type: 'tool_result', toolUseId: 'tu_1', summary: 'file contents' },
       { type: 'assistant_message', message: assistantMsg },
-      { type: 'result', output: 'Done', rawMessages: [assistantMsg], usage: { inputTokens: 20, outputTokens: 10 } },
+      { type: 'result', output: 'Done', rawMessages: [assistantMsg], usage: { inputTokens: 20, outputTokens: 10 }, contextSize: 30 },
     ];
 
     const mock = new MockAdapter('test', events);
@@ -53,7 +53,7 @@ describe('contract assertions with MockAdapter', () => {
       { type: 'thinking', text: 'Let me think...', isSubagent: false },
       { type: 'text_delta', text: 'Answer', isSubagent: false },
       { type: 'assistant_message', message: assistantMsg },
-      { type: 'result', output: 'Answer', rawMessages: [assistantMsg], usage: { inputTokens: 15, outputTokens: 8 } },
+      { type: 'result', output: 'Answer', rawMessages: [assistantMsg], usage: { inputTokens: 15, outputTokens: 8 }, contextSize: 23 },
     ];
 
     const mock = new MockAdapter('test', events);
@@ -70,7 +70,7 @@ describe('contract assertions with MockAdapter', () => {
       { type: 'tool_use', toolName: 'Read', toolUseId: 'tu_2', input: {}, isSubagent: false },
       { type: 'tool_result', toolUseId: 'tu_2', summary: 'file2' },
       { type: 'assistant_message', message: msg2 },
-      { type: 'result', output: 'Summary', rawMessages: [assistantMsg, msg2], usage: { inputTokens: 30, outputTokens: 15 } },
+      { type: 'result', output: 'Summary', rawMessages: [assistantMsg, msg2], usage: { inputTokens: 30, outputTokens: 15 }, contextSize: 45 },
     ];
 
     const mock = new MockAdapter('test', events);

@@ -701,6 +701,7 @@ export class GeminiAdapter implements RuntimeAdapter {
               output,
               rawMessages,
               usage: totalUsage,
+              contextSize: totalUsage.inputTokens + totalUsage.outputTokens,
               sessionId: effectiveSessionId,
             };
             break;

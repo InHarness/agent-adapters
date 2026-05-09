@@ -47,7 +47,7 @@ Codex is the most constrained of the four adapters: thread-based API, no native 
   - `approvalPolicy: 'never' | ...` — **hardcoded `'never'`** by adapter
   - `modelReasoningEffort: 'minimal' | 'low' | 'medium' | 'high'`
 - **Streamed event shapes** (from `runStreamed`):
-  - `turn.started`, `turn.completed` (with usage), `turn.failed`
+  - `turn.started`, `turn.completed` (with **session-level cumulative** usage; see quirk #9), `turn.failed`
   - `item.completed` — envelope for inner items:
     - `agent_message { text }`
     - `command_execution { command, args, output, exitCode }`
@@ -67,7 +67,7 @@ Codex is the most constrained of the four adapters: thread-based API, no native 
 | `item.completed` → `mcp_tool_call` | `tool_use` + `tool_result` | `toolName` formatted as `mcp__${server}__${tool}`; `isError = status === 'failed' \|\| error != null` |
 | `item.completed` → `reasoning` | `thinking` | incremental-style; not `replace: true` |
 | `item.completed` → `error` | `error` | |
-| `turn.completed` | `result` | aggregates usage; `sessionId` not tracked here |
+| `turn.completed` | `result` | adapter converts cumulative session usage → per-`execute()` delta (see quirk #9); `sessionId` carried via `thread.started` |
 | `turn.failed` | `error` | |
 
 No native subagent events → `subagent_*` events are **not emitted**. Consequently `subagentTaskId` on `text_delta` / `thinking` / `tool_use` / `tool_result` is **always `undefined`** and `isSubagent` is always `false`. See `unified-architecture` skill's capability matrix.
@@ -87,6 +87,30 @@ No native subagent events → `subagent_*` events are **not emitted**. Consequen
 6. **Session resumption is partial.** `codex.resumeThread(threadId)` exists but the adapter doesn't currently persist/expose `threadId` in `result.sessionId`. Resumption from outside is unreliable; prefer keeping the `Codex` + `Thread` instance alive in-process.
 7. **`codex-mini` alias** → `codex-mini-latest` (a rolling tag). Pin to a full ID (e.g. via `resolveModel` pass-through) if you need reproducibility.
 8. **Auth: API key OR local ChatGPT OAuth.** The SDK is a thin wrapper over the `codex` CLI binary — when neither `codex_apiKey` nor `OPENAI_API_KEY` is set, the adapter omits the `apiKey` field from `CodexOptions` entirely and the CLI resolves auth from `~/.codex/auth.json` (written by `codex login`, ChatGPT subscription). The adapter does **not** read or parse `auth.json` itself; if the CLI can't find any credential, it surfaces an auth error through the runtime catch path. Analogous to claude-code, where `ANTHROPIC_API_KEY` is also optional.
+
+9. **Two distinct usage metrics: BILLING vs CONTEXT WINDOW.** Token consumption has two orthogonal meanings, and conflating them is the most common Codex usage bug:
+
+   | Metric | Field on `result` | Bounded by | Use for |
+   |---|---|---|---|
+   | **USAGE BILLING TOKENS** | `result.usage` (per-call) | unbounded across resumed turns (replay re-billed at cache rate) | cost, billing alarms, USD estimation |
+   | **USAGE CONTEXT WINDOW** | `result.contextSize` | model's window (e.g. 400k for `gpt-5-codex`) | "tokens left", IDE-style `X / 400k` utilization bar |
+
+   `contextSize = usage.inputTokens + usage.outputTokens` for the LAST turn (NOT a sum across turns). It tells you how full the model's window is now. `usage` summed across turns tells you how many tokens you paid for total — that sum can far exceed the window, because every resumed turn re-bills the replayed history (mostly as cheap cache reads).
+
+   **BILLING — cumulative-as-delta conversion.** Codex is the only wrapped SDK that reports session-level cumulative usage in `turn.completed.usage` — see [openai/codex#17539](https://github.com/openai/codex/issues/17539) (`event_processor_with_jsonl_output.rs::usage_from_last_total` drops the rust core's per-request `ThreadTokenUsage.last` and only emits `.total`). The unified contract in `src/types.ts` requires per-`execute()` delta in `result.usage` (consistent with claude-code/gemini/opencode), so the adapter subtracts the prior cumulative per `threadId` via a module-scoped LRU (`codexSessionLastUsage`, cap 256). Lookup priority for the prior:
+   1. `params.priorUsage` — caller-supplied (cross-process scenarios, see below)
+   2. module LRU — populated by previous `execute()` calls in this process
+   3. `{0,0}` — fresh thread, OR first resume after process restart with no `priorUsage`
+
+   **Cross-process caveat**: the LRU is in-memory only — no disk persistence (the library does not write to `~/`). If your runtime spawns a new Node process per `execute()` call (per-request workers, serverless, CLI invoked per turn), the LRU starts empty every turn. Without `params.priorUsage`, the first resumed turn after each restart returns the full session cumulative as `result.usage.inputTokens` (typical symptom: `In:` grows linearly across turns: 12k → 25k → 38k → 51k…). Fix: persist the previous turn's raw cumulative on your side (read it from `turn.completed.usage` if you proxy SDK events, or track `result.usage` summed since session start) and pass it as `priorUsage` on the next call. Note: Codex CLI replays full thread history server-side on each `runStreamed`, so per-turn LLM input legitimately grows with conversation length even when the per-turn delta is correct.
+
+   For session-level billing totals: the unified contract says `result.usage` is per-call. Sum across calls on your side via `sumUsage()` from the public API, exactly as the [Anthropic Agent SDK cost-tracking docs](https://code.claude.com/docs/en/agent-sdk/cost-tracking) recommend ("The SDK does not provide a session-level total… accumulate the totals yourself.").
+
+   **CONTEXT WINDOW — derived, never cumulative.** `result.contextSize` is computed as `usage.inputTokens + usage.outputTokens` after the cumulative-to-delta subtraction. Because the post-subtract `inputTokens` represents "context posted to the LLM on this turn" (system + full history up to this turn), adding `outputTokens` (the assistant response just appended) yields the post-turn conversation size. Use the LAST turn's `contextSize` only — summing it across turns is meaningless. Compare against `getModelContextWindow('codex', model)` from the public API for the per-model cap.
+
+   **Cache reads are part of `inputTokens`, not separate.** Codex SDK reports `cached_input_tokens` alongside `input_tokens` in `turn.completed.usage`. The OpenAI convention is that `cached_input_tokens` is a **subset** of `input_tokens` — cache reads count toward `input_tokens` (just billed at a discounted rate), they aren't a separate bucket. The adapter forwards this as `cacheReadInputTokens` on `result.usage` (same field name as claude-code, where Anthropic's `cache_read_input_tokens` is normalized identically). To compute "fresh" input that was actually sent to the LLM at full price: `inputTokens - (cacheReadInputTokens ?? 0)`. On long replayed Codex threads, cache hit rates of 80–90% are typical — so a 25k cumulative `inputTokens` over a few resumed turns might mean only ~3k tokens billed at full rate, with the rest as cheap cache reads. If your UI reports raw `inputTokens` without showing the cached split, users will perceive the bill as much larger than it actually is. (Cache hit ratio does NOT affect `contextSize` — caching is a billing-side optimization only.)
+
+   **USD cost.** `@anthropic-ai/claude-agent-sdk` emits `total_cost_usd` natively on its `ResultMessage` (claude-code adapter does not currently surface it on UnifiedEvent — sum across `usage` × Anthropic pricing yourself). OpenAI / Codex SDK does not expose USD; estimate from `freshInputTokens × price_in + cacheReadInputTokens × price_cache + outputTokens × price_out` against the [OpenAI pricing page](https://openai.com/api/pricing/) for the model.
 
 <!-- anchor: jpscelad -->
 ## Skills support
@@ -159,6 +183,12 @@ TODO (add to version watch): track `@openai/codex-sdk` changelog for a `skills` 
 
 - **"No `OPENAI_API_KEY` set, but I ran `codex login` — does it work?"**
   → Yes. When neither `codex_apiKey` nor `OPENAI_API_KEY` is present, the adapter omits the `apiKey` field from `CodexOptions` and the underlying `codex` CLI reads the OAuth token from `~/.codex/auth.json`. If you still see an auth error, run `codex login status` (or re-run `codex login`) and verify the spawned CLI process can read `$HOME`. The adapter does not pre-validate the file — by design, auth resolution lives in the CLI.
+
+- **"`result.usage.inputTokens` grows linearly across resumed calls (12k → 25k → 38k → 51k…)"**
+  → Codex SDK reports session-level cumulative in `turn.completed.usage` (issue #17539); the adapter subtracts the prior cumulative from a module-LRU to emit per-`execute()` delta. If each turn runs in a new Node process, the LRU starts empty and the adapter falls back to `{0,0}` → emits cumulative as delta. Fix: persist the previous turn's raw cumulative client-side and pass it as `params.priorUsage` on the next call. See quirk #9 for full semantics. The growing `In:` you see in your UI is the SDK cumulative leaking through, not 12k tokens per paragraph; the true per-turn LLM input is the difference between consecutive cumulatives (~12.7k each) and reflects Codex's server-side replay of thread history + its built-in system prompt.
+
+- **"My UI shows `25k / 400k` after two short turns — the model can't be using 6% of the context window already"**
+  → You're summing `result.usage.inputTokens + outputTokens` across turns (BILLING) and labelling it as window utilization (CONTEXT WINDOW). Those are different metrics. Use `result.contextSize` from the LAST turn — it's already the post-turn window occupancy. BILLING totals can exceed the window because resumed turns re-bill the replayed history (mostly as cheap cache reads); CONTEXT WINDOW cannot. See quirk #9's "Two distinct usage metrics" table.
 
 <!-- anchor: ptwasc3h -->
 ## Key files

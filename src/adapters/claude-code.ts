@@ -68,15 +68,37 @@ const CLAUDE_CODE_MUTATING_BUILTINS: string[] = [
   'Task',
 ];
 
+// --- Debug logging ---
+
+// Mirrors the codex pattern (src/adapters/codex.ts:debugUsage). Enable with:
+//   AGENT_ADAPTERS_DEBUG_USAGE=1            ← any architecture
+//   DEBUG=agent-adapters:claude-code        ← debug-style namespace
+// Logs go to stderr so they don't pollute stdout streams.
+function debugUsage(): boolean {
+  const flag = process.env.AGENT_ADAPTERS_DEBUG_USAGE;
+  if (flag && flag !== '0' && flag.toLowerCase() !== 'false') return true;
+  const debug = process.env.DEBUG;
+  if (debug && /(^|,)agent-adapters(:|,|$)|agent-adapters:claude-code/.test(debug)) return true;
+  return false;
+}
+
 // --- Normalization helpers ---
 
 function normalizeClaudeUsage(raw: unknown): UsageStats | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const u = raw as Record<string, unknown>;
-  const inputTokens = typeof u.input_tokens === 'number' ? u.input_tokens : 0;
+  const apiInputTokens = typeof u.input_tokens === 'number' ? u.input_tokens : 0;
   const outputTokens = typeof u.output_tokens === 'number' ? u.output_tokens : 0;
   const cacheReadInputTokens = typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : undefined;
   const cacheCreationInputTokens = typeof u.cache_creation_input_tokens === 'number' ? u.cache_creation_input_tokens : undefined;
+  // Anthropic API exposes input_tokens, cache_read_input_tokens, and
+  // cache_creation_input_tokens as three additive buckets. The unified
+  // UsageStats follows OpenAI convention (see src/types.ts UsageStats JSDoc):
+  // inputTokens = total posted to LLM on this turn, with cache fields as
+  // SUBSETS (not separate). Roll the three buckets into a single inputTokens
+  // so contextSize, the documented fresh formula, and cross-adapter
+  // aggregation work uniformly. Cache fields are preserved for visibility.
+  const inputTokens = apiInputTokens + (cacheReadInputTokens ?? 0) + (cacheCreationInputTokens ?? 0);
   return {
     inputTokens,
     outputTokens,
@@ -749,6 +771,24 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           case 'result': {
             const resultEvent = event as Record<string, unknown>;
             if (resultEvent.subtype === 'success') {
+              const claudeUsage = normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 };
+              const contextSize = claudeUsage.inputTokens + claudeUsage.outputTokens;
+              if (debugUsage()) {
+                // Mirrors codex's `[agent-adapters codex] turn.completed` log.
+                // Anthropic exposes input_tokens (fresh), cache_read_input_tokens,
+                // and cache_creation_input_tokens as three additive buckets;
+                // normalizeClaudeUsage rolls them into a single inputTokens
+                // (OpenAI convention; see UsageStats JSDoc). This log shows
+                // both the raw SDK shape and the normalized emit so cache
+                // overlap / contextSize / fresh math can be verified.
+                console.error('[agent-adapters claude-code] result', {
+                  rawSdkUsage: resultEvent.usage,
+                  normalizedUsage: claudeUsage,
+                  contextSize,
+                  sessionId,
+                  resumed: params.resumeSessionId ?? null,
+                });
+              }
               yield {
                 type: 'result',
                 output: (resultEvent.result as string) ?? '',
@@ -758,7 +798,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 // tokens, not the original session combined. See:
                 // https://code.claude.com/docs/en/agent-sdk/cost-tracking
                 // Do not double-count with per-message usage on NormalizedMessage.
-                usage: normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 },
+                usage: claudeUsage,
+                contextSize,
                 sessionId,
                 ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),
               };

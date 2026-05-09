@@ -78,7 +78,7 @@ describe('dispatchEvent', () => {
       { type: 'subagent_progress', taskId: 't1', description: 'working' },
       { type: 'subagent_completed', taskId: 't1', status: 'completed' },
       { type: 'flush' },
-      { type: 'result', output: 'done', rawMessages: [msg], usage: { inputTokens: 1, outputTokens: 1 } },
+      { type: 'result', output: 'done', rawMessages: [msg], usage: { inputTokens: 1, outputTokens: 1 }, contextSize: 2 },
       { type: 'error', error: new Error('test') },
       { type: 'adapter_ready', adapter: 'claude-code', sdkConfig: { model: 'x' } },
     ];
@@ -191,12 +191,12 @@ describe('createConsoleObserver', () => {
     };
     const c1 = captureStream();
     const obsOn = createConsoleObserver({ stream: c1.stream, color: false });
-    dispatchEvent({ type: 'result', output: 'done', rawMessages: [msg], usage: { inputTokens: 10, outputTokens: 5 } }, [obsOn]);
+    dispatchEvent({ type: 'result', output: 'done', rawMessages: [msg], usage: { inputTokens: 10, outputTokens: 5 }, contextSize: 15 }, [obsOn]);
     expect(c1.output()).toContain('[done] 10in / 5out');
 
     const c2 = captureStream();
     const obsOff = createConsoleObserver({ stream: c2.stream, color: false, usage: false });
-    dispatchEvent({ type: 'result', output: 'done', rawMessages: [msg], usage: { inputTokens: 10, outputTokens: 5 } }, [obsOff]);
+    dispatchEvent({ type: 'result', output: 'done', rawMessages: [msg], usage: { inputTokens: 10, outputTokens: 5 }, contextSize: 15 }, [obsOff]);
     expect(c2.output()).toBe('');
   });
 

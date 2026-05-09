@@ -54,6 +54,38 @@ export function sumUsage(...stats: UsageStats[]): UsageStats {
 }
 
 /**
+ * USAGE CONTEXT WINDOW — number of tokens occupying the model's context
+ * window after THIS turn. Use the LAST turn's `result.usage`, NOT a sum
+ * across turns.
+ *
+ * Compare against the model's context window (e.g. 400_000 for `gpt-5-codex`,
+ * 200_000 for `claude-sonnet-4.5`) to get utilization percentage. The
+ * value is also exposed directly on the `result` event as `contextSize` —
+ * this helper exists for callers who only kept `UsageStats` from elsewhere.
+ *
+ * IMPORTANT — this is distinct from USAGE BILLING TOKENS (the per-call
+ * billing cost in `result.usage`):
+ *   - context window (this helper): grows by the size of each new exchange
+ *     (user prompt + assistant response — typically tens to hundreds of
+ *     tokens per turn). Bounded by the model's window — when full, the
+ *     conversation must be compacted.
+ *   - billing tokens (sum of per-turn `usage`): grows by the size of each
+ *     replayed turn (system prompt + full history + new prompt + response).
+ *     Unbounded — every resumed call re-bills the history (at a cache-
+ *     discounted rate for OpenAI/Anthropic prompt caches).
+ *
+ * Why `inputTokens + outputTokens` works across all four adapters: every
+ * wrapped SDK reports `inputTokens` as "context posted to LLM on this turn"
+ * (cache reads are a sub-field, not separate). For Codex, where the SDK
+ * reports session-cumulative and the adapter subtracts to per-call delta,
+ * the same identity holds after subtraction. Adding `outputTokens` (the
+ * assistant response just appended) yields the post-turn conversation size.
+ */
+export function contextSize(usage: UsageStats): number {
+  return usage.inputTokens + usage.outputTokens;
+}
+
+/**
  * Sum every `result` event's `.usage` in a collected event stream. Useful when
  * a consumer keeps the raw event list per execute() call and wants a single
  * total. A stream typically contains exactly one `result`, but multiple are
