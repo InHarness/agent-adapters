@@ -72,6 +72,16 @@ export function assertUsageStats(usage: UsageStats): void {
  * The library-wide contract is that `result.usage` carries per-`execute()`
  * delta only — see JSDoc on `UnifiedEvent`'s `result` variant in
  * `src/types.ts`.
+ *
+ * The tight assertion is on `result2.usage.inputTokens`: a regression that
+ * leaks cumulative-as-delta (the codex bug fixed alongside this helper —
+ * see openai/codex#17539) makes turn 2 report `t1_cumulative + t2_true_delta`,
+ * which is ≥ 2× turn 1 in any non-trivial conversation. We bound turn 2 at
+ * `2 × turn1 + 100` (absolute floor handles tiny-prompt cases like
+ * claude-code/opencode where most input lives in cache fields and
+ * `inputTokens` is single-digit). Real-call ratios observed across all four
+ * adapters on the standard resume scenario sit at 1.0–1.01, so the bound has
+ * ~50–100% headroom while still catching the 2× cumulative regression.
  */
 export function assertResumeUsageIndependence(
   result1: Extract<UnifiedEvent, { type: 'result' }>,
@@ -80,10 +90,14 @@ export function assertResumeUsageIndependence(
   assertUsageStats(result1.usage);
   assertUsageStats(result2.usage);
   const total = sumUsage(result1.usage, result2.usage);
-  expect(total.inputTokens).toBe(result1.usage.inputTokens + result2.usage.inputTokens);
-  expect(total.outputTokens).toBe(result1.usage.outputTokens + result2.usage.outputTokens);
-  expect(total.inputTokens).toBeGreaterThan(result1.usage.inputTokens);
-  expect(total.inputTokens).toBeGreaterThan(result2.usage.inputTokens);
+  // Bug catcher: cumulative-as-delta would push t2.inputTokens to ≈ t1 + t2_true.
+  // Bound t2 at max(2× t1, t1 + 100) so adapters with single-digit inputTokens
+  // (cache-heavy SDKs) aren't flaky from natural ±few-token variance.
+  const inputBound = Math.max(result1.usage.inputTokens * 2, result1.usage.inputTokens + 100);
+  expect(
+    result2.usage.inputTokens,
+    `turn 2 inputTokens=${result2.usage.inputTokens} exceeds cumulative-leak bound ${inputBound} (turn 1 inputTokens=${result1.usage.inputTokens}); per-execute() usage must be delta, not cumulative`,
+  ).toBeLessThan(inputBound);
   return total;
 }
 
