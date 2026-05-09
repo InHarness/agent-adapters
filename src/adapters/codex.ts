@@ -19,10 +19,12 @@ import type {
   UnifiedEvent,
   NormalizedMessage,
   ContentBlock,
+  UsageStats,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
+import { subtractUsage } from '../usage.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 
 // Codex CLI emits error events whose `message` is sometimes a JSON-stringified
@@ -48,6 +50,27 @@ function extractCodexErrorMessage(raw: unknown, fallback = 'Codex error'): strin
     }
   }
   return trimmed || fallback;
+}
+
+// `codex exec --experimental-json` (which @openai/codex-sdk wraps) emits
+// turn.completed.usage as CUMULATIVE session totals — `event_processor_with_
+// jsonl_output.rs::usage_from_last_total` drops the rust core's per-request
+// `ThreadTokenUsage.last` and only emits `.total`. See openai/codex#17539
+// (open as of 2026-04-12). The unified contract requires per-execute() delta
+// (see UnifiedEvent.result.usage in types.ts), so we track the last cumulative
+// we saw per threadId and yield current_cumulative − prior. LRU-capped to
+// bound long-running process growth.
+const CODEX_USAGE_LRU_CAP = 256;
+const codexSessionLastUsage = new Map<string, UsageStats>();
+
+function rememberCodexCumulative(threadId: string, cumulative: UsageStats): void {
+  if (codexSessionLastUsage.has(threadId)) {
+    codexSessionLastUsage.delete(threadId);
+  } else if (codexSessionLastUsage.size >= CODEX_USAGE_LRU_CAP) {
+    const oldest = codexSessionLastUsage.keys().next().value;
+    if (oldest !== undefined) codexSessionLastUsage.delete(oldest);
+  }
+  codexSessionLastUsage.set(threadId, cumulative);
 }
 
 // --- Adapter ---
@@ -173,7 +196,14 @@ export class CodexAdapter implements RuntimeAdapter {
       : params.prompt;
 
     const rawMessages: NormalizedMessage[] = [];
-    let totalUsage = { inputTokens: 0, outputTokens: 0 };
+    // Per-execute() delta = current cumulative (from turn.completed.usage) - prior
+    // cumulative tracked in codexSessionLastUsage. On a fresh thread (no
+    // resumeSessionId), priorUsage is zero, so delta == current cumulative.
+    // On adapter restart, the Map is empty → first resume turn after restart
+    // returns full cumulative as "delta" (one-shot artifact; subsequent turns OK).
+    const priorUsage: UsageStats = params.resumeSessionId
+      ? codexSessionLastUsage.get(params.resumeSessionId) ?? { inputTokens: 0, outputTokens: 0 }
+      : { inputTokens: 0, outputTokens: 0 };
     let threadId: string | undefined;
 
     // Timeout handling
@@ -281,10 +311,13 @@ export class CodexAdapter implements RuntimeAdapter {
           }
 
           case 'turn.completed': {
-            totalUsage = {
-              inputTokens: totalUsage.inputTokens + (event.usage?.input_tokens ?? 0),
-              outputTokens: totalUsage.outputTokens + (event.usage?.output_tokens ?? 0),
+            // event.usage is cumulative session usage from `codex exec` JSONL — compute
+            // per-execute() delta against last-seen cumulative for this thread.
+            const currentCumulative: UsageStats = {
+              inputTokens: event.usage?.input_tokens ?? 0,
+              outputTokens: event.usage?.output_tokens ?? 0,
             };
+            const deltaUsage = subtractUsage(currentCumulative, priorUsage);
 
             const lastText = rawMessages
               .filter((m) => m.role === 'assistant')
@@ -297,12 +330,15 @@ export class CodexAdapter implements RuntimeAdapter {
               .join('\n');
 
             threadId = threadId ?? thread.id ?? undefined;
+            if (threadId) {
+              rememberCodexCumulative(threadId, currentCumulative);
+            }
 
             yield {
               type: 'result',
               output: lastText,
               rawMessages,
-              usage: totalUsage,
+              usage: deltaUsage,
               sessionId: threadId,
             };
             break;

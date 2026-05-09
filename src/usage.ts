@@ -27,6 +27,27 @@ export function addUsage(a: UsageStats, b: UsageStats): UsageStats {
   return out;
 }
 
+/**
+ * Subtract `b` from `a`, flooring at zero per field. Used by adapters whose
+ * underlying SDK reports cumulative thread usage to derive per-execute() delta
+ * (`current_cumulative - prior_cumulative`). Cache fields preserved when
+ * present in either operand, symmetrically with `addUsage`. Returns a fresh
+ * object — operands are not mutated.
+ */
+export function subtractUsage(a: UsageStats, b: UsageStats): UsageStats {
+  const out: UsageStats = {
+    inputTokens: Math.max(0, a.inputTokens - b.inputTokens),
+    outputTokens: Math.max(0, a.outputTokens - b.outputTokens),
+  };
+  if (a.cacheReadInputTokens !== undefined || b.cacheReadInputTokens !== undefined) {
+    out.cacheReadInputTokens = Math.max(0, (a.cacheReadInputTokens ?? 0) - (b.cacheReadInputTokens ?? 0));
+  }
+  if (a.cacheCreationInputTokens !== undefined || b.cacheCreationInputTokens !== undefined) {
+    out.cacheCreationInputTokens = Math.max(0, (a.cacheCreationInputTokens ?? 0) - (b.cacheCreationInputTokens ?? 0));
+  }
+  return out;
+}
+
 /** Sum any number of UsageStats. Empty input returns `{ inputTokens: 0, outputTokens: 0 }`. */
 export function sumUsage(...stats: UsageStats[]): UsageStats {
   return stats.reduce<UsageStats>((acc, s) => addUsage(acc, s), { ...ZERO });
