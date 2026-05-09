@@ -99,6 +99,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 6. **Subagent events are first-class.** Unlike other adapters, we don't synthesize — we map. `task_started/progress/notification` carry `taskId` directly.
 7. **`compact_boundary`** fires before the SDK compresses history. Emit `flush` so downstream can checkpoint.
 8. **`subagentTaskId` on deltas requires a local lookup.** The SDK puts `parent_tool_use_id` on every `stream_event`, but the true subagent `taskId` only appears on the `task_started` system event. Adapter keeps a `Map<parent_tool_use_id, task_id>` per `execute()` call, populated on `task_started` and read on every delta / tool event. If a delta arrives before `task_started` (race), `isSubagent: true` is emitted with `subagentTaskId: undefined` — acceptable graceful degradation.
+9. **`result.usage` on resume is per-call, not session-wide.** When `options.resume` is set, the SDK's `result.usage` reports only the tokens consumed by the new `query()` call — not the original session + resumed call combined. Confirmed in [Anthropic cost-tracking docs](https://code.claude.com/docs/en/agent-sdk/cost-tracking): *"each result only reflects the cost of that individual call"*. Consumers that aggregate across multiple `execute()` calls (one logical resumed session) must sum externally — use `sumUsage` / `addUsage` from `src/usage.ts`. The library-wide unified `result.usage` semantic is per-call delta; documented on `UnifiedEvent` in `src/types.ts`.
 
 <!-- anchor: pm3x9k7q -->
 ## Permission model & read-only agents

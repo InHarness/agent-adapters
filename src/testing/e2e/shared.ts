@@ -14,6 +14,7 @@ import type {
   UserInputResponse,
 } from '../../types.js';
 import { createMcpServer, mcpTool } from '../../mcp.js';
+import { sumUsage } from '../../usage.js';
 
 // Re-exported so existing imports `from './shared.js'` keep working.
 import { assertNormalizedMessage, assertContentBlock } from '../normalization.js';
@@ -60,6 +61,30 @@ export function assertUsageStats(usage: UsageStats): void {
   expect(typeof usage.outputTokens).toBe('number');
   expect(usage.inputTokens).toBeGreaterThan(0);
   expect(usage.outputTokens).toBeGreaterThan(0);
+}
+
+/**
+ * Assert that usage on two consecutive resume turns is per-call delta (each
+ * turn has its own positive usage), and that summing them via the public
+ * `sumUsage` helper produces a sensible cumulative total. Returns the sum so
+ * callers can spot-check it.
+ *
+ * The library-wide contract is that `result.usage` carries per-`execute()`
+ * delta only — see JSDoc on `UnifiedEvent`'s `result` variant in
+ * `src/types.ts`.
+ */
+export function assertResumeUsageIndependence(
+  result1: Extract<UnifiedEvent, { type: 'result' }>,
+  result2: Extract<UnifiedEvent, { type: 'result' }>,
+): UsageStats {
+  assertUsageStats(result1.usage);
+  assertUsageStats(result2.usage);
+  const total = sumUsage(result1.usage, result2.usage);
+  expect(total.inputTokens).toBe(result1.usage.inputTokens + result2.usage.inputTokens);
+  expect(total.outputTokens).toBe(result1.usage.outputTokens + result2.usage.outputTokens);
+  expect(total.inputTokens).toBeGreaterThan(result1.usage.inputTokens);
+  expect(total.inputTokens).toBeGreaterThan(result2.usage.inputTokens);
+  return total;
 }
 
 // --- Result event assertions ---
@@ -225,6 +250,8 @@ export async function runResumeScenario(
   turn1Events: UnifiedEvent[];
   turn2Events: UnifiedEvent[];
   sessionId: string;
+  result1: Extract<UnifiedEvent, { type: 'result' }>;
+  result2: Extract<UnifiedEvent, { type: 'result' }>;
 }> {
   const turn1Events: UnifiedEvent[] = [];
   for await (const e of factory().execute({
@@ -250,8 +277,14 @@ export async function runResumeScenario(
   })) {
     turn2Events.push(e);
   }
+  const result2 = turn2Events.find(
+    (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
+  );
+  if (!result2) {
+    throw new Error('turn 2 did not yield a result event');
+  }
 
-  return { turn1Events, turn2Events, sessionId: result1.sessionId };
+  return { turn1Events, turn2Events, sessionId: result1.sessionId, result1, result2 };
 }
 
 // --- User-input (ask-user tool) scenario ---

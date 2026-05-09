@@ -118,6 +118,17 @@ export type UnifiedEvent =
       type: 'result';
       output: string;
       rawMessages: NormalizedMessage[];
+      /**
+       * Token usage for THIS `execute()` call only (per-call delta). On a
+       * resumed session (`resumeSessionId`), this does NOT include prior
+       * turns' usage — every wrapped SDK reports per-call cost only.
+       * Verified per @anthropic-ai/claude-agent-sdk cost-tracking docs
+       * (https://code.claude.com/docs/en/agent-sdk/cost-tracking) and
+       * per-adapter empirical resume tests.
+       *
+       * To get cumulative usage across multiple `execute()` calls, sum
+       * `result.usage` via `sumUsage()` / `addUsage()` from the public API.
+       */
       usage: UsageStats;
       sessionId?: string;
       /**

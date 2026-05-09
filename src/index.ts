@@ -93,6 +93,9 @@ export {
 // Utilities
 export { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from './utils.js';
 
+// Usage aggregation
+export { addUsage, sumUsage, sumUsageFromEvents } from './usage.js';
+
 // Architecture-specific option schemas
 export type { ArchOption, ArchOptionType } from './options.js';
 export {

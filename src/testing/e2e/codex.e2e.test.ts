@@ -1,5 +1,6 @@
-// E2E tests for codex adapter — real queries against OpenAI API
-// Requires: OPENAI_API_KEY env var
+// E2E tests for codex adapter — real queries against OpenAI / ChatGPT
+// Auth: OPENAI_API_KEY env var OR local ChatGPT OAuth via `codex login`
+// (the SDK resolves credentials internally — see codex-sdk SKILL.md quirk #8).
 // Run: npm run test:e2e:codex
 
 import { describe, it, expect, vi } from 'vitest';
@@ -8,7 +9,6 @@ import { collectEvents } from '../../utils.js';
 import { AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
 import {
-  requireEnv,
   assertSimpleTextStream,
   createPlanModeTmpDir,
   assertNoFileCreated,
@@ -18,14 +18,17 @@ import {
   PLAN_WRITE_SYSTEM_PROMPT,
   runResumeScenario,
   RESUME_EXPECTED_NUMBER,
+  assertResumeUsageIndependence,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady } from '../contract.js';
 import type { UserInputHandler } from '../../types.js';
 
-const HAS_API_KEY = requireEnv('OPENAI_API_KEY');
+// Codex SDK manages auth internally (OPENAI_API_KEY or ChatGPT OAuth via `codex login`).
+// We skip only if SKIP_CODEX_E2E is explicitly set — otherwise we let the SDK try its auth flow.
+const SKIP = !!process.env.SKIP_CODEX_E2E;
 
-describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
+describe.skipIf(SKIP)('codex e2e', () => {
   it('emits adapter_ready with codexOptions + threadOptions before first message', async () => {
     const adapter = createAdapter('codex');
     const events = await collectEvents(
@@ -42,11 +45,18 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
 
     const ready = events.find((e) => e.type === 'adapter_ready') as Extract<UnifiedEvent, { type: 'adapter_ready' }>;
     const sdk = ready.sdkConfig as {
-      codexOptions: { apiKey: string };
+      codexOptions: { apiKey?: string };
       threadOptions: { model: string; sandboxMode: string; approvalPolicy: string };
     };
     expect(sdk.codexOptions).toBeDefined();
-    expect(sdk.codexOptions.apiKey).toBe('[REDACTED]');
+    // apiKey is present-and-redacted only when OPENAI_API_KEY is set; under
+    // ChatGPT OAuth (`codex login` → `~/.codex/auth.json`) the adapter omits
+    // the field entirely. See codex-sdk SKILL.md quirk #8.
+    if (process.env.OPENAI_API_KEY) {
+      expect(sdk.codexOptions.apiKey).toBe('[REDACTED]');
+    } else {
+      expect(sdk.codexOptions.apiKey).toBeUndefined();
+    }
     expect(sdk.threadOptions).toBeDefined();
     expect(sdk.threadOptions.model).toBe('gpt-5.5');
     expect(sdk.threadOptions.approvalPolicy).toBe('never');
@@ -251,19 +261,17 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
   });
 
   describe('resume_session (resumeSessionId round-trip)', () => {
-    it('turn 2 recalls a number set in turn 1', async () => {
-      const { turn2Events, sessionId } = await runResumeScenario(
+    it('turn 2 recalls a number set in turn 1 and reports per-call usage', async () => {
+      const { sessionId, result1, result2 } = await runResumeScenario(
         () => createAdapter('codex'),
         { model: 'gpt-5.5', maxTurns: 1 },
       );
 
       expect(typeof sessionId).toBe('string');
       expect(sessionId.length).toBeGreaterThan(0);
-
-      const result2 = turn2Events.find(
-        (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
-      )!;
       expect(result2.output).toContain(RESUME_EXPECTED_NUMBER);
+
+      assertResumeUsageIndependence(result1, result2);
     });
   });
 });

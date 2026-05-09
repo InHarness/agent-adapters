@@ -43,6 +43,7 @@ import {
   assertTodoListUpdated,
   runResumeScenario,
   RESUME_EXPECTED_NUMBER,
+  assertResumeUsageIndependence,
 } from './shared.js';
 
 // Claude Code SDK manages auth internally (OAuth, cached credentials, or ANTHROPIC_API_KEY).
@@ -522,19 +523,17 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   });
 
   describe('resume_session (resumeSessionId round-trip)', () => {
-    it('turn 2 recalls a number set in turn 1', async () => {
-      const { turn2Events, sessionId } = await runResumeScenario(
+    it('turn 2 recalls a number set in turn 1 and reports per-call usage', async () => {
+      const { sessionId, result1, result2 } = await runResumeScenario(
         () => createAdapter('claude-code'),
         { model: MODEL, maxTurns: 1 },
       );
 
       expect(typeof sessionId).toBe('string');
       expect(sessionId.length).toBeGreaterThan(0);
-
-      const result2 = turn2Events.find(
-        (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
-      )!;
       expect(result2.output).toContain(RESUME_EXPECTED_NUMBER);
+
+      assertResumeUsageIndependence(result1, result2);
     });
   });
 });
