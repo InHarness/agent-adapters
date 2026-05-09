@@ -538,6 +538,32 @@ const { main, subagent } = await splitBySubagent(stream);
 const text = await extractText(stream);
 ```
 
+## Usage aggregation
+
+`result.usage` reports tokens for **a single `execute()` call only** — every adapter (claude-code, codex, gemini, opencode) follows this contract. On a resumed session (`resumeSessionId`), the new turn's `usage` does **not** include prior turns. To show a running cumulative for a logical session that spans multiple `execute()` calls, sum across calls yourself:
+
+```ts
+import { addUsage, sumUsage, sumUsageFromEvents } from '@inharness-ai/agent-adapters';
+
+// Two-turn resumed session — show grand total tokens to the user
+const turn1 = await collectEvents(adapter.execute({ prompt: '...' }));
+const r1 = turn1.find((e) => e.type === 'result')!;
+
+const turn2 = await collectEvents(adapter.execute({
+  prompt: '...',
+  resumeSessionId: r1.sessionId,
+}));
+const r2 = turn2.find((e) => e.type === 'result')!;
+
+const total = sumUsage(r1.usage, r2.usage);
+console.log(`session total: ${total.inputTokens} in / ${total.outputTokens} out`);
+
+// Equivalent if you keep the raw event lists:
+const total2 = addUsage(sumUsageFromEvents(turn1), sumUsageFromEvents(turn2));
+```
+
+Cache fields (`cacheReadInputTokens`, `cacheCreationInputTokens` — Anthropic-only) are preserved when present in any operand and summed when present in both. The helpers are pure, stateless, and don't mutate inputs.
+
 ## Factory API
 
 ```ts
