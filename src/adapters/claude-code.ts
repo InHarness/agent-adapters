@@ -753,7 +753,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 type: 'result',
                 output: (resultEvent.result as string) ?? '',
                 rawMessages,
-                // Session-cumulative total from the SDK — do not double-count with per-message usage on NormalizedMessage.
+                // Per-query() cumulative from the SDK (across turns/subagents within THIS query()
+                // call). NOT cross-session — on options.resume, the SDK reports only this query()'s
+                // tokens, not the original session combined. See:
+                // https://code.claude.com/docs/en/agent-sdk/cost-tracking
+                // Do not double-count with per-message usage on NormalizedMessage.
                 usage: normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 },
                 sessionId,
                 ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),

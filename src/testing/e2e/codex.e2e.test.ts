@@ -18,6 +18,7 @@ import {
   PLAN_WRITE_SYSTEM_PROMPT,
   runResumeScenario,
   RESUME_EXPECTED_NUMBER,
+  assertResumeUsageIndependence,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady } from '../contract.js';
@@ -251,19 +252,17 @@ describe.skipIf(!HAS_API_KEY)('codex e2e', () => {
   });
 
   describe('resume_session (resumeSessionId round-trip)', () => {
-    it('turn 2 recalls a number set in turn 1', async () => {
-      const { turn2Events, sessionId } = await runResumeScenario(
+    it('turn 2 recalls a number set in turn 1 and reports per-call usage', async () => {
+      const { sessionId, result1, result2 } = await runResumeScenario(
         () => createAdapter('codex'),
         { model: 'gpt-5.5', maxTurns: 1 },
       );
 
       expect(typeof sessionId).toBe('string');
       expect(sessionId.length).toBeGreaterThan(0);
-
-      const result2 = turn2Events.find(
-        (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',
-      )!;
       expect(result2.output).toContain(RESUME_EXPECTED_NUMBER);
+
+      assertResumeUsageIndependence(result1, result2);
     });
   });
 });
