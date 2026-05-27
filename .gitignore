@@ -5,3 +5,6 @@ dist/
 .claude4spec/
 .buddy/buddy.yml
 .claude/skills/release-process/
+
+# claude4spec (auto-added)
+*.deprecated

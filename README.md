@@ -433,6 +433,33 @@ Materialized layout:
 
 For codex/opencode the entire tree is mirrored under `<cwd>/<subdir>/agent-adapters-<uuid>-codereview/`. **Gemini exception:** its `SkillDefinition.body` API takes a single string, so extra `files` are written to disk for parity but the model only sees `content`. The gemini adapter emits a `console.warn` when `files` is non-empty.
 
+### Listing disk skills
+
+`InlineSkill` is the write side. For the read side — discovering the skills a runtime **already auto-loads from disk** (the directories it scans whether you want it to or not) — use `listDiskSkills(architecture)`. It scans the same project/global/system directories the runtime reads and returns one entry per `<name>/SKILL.md`, parsed for frontmatter `name`/`description` (block scalars folded) plus any extra flat metadata keys.
+
+```ts
+import { listDiskSkills, getSkillSearchDirs } from '@inharness-ai/agent-adapters';
+
+const skills = await listDiskSkills('claude-code', { cwd: process.cwd() });
+for (const s of skills) {
+  console.log(s.scope, s.source, s.name, '—', s.description);
+}
+
+// Inspect which directories would be scanned, without touching disk:
+getSkillSearchDirs('opencode'); // [{ dir, scope, source, layout }, ...]
+```
+
+Directories scanned per architecture:
+
+| Architecture | Project (relative to `cwd`) | Global (relative to `home`) | System |
+|---|---|---|---|
+| `claude-code` | `.claude/skills` | `~/.claude/skills` | — |
+| `codex` | `.agents/skills` | `~/.agents/skills` | `/etc/codex/skills` |
+| `opencode` | `.opencode/skills`, `.claude/skills`, `.agents/skills` | `~/.config/opencode/skills`, `~/.claude/skills`, `~/.agents/skills` | — |
+| `gemini` | `.gemini/extensions/<ext>/skills` | `~/.gemini/extensions/<ext>/skills` | — |
+
+Results are **not** deduplicated: the same skill name in both a project and a global directory yields two entries, each with its own `scope` (`project`/`global`/`system`) and `source` so you can see where each came from. `cwd` defaults to `process.cwd()` and `home` to `os.homedir()`. Gemini skills live only inside extensions, so a repo without extensions returns `[]`. Missing directories and unknown architectures return `[]`.
+
 ## Error handling
 
 All adapters emit typed errors via the `error` event. The error hierarchy lets you distinguish failure causes:

@@ -106,3 +106,13 @@ export {
   OPENCODE_OPTIONS,
   GEMINI_OPTIONS,
 } from './options.js';
+
+// Disk skill discovery
+export type {
+  DiskSkill,
+  ListDiskSkillsOptions,
+  SkillSearchLocation,
+  SkillScope,
+  SkillLayout,
+} from './skills-disk.js';
+export { listDiskSkills, getSkillSearchDirs } from './skills-disk.js';
