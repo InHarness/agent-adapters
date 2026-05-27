@@ -2,6 +2,11 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-05-27
+
+### Added
+- **Disk skill discovery** — new `listDiskSkills()` and `getSkillSearchDirs()` exported from the public API. They enumerate the SKILL.md skills each architecture auto-loads from disk (e.g. `~/.claude/skills`, project `.claude/skills`), parsing frontmatter metadata and reporting each skill's search location, scope, and on-disk layout. New `DiskSkill`, `ListDiskSkillsOptions`, `SkillSearchLocation`, `SkillScope`, and `SkillLayout` types accompany the helpers. README documents the feature with examples.
+
 ## [0.4.0] — 2026-05-13
 
 ### Added
@@ -71,6 +76,7 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 
 Initial public release on npm under the `@inharness-ai` scope. Baseline feature set: Claude Code, Codex, OpenCode, and Gemini adapters; MCP server integration; E2E testing framework.
 
+[0.5.0]: https://github.com/InHarness/agent-adapters/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/InHarness/agent-adapters/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/InHarness/agent-adapters/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/InHarness/agent-adapters/compare/v0.2.2...v0.3.0
