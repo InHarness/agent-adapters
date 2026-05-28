@@ -115,7 +115,7 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, Record<string, number>> = {
   'claude-code': {
     'sonnet-4.6': 200_000,
     'sonnet-4.5': 200_000,
-    'opus-4.8': 200_000,
+    'opus-4.8': 1_000_000,
     'opus-4.7': 200_000,
     'opus-4.6': 200_000,
     'opus-4.5': 200_000,
@@ -145,7 +145,7 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, Record<string, number>> = {
     'kimi-k2.6': 200_000,
     'claude-sonnet-4.6': 200_000,
     'gemini-2.5-flash': 1_048_576,
-    'claude-opus-4.8': 200_000,
+    'claude-opus-4.8': 1_000_000,
     'claude-opus-4.7': 200_000,
     'claude-sonnet-4': 200_000,
     'claude-opus-4': 200_000,
