@@ -83,13 +83,15 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 <!-- anchor: pqk13bxx -->
 ## Quirks & gotchas
 
-1. **Opus 4.7 requires adaptive thinking.** `src/models.ts:ADAPTIVE_THINKING_ONLY` lists model IDs that reject fixed-budget thinking. The adapter auto-converts `{ type: 'enabled', budget_tokens: N }` into `{ type: 'adaptive' }` for those models. When a new Opus ships, verify whether it also needs this.
+1. **Opus 4.6+ require adaptive thinking.** `src/models.ts:ADAPTIVE_THINKING_ONLY` lists model IDs that reject fixed-budget thinking. The adapter auto-converts `{ type: 'enabled', budget_tokens: N }` into `{ type: 'adaptive' }` for those models. The rule is documented in `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` (L1176-1177: `'adaptive'` is for "Opus 4.6+" and is the default for models that support it). When a new Opus ships, add it to the set.
 2. **Dual-channel user input**:
    - **Model-tool channel**: `canUseTool` with `toolName === 'AskUserQuestion'` — the model is asking the user directly. Adapter builds `UserInputRequest` from the tool input.
    - **MCP channel**: `options.onElicitation` — an MCP server sent `elicitation/request`. Adapter builds `UserInputRequest` with `source: 'mcp-elicitation'`.
    - Both converge on the single `onUserInput` handler from `RuntimeExecuteParams`.
 3. **`architectureConfig` keys** (`src/adapters/claude-code.ts:121+`):
-   - `claude_thinking: { type, budget_tokens }` — thinking config (auto-adapted for Opus 4.7)
+   - `claude_thinking: 'adaptive' | 'enabled'` — thinking mode (auto-converted to `'adaptive'` for Opus 4.6+)
+   - `claude_thinking_budget: number` — budget tokens for `'enabled'` mode; ignored for adaptive
+   - `claude_thinking_display: 'summarized' | 'omitted'` — controls whether thinking text is returned. Adapter defaults to `'summarized'` for models in `ADAPTIVE_THINKING_ONLY` to undo Opus 4.7's silent `'omitted'` default. (Currently a no-op on Opus 4.7 via SDK 0.2.109 — see troubleshooting recipe.)
    - `claude_effort: 'low' | 'medium' | 'high'`
    - `claude_usePreset: true | 'claude_code' | <string>` — use a system prompt preset; when truthy, replaces/prepends `systemPrompt`
    - `custom_env: Record<string, string>` — env passthrough
@@ -231,8 +233,10 @@ Constants (in `src/adapters/claude-code.ts`):
 <!-- anchor: tzqm6r7w -->
 ## Troubleshooting recipes
 
-- **"Thinking events aren't showing for Opus 4.7"**
-  → Opus 4.7 only accepts `type: 'adaptive'`. If you passed `{ type: 'enabled', budget_tokens: X }`, the adapter converts it; but if you bypass `architectureConfig` and set `thinking` elsewhere, the SDK will silently disable thinking. Check `src/adapters/claude-code.ts` thinking branch.
+- **"Thinking events aren't showing for Opus 4.6 / 4.7"**
+  → Opus 4.6+ only accept `type: 'adaptive'`. If you passed `{ type: 'enabled', budget_tokens: X }`, the adapter converts it; but if you bypass `architectureConfig` and set `thinking` elsewhere, the SDK will silently disable thinking. Check `src/adapters/claude-code.ts` thinking branch.
+  → **Opus 4.7 silently changed `thinking.display` default to `'omitted'`** ([Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#controlling-thinking-display)). The adapter now passes `display: 'summarized'` automatically for any model in `ADAPTIVE_THINKING_ONLY`. Override per-call via `architectureConfig.claude_thinking_display: 'summarized' | 'omitted'`.
+  → **Known SDK gap (observed against `@anthropic-ai/claude-agent-sdk@0.2.109`)**: even with `display: 'summarized'` explicitly set, Opus 4.7 emits zero `thinking` content blocks via this SDK — not even an empty placeholder, contrary to the Anthropic documentation. The same call against Opus 4.6 emits 10+ thinking blocks. Verified with `examples/claude-code/thinking.ts` (defaults to Opus 4.7 + the bear puzzle). Adapter-side fix is correct per docs; restoration likely needs an SDK bump or upstream issue. Use `MODEL=opus-4.6 npx tsx examples/claude-code/thinking.ts` to confirm thinking does work end-to-end through the adapter.
 
 - **"`AskUserQuestion` invocations don't fire `onUserInput`"**
   → Confirm `onUserInput` (or deprecated `onElicitation`) is set on `RuntimeExecuteParams`. Without it, the adapter doesn't intercept `canUseTool`. Also: if the model calls a *different* ask-user tool, it won't bridge — name must be exactly `AskUserQuestion`.

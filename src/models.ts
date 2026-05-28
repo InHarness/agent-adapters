@@ -96,6 +96,7 @@ export interface ArchitectureModelMap {
 
 /** Full model IDs that only support adaptive thinking (not fixed-budget `enabled`). */
 export const ADAPTIVE_THINKING_ONLY: ReadonlySet<string> = new Set([
+  'claude-opus-4-6',
   'claude-opus-4-7',
 ]);
 

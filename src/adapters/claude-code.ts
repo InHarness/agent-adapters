@@ -240,20 +240,27 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     if (config.claude_thinking) {
       const mode = config.claude_thinking as 'adaptive' | 'enabled';
       const budget = config.claude_thinking_budget as number | undefined;
+      const userDisplay = config.claude_thinking_display as 'summarized' | 'omitted' | undefined;
+      // Opus 4.7 silently changed `thinking.display` default to 'omitted' (thinking blocks
+      // arrive with an empty `thinking` field). Restore the Opus 4.6-style 'summarized'
+      // default for adaptive-only models unless the consumer overrides it.
+      const display: 'summarized' | 'omitted' | undefined =
+        userDisplay ?? (ADAPTIVE_THINKING_ONLY.has(resolvedModel) ? 'summarized' : undefined);
 
       if (mode === 'enabled' && ADAPTIVE_THINKING_ONLY.has(resolvedModel)) {
         console.warn(
           `[agent-adapters] Model "${resolvedModel}" only supports adaptive thinking. ` +
             `Auto-converting 'enabled' → 'adaptive'.`,
         );
-        options.thinking = { type: 'adaptive' } as Options['thinking'];
+        options.thinking = { type: 'adaptive', ...(display ? { display } : {}) } as Options['thinking'];
       } else if (mode === 'enabled') {
         options.thinking = {
           type: 'enabled',
           ...(budget ? { budgetTokens: budget } : {}),
+          ...(display ? { display } : {}),
         } as Options['thinking'];
       } else {
-        options.thinking = { type: 'adaptive' } as Options['thinking'];
+        options.thinking = { type: 'adaptive', ...(display ? { display } : {}) } as Options['thinking'];
       }
     }
     if (config.claude_effort) {
