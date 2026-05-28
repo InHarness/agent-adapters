@@ -2,6 +2,13 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.6.1] — 2026-05-28
+
+### Changed
+- **Opus 4.8 context window corrected to 1,000,000 tokens** — `MODEL_CONTEXT_WINDOWS` entries for `opus-4.8` and `claude-opus-4.8` raised from 200,000 to 1,000,000, so `getModelContextWindow()` / `contextSize()` report the model's full 1M window.
+
+[0.6.1]: https://github.com/InHarness/agent-adapters/compare/v0.6.0...v0.6.1
+
 ## [0.6.0] — 2026-05-28
 
 ### Added
