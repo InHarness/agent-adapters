@@ -148,6 +148,7 @@ Each architecture has a set of short aliases for popular models. Use an alias in
 |---|---|---|
 | `claude-code` | `sonnet-4.6` | `claude-sonnet-4-6` |
 | | `sonnet-4.5` | `claude-sonnet-4-5-20250929` |
+| | `opus-4.8` | `claude-opus-4-8` |
 | | `opus-4.7` | `claude-opus-4-7` |
 | | `opus-4.6` | `claude-opus-4-6` |
 | | `opus-4.5` | `claude-opus-4-5-20251101` |
@@ -160,7 +161,8 @@ Each architecture has a set of short aliases for popular models. Use an alias in
 | `codex` | `o4-mini` | `o4-mini` |
 | | `o3` | `o3` |
 | | `codex-mini` | `codex-mini-latest` |
-| `opencode-openrouter` | `claude-sonnet-4` | `anthropic/claude-sonnet-4` |
+| `opencode-openrouter` | `claude-opus-4.8` | `anthropic/claude-opus-4.8` |
+| | `claude-sonnet-4` | `anthropic/claude-sonnet-4` |
 | | `claude-opus-4` | `anthropic/claude-opus-4` |
 | | `gemini-2.5-pro` | `google/gemini-2.5-pro` |
 | | `deepseek-r1` | `deepseek/deepseek-r1` |

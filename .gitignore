@@ -8,3 +8,4 @@ dist/
 
 # claude4spec (auto-added)
 *.deprecated
+.DS_Store

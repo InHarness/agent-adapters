@@ -87,6 +87,7 @@
     "test:e2e:claude:opus-4.5": "E2E_CLAUDE_MODEL=opus-4.5 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:opus-4.6": "E2E_CLAUDE_MODEL=opus-4.6 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:opus-4.7": "E2E_CLAUDE_MODEL=opus-4.7 vitest run --config vitest.config.e2e.ts claude-code",
+    "test:e2e:claude:opus-4.8": "E2E_CLAUDE_MODEL=opus-4.8 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:haiku-4.5": "E2E_CLAUDE_MODEL=haiku-4.5 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:codex": "vitest run --config vitest.config.e2e.ts codex",
     "test:e2e:opencode": "vitest run --config vitest.config.e2e.ts opencode",

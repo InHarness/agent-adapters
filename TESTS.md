@@ -84,6 +84,7 @@ Convenience scripts are already wired up:
 ```bash
 npm run test:e2e:claude:sonnet-4.6
 npm run test:e2e:claude:sonnet-4.5
+npm run test:e2e:claude:opus-4.8
 npm run test:e2e:claude:opus-4.7
 npm run test:e2e:claude:opus-4.6
 npm run test:e2e:claude:opus-4.5
@@ -111,7 +112,7 @@ Available aliases per architecture (from `src/models.ts` `MODEL_ALIASES`) — yo
 
 | Architecture | Aliases |
 | --- | --- |
-| `claude-code` | `sonnet-4.6`, `sonnet-4.5`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `haiku-4.5` |
+| `claude-code` | `sonnet-4.6`, `sonnet-4.5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `haiku-4.5` |
 | `claude-code-ollama` | `qwen-coder-32b`, `deepseek-coder`, `codellama-70b`, `llama-3.1-70b` |
 | `claude-code-minimax` | `minimax-m2.7` |
 | `codex` | `o4-mini`, `o3`, `codex-mini` |

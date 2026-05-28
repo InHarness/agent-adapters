@@ -60,6 +60,10 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     values: ['adaptive', 'enabled'],
     description: 'Extended thinking mode. "adaptive" — model decides budget. "enabled" — fixed budget (see below).',
     modelOverrides: {
+      'opus-4.8': {
+        values: ['adaptive'],
+        description: 'Opus 4.8 supports adaptive thinking only (fixed budget not allowed).',
+      },
       'opus-4.7': {
         values: ['adaptive'],
         description: 'Opus 4.7 supports adaptive thinking only (fixed budget not allowed).',
@@ -85,6 +89,10 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     default: 'high',
     description: 'Reasoning effort level. "high" is the SDK default.',
     modelOverrides: {
+      'opus-4.8': {
+        values: ['low', 'medium', 'high', 'max'],
+        description: 'Reasoning effort level. Opus 4.8 additionally supports "max".',
+      },
       'opus-4.6': {
         values: ['low', 'medium', 'high', 'max'],
         description: 'Reasoning effort level. Opus 4.6 additionally supports "max".',
