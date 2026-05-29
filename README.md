@@ -571,6 +571,48 @@ const { main, subagent } = await splitBySubagent(stream);
 const text = await extractText(stream);
 ```
 
+## Session resume
+
+Pass `resumeSessionId` (from a prior `result.sessionId`) to continue a conversation. One invariant holds across every adapter:
+
+> **`model` and the reasoning/thinking configuration must stay constant for the lifetime of a session.**
+
+Adapters are stateless — they keep no record of how a session was originally configured, so they cannot enforce this at runtime. The underlying providers do, though. On claude-code it fails hard: the prior assistant turn's `thinking` blocks are immutable, so resuming with a different thinking/effort/model config makes Anthropic reject the turn with
+
+```
+400 ... `thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified.
+```
+
+Other adapters are more forgiving, but switching model or reasoning mid-thread is still wrong there. **To change the model or thinking config, start a new session — don't resume.**
+
+The library exposes this declaratively so your UI can lock the right controls (or decide to fork a new thread). The `ArchOption` schema marks immutable fields with `resumeImmutable: true`, and three pure, stateless helpers expose it:
+
+```ts
+import { getSessionResumeConstraints, findResumeViolations, isSessionFieldMutable } from '@inharness-ai/agent-adapters';
+
+// Which fields to disable in the UI once a thread is active:
+getSessionResumeConstraints('claude-code');
+// [ { path: 'model', reason: '...' },
+//   { path: 'architectureConfig.claude_thinking', reason: '...' },
+//   { path: 'architectureConfig.claude_thinking_budget', reason: '...' },
+//   { path: 'architectureConfig.claude_effort', reason: '...' } ]
+
+isSessionFieldMutable('claude-code', 'architectureConfig.claude_effort'); // false
+isSessionFieldMutable('gemini', 'architectureConfig.gemini_temperature'); // true (generation-only)
+
+// Before resuming, diff the thread's original config against the new one (you hold both):
+const violations = findResumeViolations(
+  'claude-code',
+  thread.originalConfig,            // { model, architectureConfig } stored at turn 1
+  { model, architectureConfig },    // current UI state
+);
+if (violations.length > 0) {
+  // changing an immutable field — start a NEW session instead of resuming
+}
+```
+
+`findResumeViolations` only flags a field when it is present on **both** sides and the values differ — partial configs never produce false positives. Per-turn fields (prompt, system prompt, tools, MCP servers, skills, plan mode, temperature/top-p) are all mutable and never reported.
+
 ## Token usage
 
 Every `result` event carries **two distinct metrics** — pick the right one for your UI:

@@ -120,6 +120,7 @@ When both `onUserInput` and `onElicitation` are provided, `onUserInput` wins.
 | MCP dynamic config from `mcpServers` | ✅ stdio/SSE/HTTP/SDK | ❌ must pre-configure via `codex mcp add` | ✅ stdio/SSE/HTTP/TCP | ⚠️ stdio only |
 | `planMode` | ✅ `permissionMode='plan'` | ✅ `sandboxMode='read-only'` | ✅ `approvalMode='plan'` | ❌ warning, ignored |
 | `resumeSessionId` | ✅ native `options.resume` | ⚠️ `resumeThread` but no tracking | ✅ reads `~/.gemini/projects/*/chats/` | ⚠️ partial |
+| Resume config immutability enforced | API-enforced (hard 400 on changed `thinking`) | thread-bound (model/effort) | history-bound | session-bound |
 | Thinking deltas | ✅ incremental | ⚠️ chunks via reasoning event | ❌ full summary with `replace: true` | ✅ incremental |
 | Subagent lifecycle | ✅ native `task_*` system events | ⚠️ synthesized | ⚠️ synthesized per `threadId` | ⚠️ synthesized |
 | Subagent taskId on deltas (`subagentTaskId`) | ✅ mapped from `parent_tool_use_id` via local lookup | ❌ no subagent concept in SDK | ✅ direct pass-through of `event.threadId` | ⚠️ ordering-based (single active) |
@@ -127,6 +128,10 @@ When both `onUserInput` and `onElicitation` are provided, `onUserInput` wins.
 | Unified todo list (`todo_list_updated` + `ContentBlock.todoList` + `result.todoListSnapshot`) | ✅ source: `model-tool` — replaces TodoWrite `tool_use`/`tool_result` pair and `ContentBlock.toolUse` in rawMessages | ❌ no native todo primitive | ❌ no native todo primitive | ✅ source: `session-state` — from SSE `todo.updated`; synthesized `NormalizedMessage { role: 'assistant', native: undefined }` added to rawMessages |
 
 This table decides whether a new unified feature degrades gracefully. If you add a new event/field and three adapters can't emit it, design the graceful degradation (warning event, or silently skip with adapter-specific note).
+
+### Session-resume immutability (`session-resume.ts`)
+
+`model` and the reasoning/thinking config must stay constant across all turns of a resumed session. Adapters are stateless and do **not** enforce this — the library only declares it, so consumers (who hold the thread's original config) can lock UI controls or fork a new session. Source of truth: the `resumeImmutable` flag on `ArchOption` (`options.ts`) plus the always-immutable `model`. Helpers: `getSessionResumeConstraints(architecture)`, `isSessionFieldMutable(architecture, path)`, `findResumeViolations(architecture, original, next)` — all pure. When adding a new reasoning/thinking arch option, set `resumeImmutable: true` on it; generation-only knobs (temperature, top-p) stay mutable. See README "Session resume".
 
 <!-- anchor: exiq2qlz -->
 ## Skills (cross-cutting concern)

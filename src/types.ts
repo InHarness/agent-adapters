@@ -475,6 +475,22 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   skills?: InlineSkill[];
 
   cwd?: string;
+  /**
+   * Resume a prior session/thread so this turn continues the same conversation.
+   *
+   * **Invariant:** `model` and the reasoning/thinking configuration must stay
+   * constant across all turns of a resumed session. Adapters are stateless and do
+   * NOT enforce this — changing them is the consumer's responsibility to prevent.
+   * On claude-code it fails hard (Anthropic rejects a resumed turn whose thinking
+   * config differs from the prior assistant message's immutable thinking blocks:
+   * `400 ... thinking blocks ... cannot be modified`); on other adapters switching
+   * model/reasoning mid-thread is still incorrect.
+   *
+   * Use {@link getSessionResumeConstraints} to know which fields to lock in your UI
+   * once a thread is active, and {@link findResumeViolations} to detect (before this
+   * call) whether the consumer changed an immutable field — in which case start a
+   * NEW session instead of resuming.
+   */
   resumeSessionId?: string;
   /**
    * Upper bound on internal LLM turns the adapter will let the SDK take

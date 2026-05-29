@@ -28,6 +28,21 @@ export interface ArchOption {
   visibleWhen?: { key: string; equals: unknown | unknown[] };
   /** Per-model-alias overrides. Merged over the base option when the given model is selected. UI hint — adapters ignore. */
   modelOverrides?: Record<string, Partial<Pick<ArchOption, 'values' | 'default' | 'description'>>>;
+  /**
+   * When true, this option cannot change once a session has started — every turn
+   * of a resumed session (`resumeSessionId`) must reuse the value the session was
+   * created with. Reasoning/thinking settings are the canonical case: e.g. Anthropic
+   * rejects a resumed turn whose `thinking` config differs from the one that produced
+   * the prior assistant message's (immutable) thinking blocks.
+   *
+   * UIs should disable this field once a thread is active, or treat a change as a
+   * request to start a NEW session. See {@link getSessionResumeConstraints} and
+   * {@link findResumeViolations} in `session-resume.ts`. Adapters do not enforce
+   * this at runtime — they are stateless and hold no record of the original config.
+   */
+  resumeImmutable?: boolean;
+  /** Human-readable reason shown in UI/logs when {@link resumeImmutable} is true. */
+  resumeImmutableReason?: string;
 }
 
 export const GLOBAL_OPTIONS: ArchOption[] = [
@@ -59,6 +74,9 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     scope: 'architecture',
     values: ['adaptive', 'enabled'],
     description: 'Extended thinking mode. "adaptive" — model decides budget. "enabled" — fixed budget (see below).',
+    resumeImmutable: true,
+    resumeImmutableReason:
+      'Thinking mode is locked once a session has started. The prior assistant turn\'s thinking blocks are immutable; resuming with a different thinking config makes Anthropic reject the request (400 "thinking blocks cannot be modified"). Start a new session to change it.',
     modelOverrides: {
       'opus-4.8': {
         values: ['adaptive'],
@@ -79,6 +97,9 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     placeholder: 'e.g. 5000',
     description: 'Token budget for thinking. Used only when mode = enabled (ignored for adaptive).',
     visibleWhen: { key: 'claude_thinking', equals: 'enabled' },
+    resumeImmutable: true,
+    resumeImmutableReason:
+      'Thinking budget is locked once a session has started — it shaped the prior turn\'s immutable thinking blocks. Start a new session to change it.',
   },
   {
     key: 'claude_effort',
@@ -88,6 +109,9 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     values: ['low', 'medium', 'high'],
     default: 'high',
     description: 'Reasoning effort level. "high" is the SDK default.',
+    resumeImmutable: true,
+    resumeImmutableReason:
+      'Reasoning effort is locked once a session has started — it shaped the prior turn\'s immutable thinking blocks. Start a new session to change it.',
     modelOverrides: {
       'opus-4.8': {
         values: ['low', 'medium', 'high', 'max'],
@@ -126,6 +150,9 @@ export const CODEX_OPTIONS: ArchOption[] = [
     scope: 'architecture',
     values: ['minimal', 'low', 'medium', 'high', 'xhigh'],
     description: 'Model reasoning effort.',
+    resumeImmutable: true,
+    resumeImmutableReason:
+      'Reasoning effort is fixed for the lifetime of a Codex thread; resume reuses the thread\'s original setting. Start a new session to change it.',
   },
   {
     key: 'codex_baseUrl',
@@ -176,6 +203,9 @@ export const GEMINI_OPTIONS: ArchOption[] = [
     scope: 'architecture',
     min: 0,
     description: 'Max thinking tokens (takes precedence over level).',
+    resumeImmutable: true,
+    resumeImmutableReason:
+      'Thinking budget is tied to the resumed conversation history; keep it constant across turns or start a new session.',
   },
   {
     key: 'gemini_thinkingLevel',
@@ -184,6 +214,9 @@ export const GEMINI_OPTIONS: ArchOption[] = [
     scope: 'architecture',
     values: ['low', 'medium', 'high'],
     description: 'Thinking effort (ignored when budget is set).',
+    resumeImmutable: true,
+    resumeImmutableReason:
+      'Thinking level is tied to the resumed conversation history; keep it constant across turns or start a new session.',
   },
   {
     key: 'gemini_temperature',

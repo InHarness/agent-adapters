@@ -107,6 +107,14 @@ export {
   GEMINI_OPTIONS,
 } from './options.js';
 
+// Session-resume constraints (which inputs cannot change across resumed turns)
+export type { ResumeFieldConstraint, ResumeConfigSnapshot } from './session-resume.js';
+export {
+  getSessionResumeConstraints,
+  isSessionFieldMutable,
+  findResumeViolations,
+} from './session-resume.js';
+
 // Disk skill discovery
 export type {
   DiskSkill,
