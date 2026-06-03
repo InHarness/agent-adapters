@@ -51,7 +51,7 @@ export type {
 //
 // When the SDK gains per-MCP-tool filtering at the options level, revisit —
 // see the TODO in .claude/skills/claude-code-sdk/SKILL.md.
-const CLAUDE_CODE_READONLY_BUILTINS: string[] = [
+export const CLAUDE_CODE_READONLY_BUILTINS: string[] = [
   'Read',
   'Grep',
   'Glob',
@@ -59,8 +59,13 @@ const CLAUDE_CODE_READONLY_BUILTINS: string[] = [
   'WebSearch',
   'TodoWrite',
   'AskUserQuestion',
+  // Skill only loads a skill's body into context (read-only). Without it on the
+  // plan-mode whitelist, inline skills materialized as a local plugin can never
+  // be opened — the SDK reports "No such tool available: Skill". Any mutating
+  // action a skill suggests is still gated by CLAUDE_CODE_MUTATING_BUILTINS.
+  'Skill',
 ];
-const CLAUDE_CODE_MUTATING_BUILTINS: string[] = [
+export const CLAUDE_CODE_MUTATING_BUILTINS: string[] = [
   'Bash',
   'Edit',
   'Write',

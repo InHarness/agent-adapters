@@ -3,7 +3,13 @@
 
 import { describe, it, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { normalizeContentBlocks, normalizeAssistantMessage, todoItemsFromTodoWriteInput } from './claude-code.js';
+import {
+  normalizeContentBlocks,
+  normalizeAssistantMessage,
+  todoItemsFromTodoWriteInput,
+  CLAUDE_CODE_READONLY_BUILTINS,
+  CLAUDE_CODE_MUTATING_BUILTINS,
+} from './claude-code.js';
 
 describe('normalizeContentBlocks', () => {
   it('maps SDK text → text block', () => {
@@ -216,5 +222,19 @@ describe('todoItemsFromTodoWriteInput', () => {
   it('returns [] when todos is missing or not an array', () => {
     expect(todoItemsFromTodoWriteInput({})).toEqual([]);
     expect(todoItemsFromTodoWriteInput({ todos: 'nope' } as unknown as Record<string, unknown>)).toEqual([]);
+  });
+});
+
+// Regression: plan mode sets options.tools = CLAUDE_CODE_READONLY_BUILTINS, which is
+// the only knob that shapes the model's built-in catalog. Skill must be on it, or
+// inline skills materialized as a local plugin can never be opened ("No such tool
+// available: Skill"). Skill is read-only — mutations stay gated by disallowedTools.
+describe('plan-mode tool whitelist', () => {
+  it('exposes Skill as a read-only built-in (plan mode can open injected skills)', () => {
+    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('Skill');
+  });
+
+  it('does not also list Skill as a mutating built-in', () => {
+    expect(CLAUDE_CODE_MUTATING_BUILTINS).not.toContain('Skill');
   });
 });
