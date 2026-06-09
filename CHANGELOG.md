@@ -2,6 +2,13 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.6.4] — 2026-06-09
+
+### Added
+- **Fable 5 model support** — registered `fable-5` (id `claude-fable-5`) in `models.ts` with its context window and adaptive-thinking-only constraint, added a Fable 5 E2E test command in `package.json`, and documented the model alias and its adaptive-only behavior across README, TESTS, and the `claude-code-sdk` skill.
+
+[0.6.4]: https://github.com/InHarness/agent-adapters/compare/v0.6.3...v0.6.4
+
 ## [0.6.3] — 2026-06-03
 
 ### Fixed
