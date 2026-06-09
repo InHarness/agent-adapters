@@ -8,6 +8,7 @@ import type { Architecture } from './types.js';
 /** Map of simplified model aliases to full model IDs, per architecture. */
 export const MODEL_ALIASES = {
   'claude-code': {
+    'fable-5': 'claude-fable-5',
     'sonnet-4.6': 'claude-sonnet-4-6',
     'sonnet-4.5': 'claude-sonnet-4-5-20250929',
     'opus-4.8': 'claude-opus-4-8',
@@ -47,6 +48,7 @@ export const MODEL_ALIASES = {
     'hy3-preview-free': 'tencent/hy3-preview:free',
     'gemini-2.5-flash': 'google/gemini-2.5-flash',
     'nemotron-3-super-free': 'nvidia/nemotron-3-super:free',
+    'claude-fable-5': 'anthropic/claude-fable-5',
     'claude-opus-4.8': 'anthropic/claude-opus-4.8',
     'claude-opus-4.7': 'anthropic/claude-opus-4.7',
     // Existing aliases retained for backwards compatibility.
@@ -98,6 +100,7 @@ export interface ArchitectureModelMap {
 
 /** Full model IDs that only support adaptive thinking (not fixed-budget `enabled`). */
 export const ADAPTIVE_THINKING_ONLY: ReadonlySet<string> = new Set([
+  'claude-fable-5',
   'claude-opus-4-6',
   'claude-opus-4-7',
   'claude-opus-4-8',
@@ -113,6 +116,7 @@ export const ADAPTIVE_THINKING_ONLY: ReadonlySet<string> = new Set([
  */
 export const MODEL_CONTEXT_WINDOWS: Record<string, Record<string, number>> = {
   'claude-code': {
+    'fable-5': 1_000_000,
     'sonnet-4.6': 200_000,
     'sonnet-4.5': 200_000,
     'opus-4.8': 1_000_000,
@@ -143,6 +147,7 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, Record<string, number>> = {
   },
   'opencode-openrouter': {
     'kimi-k2.6': 200_000,
+    'claude-fable-5': 1_000_000,
     'claude-sonnet-4.6': 200_000,
     'gemini-2.5-flash': 1_048_576,
     'claude-opus-4.8': 1_000_000,

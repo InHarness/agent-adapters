@@ -82,6 +82,7 @@
     "test:gemini": "vitest run gemini",
     "test:e2e": "vitest run --config vitest.config.e2e.ts",
     "test:e2e:claude": "vitest run --config vitest.config.e2e.ts claude-code",
+    "test:e2e:claude:fable-5": "E2E_CLAUDE_MODEL=fable-5 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:sonnet-4.5": "E2E_CLAUDE_MODEL=sonnet-4.5 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:sonnet-4.6": "E2E_CLAUDE_MODEL=sonnet-4.6 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:opus-4.5": "E2E_CLAUDE_MODEL=opus-4.5 vitest run --config vitest.config.e2e.ts claude-code",

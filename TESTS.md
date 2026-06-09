@@ -82,6 +82,7 @@ Claude E2E reads the model from `E2E_CLAUDE_MODEL` (default: `sonnet-4.6`). See 
 Convenience scripts are already wired up:
 
 ```bash
+npm run test:e2e:claude:fable-5
 npm run test:e2e:claude:sonnet-4.6
 npm run test:e2e:claude:sonnet-4.5
 npm run test:e2e:claude:opus-4.8
@@ -112,11 +113,11 @@ Available aliases per architecture (from `src/models.ts` `MODEL_ALIASES`) — yo
 
 | Architecture | Aliases |
 | --- | --- |
-| `claude-code` | `sonnet-4.6`, `sonnet-4.5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `haiku-4.5` |
+| `claude-code` | `fable-5`, `sonnet-4.6`, `sonnet-4.5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `haiku-4.5` |
 | `claude-code-ollama` | `qwen-coder-32b`, `deepseek-coder`, `codellama-70b`, `llama-3.1-70b` |
 | `claude-code-minimax` | `minimax-m2.7` |
 | `codex` | `o4-mini`, `o3`, `codex-mini` |
-| `opencode-openrouter` | `claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1` |
+| `opencode-openrouter` | `claude-fable-5`, `claude-opus-4.8`, `claude-sonnet-4.6`, `claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1` |
 | `gemini` | `gemini-3.1-pro`, `gemini-3.1-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash` |
 
 ## Environment variables

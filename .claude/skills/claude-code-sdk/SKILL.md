@@ -32,7 +32,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 - **Dev**: `^0.2.109` (`package.json`)
 - **Peer**: `>=0.2.0`
 - **TODO / things to watch**:
-  - New thinking modes (beyond ADAPTIVE_THINKING_ONLY). Keep `src/models.ts:ADAPTIVE_THINKING_ONLY` in sync when Anthropic ships a new Opus.
+  - New thinking modes (beyond ADAPTIVE_THINKING_ONLY). Keep `src/models.ts:ADAPTIVE_THINKING_ONLY` in sync when Anthropic ships a new adaptive-only model. **Claude Fable 5 (`claude-fable-5`) added 2026-06-09** — adaptive-only, in the set. Watch for `claude-mythos-5` (restricted-access Mythos tier; no public model ID published yet — add the alias once Anthropic documents one).
   - Elicitation API stability — `options.onElicitation` is still relatively new; watch for signature changes.
   - `canUseTool` callback ergonomics — if the SDK adds a first-class ask-user tool type, reduce our custom AskUserQuestion plumbing.
   - Preset expansion — currently only `'claude_code'`. If more presets ship, `claude_usePreset` should accept them.
@@ -83,7 +83,8 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 <!-- anchor: pqk13bxx -->
 ## Quirks & gotchas
 
-1. **Opus 4.6+ require adaptive thinking.** `src/models.ts:ADAPTIVE_THINKING_ONLY` lists model IDs that reject fixed-budget thinking. The adapter auto-converts `{ type: 'enabled', budget_tokens: N }` into `{ type: 'adaptive' }` for those models. The rule is documented in `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` (L1176-1177: `'adaptive'` is for "Opus 4.6+" and is the default for models that support it). When a new Opus ships, add it to the set.
+1. **Opus 4.6+ and Fable 5 require adaptive thinking.** `src/models.ts:ADAPTIVE_THINKING_ONLY` lists model IDs that reject fixed-budget thinking (`claude-fable-5`, `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`). The adapter auto-converts `{ type: 'enabled', budget_tokens: N }` into `{ type: 'adaptive' }` for those models. The rule is documented in `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` (L1176-1177: `'adaptive'` is for "Opus 4.6+" and is the default for models that support it). When a new Opus/Fable ships, add it to the set.
+   - **Fable 5 extra constraint (informational):** Fable 5 additionally rejects an *explicit* `thinking: { type: 'disabled' }` with a 400 (it is accepted on Opus 4.7/4.8) — the param must simply be omitted. This adapter never emits `'disabled'` (the `claude_thinking` branch only produces `'adaptive'`/`'enabled'`, and omits `thinking` entirely when unset), so the constraint is unreachable here. No adapter code is needed unless a future change starts emitting `'disabled'`.
 2. **Dual-channel user input**:
    - **Model-tool channel**: `canUseTool` with `toolName === 'AskUserQuestion'` — the model is asking the user directly. Adapter builds `UserInputRequest` from the tool input.
    - **MCP channel**: `options.onElicitation` — an MCP server sent `elicitation/request`. Adapter builds `UserInputRequest` with `source: 'mcp-elicitation'`.
@@ -235,7 +236,7 @@ Constants (in `src/adapters/claude-code.ts`):
 
 - **"Thinking events aren't showing for Opus 4.6 / 4.7"**
   → Opus 4.6+ only accept `type: 'adaptive'`. If you passed `{ type: 'enabled', budget_tokens: X }`, the adapter converts it; but if you bypass `architectureConfig` and set `thinking` elsewhere, the SDK will silently disable thinking. Check `src/adapters/claude-code.ts` thinking branch.
-  → **Opus 4.7 silently changed `thinking.display` default to `'omitted'`** ([Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#controlling-thinking-display)). The adapter now passes `display: 'summarized'` automatically for any model in `ADAPTIVE_THINKING_ONLY`. Override per-call via `architectureConfig.claude_thinking_display: 'summarized' | 'omitted'`.
+  → **Opus 4.7 silently changed `thinking.display` default to `'omitted'`** ([Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#controlling-thinking-display)). The adapter now passes `display: 'summarized'` automatically for any model in `ADAPTIVE_THINKING_ONLY`. Override per-call via `architectureConfig.claude_thinking_display: 'summarized' | 'omitted'`. **Fable 5 (`claude-fable-5`) shares this `'omitted'` default** and is a member of `ADAPTIVE_THINKING_ONLY`, so it gets the `'summarized'` restoration automatically — no Fable-specific handling required.
   → **Known SDK gap (observed against `@anthropic-ai/claude-agent-sdk@0.2.109`)**: even with `display: 'summarized'` explicitly set, Opus 4.7 emits zero `thinking` content blocks via this SDK — not even an empty placeholder, contrary to the Anthropic documentation. The same call against Opus 4.6 emits 10+ thinking blocks. Verified with `examples/claude-code/thinking.ts` (defaults to Opus 4.7 + the bear puzzle). Adapter-side fix is correct per docs; restoration likely needs an SDK bump or upstream issue. Use `MODEL=opus-4.6 npx tsx examples/claude-code/thinking.ts` to confirm thinking does work end-to-end through the adapter.
 
 - **"`AskUserQuestion` invocations don't fire `onUserInput`"**

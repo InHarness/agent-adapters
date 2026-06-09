@@ -146,7 +146,8 @@ Each architecture has a set of short aliases for popular models. Use an alias in
 
 | Architecture | Alias | Full model ID |
 |---|---|---|
-| `claude-code` | `sonnet-4.6` | `claude-sonnet-4-6` |
+| `claude-code` | `fable-5` | `claude-fable-5` |
+| | `sonnet-4.6` | `claude-sonnet-4-6` |
 | | `sonnet-4.5` | `claude-sonnet-4-5-20250929` |
 | | `opus-4.8` | `claude-opus-4-8` |
 | | `opus-4.7` | `claude-opus-4-7` |
@@ -161,7 +162,8 @@ Each architecture has a set of short aliases for popular models. Use an alias in
 | `codex` | `o4-mini` | `o4-mini` |
 | | `o3` | `o3` |
 | | `codex-mini` | `codex-mini-latest` |
-| `opencode-openrouter` | `claude-opus-4.8` | `anthropic/claude-opus-4.8` |
+| `opencode-openrouter` | `claude-fable-5` | `anthropic/claude-fable-5` |
+| | `claude-opus-4.8` | `anthropic/claude-opus-4.8` |
 | | `claude-sonnet-4` | `anthropic/claude-sonnet-4` |
 | | `claude-opus-4` | `anthropic/claude-opus-4` |
 | | `gemini-2.5-pro` | `google/gemini-2.5-pro` |
