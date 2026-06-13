@@ -10,6 +10,7 @@ import { resolveModel } from '../../models.js';
 import { assertSimpleText, assertToolUse, assertThinking, assertAdapterReady } from '../contract.js';
 import { AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
+import { architectureCapabilities } from '../../capabilities.js';
 import { assertNormalization } from '../normalization.js';
 import {
   requireEnv,
@@ -290,6 +291,66 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     expect(errorEvents.length).toBeGreaterThanOrEqual(1);
     expect(errorEvents[0].error).toBeInstanceOf(AdapterAbortError);
   });
+
+  it('reports midTurnPush capability', () => {
+    expect(architectureCapabilities('claude-code').midTurnPush).toBe(true);
+  });
+
+  // Resolves risk R1: does streaming-input deliver a pushed message BETWEEN
+  // tool calls (true mid-turn) or only at the turn boundary (next-turn-in-
+  // session)? This logs the post-push event sequence so the README wording can
+  // be pinned to observed behavior; assertions stay loose to avoid flakiness.
+  it(
+    'streaming-input: pushMessage is accepted and delivered to the live session',
+    async () => {
+      const adapter = createAdapter('claude-code');
+      const events: UnifiedEvent[] = [];
+      let pushed = false;
+      let pushAccepted: boolean | null = null;
+      let pushEventIndex = -1;
+
+      for await (const event of adapter.execute({
+        prompt:
+          'Use the Bash tool to run `echo first`, then briefly summarize what you did.',
+        systemPrompt:
+          'You are a helpful assistant. Use the Bash tool when asked. Keep responses short.',
+        model: MODEL,
+        streamingInput: true,
+      })) {
+        events.push(event);
+        // Inject a follow-up the moment the model makes its first tool call,
+        // while the turn is still live.
+        if (event.type === 'tool_use' && !pushed) {
+          pushed = true;
+          pushAccepted = adapter.pushMessage?.('Now also run `echo second`.') ?? false;
+          pushEventIndex = events.length - 1;
+        }
+      }
+
+      // The push landed while the turn was live.
+      expect(pushAccepted).toBe(true);
+
+      // The accepted push surfaced as a user_message event with our text.
+      const userMessages = events.filter(
+        (e): e is Extract<UnifiedEvent, { type: 'user_message' }> => e.type === 'user_message',
+      );
+      expect(userMessages.length).toBeGreaterThanOrEqual(1);
+      expect(userMessages.some((m) => m.text.includes('echo second'))).toBe(true);
+
+      // The session produced at least one result and ran to completion.
+      const results = events.filter((e) => e.type === 'result');
+      expect(results.length).toBeGreaterThanOrEqual(1);
+
+      // R1 diagnostic: dump the event-type sequence after the push so we can
+      // see whether delivery interleaved with the live turn or started a new one.
+      const afterPush = events.slice(pushEventIndex + 1).map((e) => e.type);
+      // eslint-disable-next-line no-console
+      console.log('[R1] post-push event sequence:', afterPush.join(' → '));
+      // eslint-disable-next-line no-console
+      console.log('[R1] total results:', results.length, '| user_messages:', userMessages.length);
+    },
+    180_000,
+  );
 
   it('unknown model alias warns and passes through (SDK rejects)', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});

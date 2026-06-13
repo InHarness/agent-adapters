@@ -37,13 +37,15 @@ interface RuntimeAdapter {
   architecture: Architecture;
   execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent>;
   abort(): void;
+  pushMessage?(text: string): boolean;  // optional — mid-turn injection (streaming-input mode)
 }
 ```
 
-Three obligations:
+Three obligations (+ one optional capability):
 1. **Identify yourself** via `architecture` — one of the `BuiltinArchitecture` strings or a custom string (`(string & {})`).
-2. **Yield `UnifiedEvent`s** in response to `execute(params)`. The stream must terminate — either by yielding a `result` event and returning, or by yielding an `error` event.
+2. **Yield `UnifiedEvent`s** in response to `execute(params)`. The stream must terminate — either by yielding a `result` event and returning, or by yielding an `error` event. **Exception:** in streaming-input mode (`params.streamingInput`) the stream may yield **multiple** `result` events (one per delivered turn) and stays alive until the input channel drains or `abort()` is called.
 3. **Be abortable** — `abort()` must stop the underlying SDK run promptly. Emit `AdapterAbortError` or let the iterator complete naturally.
+4. **(Optional) `pushMessage(text)`** — push a user message into the live session mid-turn; returns `true` if accepted onto the open channel, `false` if closed/closing or not in streaming-input mode (caller re-dispatches after-turn). Only implement when the underlying SDK supports streaming input; advertise via `architectureCapabilities(arch).midTurnPush` (`src/capabilities.ts`). Accepting a push emits a `user_message` event.
 
 <!-- anchor: c1zu1658 -->
 ## `UnifiedEvent` taxonomy
@@ -55,6 +57,7 @@ Defined in `src/types.ts:36-59`. Groups (bold = required for basic conformance):
 - **Tools**: `tool_use { toolName, toolUseId, input, isSubagent, subagentTaskId? }`, `tool_result { toolUseId, summary, isSubagent, isError?, subagentTaskId? }` — `isError` mirrors `ContentBlock.toolResult.isError`; absent when the adapter has no error signal (see capability matrix)
 - **Subagent lifecycle**: `subagent_started { taskId, description, toolUseId }`, `subagent_progress { taskId, description, lastToolName? }`, `subagent_completed { taskId, status, summary?, usage? }`
 - **User input**: `user_input_request { request: UserInputRequest }` — unified entry point for model-tool asks and MCP elicitation
+- **Mid-turn push**: `user_message { text, timestamp }` — a message accepted into the live session via `pushMessage()` (streaming-input mode); emitted before the model's response so consumers persist it in transcript order. Only `midTurnPush`-capable adapters emit it (see capability matrix).
 - **Legacy user input**: `elicitation_request { ... }` — **deprecated**, adapters should emit `user_input_request` with `source: 'mcp-elicitation'` instead
 - **Todo list**: `todo_list_updated { items: TodoItem[], source: 'model-tool' | 'session-state', isSubagent, subagentTaskId? }` — unified TodoWrite/plan-tracking primitive. Replaces `tool_use` for claude-code TodoWrite (source: `'model-tool'`); synthesized from opencode's `todo.updated` SSE channel (source: `'session-state'`). Not emitted by codex or gemini. Adapters that emit this **also** place a `ContentBlock.todoList` into `NormalizedMessage.content` — claude-code replaces the TodoWrite `toolUse`, opencode pushes a synthetic `NormalizedMessage { role: 'assistant', native: undefined }`. See `TodoItem` in `src/types.ts` for item shape.
 - **Terminal**: `result { output, rawMessages, usage, sessionId?, todoListSnapshot? }`, `error { error }` — `todoListSnapshot` carries the last seen todo-list items; `undefined` when the adapter never observed a todo update during this run.
@@ -103,6 +106,7 @@ interface NormalizedMessage {
 | `mcpServers: Record<string, McpServerConfig>` | pre-built MCP servers | adapters read this; `builtinMCPServers` / `allowedMCPTools` are consumer-side |
 | `cwd`, `maxTurns`, `timeoutMs` | runtime | adapter enforces if SDK supports |
 | `resumeSessionId` | session resumption | support varies — see capability matrix |
+| `streamingInput: boolean` | open input channel for `pushMessage()` | only honored by `midTurnPush`-capable adapters (claude-code); off → one-shot string prompt (unchanged). See capability matrix |
 | `architectureConfig: Record<string, unknown>` | adapter-specific keys | prefix by adapter: `claude_*`, `codex_*`, `gemini_*`, `opencode_*`, plus cross-adapter `custom_env` / `ollama_baseUrl` |
 | `planMode: boolean` | read-only run | maps to: claude `permissionMode='plan'`, gemini `approvalMode='plan'`, codex `sandboxMode='read-only'`, opencode **ignored + warning** |
 | `onUserInput: UserInputHandler` | unified user-input callback | supported partially — see capability matrix |
@@ -120,6 +124,7 @@ When both `onUserInput` and `onElicitation` are provided, `onUserInput` wins.
 | MCP dynamic config from `mcpServers` | ✅ stdio/SSE/HTTP/SDK | ❌ must pre-configure via `codex mcp add` | ✅ stdio/SSE/HTTP/TCP | ⚠️ stdio only |
 | `planMode` | ✅ `permissionMode='plan'` | ✅ `sandboxMode='read-only'` | ✅ `approvalMode='plan'` | ❌ warning, ignored |
 | `resumeSessionId` | ✅ native `options.resume` | ⚠️ `resumeThread` but no tracking | ✅ reads `~/.gemini/projects/*/chats/` | ⚠️ partial |
+| Mid-turn push (`pushMessage` + `streamingInput` + `user_message`) — `architectureCapabilities().midTurnPush` | ✅ SDK streaming-input channel | ❌ one prompt per `runStreamed` | ❌ one prompt per call | ❌ one prompt per call |
 | Resume config immutability enforced | API-enforced (hard 400 on changed `thinking`) | thread-bound (model/effort) | history-bound | session-bound |
 | Thinking deltas | ✅ incremental | ⚠️ chunks via reasoning event | ❌ full summary with `replace: true` | ✅ incremental |
 | Subagent lifecycle | ✅ native `task_*` system events | ⚠️ synthesized | ⚠️ synthesized per `threadId` | ⚠️ synthesized |
@@ -211,6 +216,7 @@ Don't add a feature that only one adapter can support without calling it out in 
 ## Key files
 
 - `src/types.ts` — contract
+- `src/capabilities.ts` — `architectureCapabilities()` static per-arch map (e.g. `midTurnPush`)
 - `src/models.ts` — aliases, `resolveModel()`, `ADAPTIVE_THINKING_ONLY`
 - `src/index.ts` — public entry, `createAdapter()`
 - `src/adapters/*.ts` — per-SDK implementations

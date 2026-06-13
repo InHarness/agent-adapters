@@ -1,0 +1,40 @@
+// Static per-architecture capability discovery.
+//
+// Consumers use this to decide a delivery strategy up front WITHOUT a trial
+// call: e.g. a chat-message queue checks `midTurnPush` to know whether it can
+// inject a message into a live turn (claude-code) or must always wait for the
+// turn to end and re-dispatch (codex/gemini/opencode). Mirrors the static-map
+// pattern used by `OPTIONS_BY_ARCHITECTURE` in `src/options.ts`.
+
+import type { Architecture } from './types.js';
+
+export interface ArchitectureCapabilities {
+  /**
+   * The adapter supports {@link RuntimeAdapter.pushMessage} — pushing a user
+   * message into the live session mid-turn when run with
+   * `RuntimeExecuteParams.streamingInput`. Only claude-code's underlying SDK
+   * (`@anthropic-ai/claude-agent-sdk`) exposes streaming input today; the other
+   * wrapped SDKs deliver one prompt per call, so consumers must use the
+   * after-turn path (re-dispatch with `resumeSessionId`) for them.
+   */
+  midTurnPush: boolean;
+}
+
+const CAPABILITIES: Record<string, ArchitectureCapabilities> = {
+  'claude-code': { midTurnPush: true },
+  'claude-code-ollama': { midTurnPush: true },
+  'claude-code-minimax': { midTurnPush: true },
+  codex: { midTurnPush: false },
+  opencode: { midTurnPush: false },
+  'opencode-openrouter': { midTurnPush: false },
+  gemini: { midTurnPush: false },
+};
+
+/**
+ * Report the static capabilities of an architecture. Unknown/custom
+ * architectures default to all-false so consumers fall back to the safe
+ * (after-turn) path.
+ */
+export function architectureCapabilities(architecture: Architecture): ArchitectureCapabilities {
+  return CAPABILITIES[architecture] ?? { midTurnPush: false };
+}
