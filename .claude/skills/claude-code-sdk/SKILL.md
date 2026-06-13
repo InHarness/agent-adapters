@@ -41,7 +41,7 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 <!-- anchor: da7anbcx -->
 ## Native API surface
 
-- **Entry**: `query({ prompt, options })` returns an async iterable of `SDKMessage` objects.
+- **Entry**: `query({ prompt, options })` returns an async iterable of `SDKMessage` objects. `prompt` is `string | AsyncIterable<SDKUserMessage>` — passing an async iterable enables **streaming-input mode** (the adapter uses this for mid-turn `pushMessage()`; see the streaming-input section below). The returned `Query` also exposes `streamInput()` / `interrupt()` / `setModel()` etc., but the adapter drives input purely via the iterable channel and does not call those control methods.
 - **Options** (key fields used by the adapter):
   - `model` — full model ID (resolved via `resolveModel`)
   - `systemPrompt: string | { type: 'preset'; preset: string }`
@@ -78,9 +78,25 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 | `canUseTool('AskUserQuestion', ...)` | `user_input_request` (source=`'model-tool'`) | adapter intercepts, calls `onUserInput` |
 | `options.onElicitation(req)` | `user_input_request` (source=`'mcp-elicitation'`) | MCP side-channel |
 | `tool_use { toolName: 'TodoWrite' }` inside assistant | `todo_list_updated` (source=`'model-tool'`) + `ContentBlock.todoList` | **replaces** both `tool_use` event and `ContentBlock.toolUse` in rawMessages. The matching `tool_result` is also suppressed — its `{ oldTodos, newTodos }` payload is redundant. `result.todoListSnapshot` carries the last seen items. See `src/adapters/claude-code.ts:todoItemsFromTodoWriteInput` for the mapping (id is synthesized from array index). |
-| `result` | `result` | includes `sessionId` for resume, `todoListSnapshot` when TodoWrite was used |
+| `result` | `result` | includes `sessionId` for resume, `todoListSnapshot` when TodoWrite was used. In streaming-input mode **multiple** `result` events are emitted — one per delivered turn |
+| `pushMessage(text)` (adapter API) | `user_message { text, timestamp }` | streaming-input only; emitted when a push is accepted onto the input channel, before the model responds |
 
 <!-- anchor: pqk13bxx -->
+## Streaming-input mode (mid-turn `pushMessage`)
+
+Opt-in via `RuntimeExecuteParams.streamingInput: true`. claude-code is the only adapter with `architectureCapabilities().midTurnPush === true` because its SDK accepts `prompt: AsyncIterable<SDKUserMessage>`.
+
+How the adapter wires it (`src/adapters/claude-code.ts`):
+
+- `createInputChannel(seed)` builds a manually-driven `AsyncIterable<SDKUserMessage>` (queue + pending-resolver + `closed` flag), seeded with the prompt. It's passed as `query({ prompt: channel })` instead of the string prompt.
+- `pushMessage(text)` enqueues an `SDKUserMessage` onto the channel, records a `user_message` to emit, and wakes the main loop (reuses the existing `userInputWaker`). Returns `false` if the channel is closed (turn ended) or not in streaming mode.
+- The main loop drains pending `user_message` emits next to the `pendingUserInputs` drain, so a push surfaces promptly even mid-turn.
+- **End-of-turn policy**: right after yielding a turn's `result` (no `await` in between, so it's atomic w.r.t. consumer pushes), the adapter checks `channel.hasPending()`. Non-empty → keep the channel open; the SDK consumes the next queued message as a new turn → another `result`. Empty → `channel.close()` synchronously; the SDK's next pull resolves `done` and `execute()` ends (one-shot behavior). This pins the race window shut — a push landing after close gets `false`, and the consumer re-dispatches after-turn. No lost-message window.
+- `abort()` closes the channel too; the `finally` nulls `pushHandler`/`closeInputChannel` and closes the channel.
+
+> **R1 (resolved in e2e):** the SDK delivers a pushed message **mid-turn, between tool calls**, within the *same* turn — not deferred to a turn boundary. Observed post-push sequence (sonnet-4.6): `assistant_message → user_message → tool_result → tool_use → … → result`, with a **single** `result` — i.e. the model issued a follow-up tool call for the pushed instruction before the turn's one result. The keep-channel-open / multiple-`result` path only triggers when a push lands exactly at the turn boundary. See the streaming-input e2e in `src/testing/e2e/claude-code.e2e.test.ts` (it logs the post-push event sequence). Contract wording stays "delivered as early as the runtime allows."
+
+<!-- anchor: pqk13bxx2 -->
 ## Quirks & gotchas
 
 1. **Opus 4.6+ and Fable 5 require adaptive thinking.** `src/models.ts:ADAPTIVE_THINKING_ONLY` lists model IDs that reject fixed-budget thinking (`claude-fable-5`, `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`). The adapter auto-converts `{ type: 'enabled', budget_tokens: N }` into `{ type: 'adaptive' }` for those models. The rule is documented in `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` (L1176-1177: `'adaptive'` is for "Opus 4.6+" and is the default for models that support it). When a new Opus/Fable ships, add it to the set.
