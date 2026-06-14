@@ -2,12 +2,15 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.7.0] — 2026-06-13
+## [0.7.0] — 2026-06-14
 
 ### Added
 - **Mid-turn message injection (streaming-input mode)** — opt into `RuntimeExecuteParams.streamingInput: true` to keep the session's input channel open and push follow-up user messages into a live turn via the new optional `RuntimeAdapter.pushMessage(text): boolean`. Accepted pushes surface as a new `user_message` UnifiedEvent (`{ text, timestamp }`), and `execute()` may now yield **multiple** `result` events (one per delivered turn). `pushMessage` returns `false` when the channel is closed/closing or the adapter isn't in streaming-input mode, so callers re-dispatch after-turn with `resumeSessionId` — no lost-message window.
 - **Capability discovery** — new `architectureCapabilities(architecture)` (and `ArchitectureCapabilities` type) reporting `{ midTurnPush }`. Only `claude-code` (and its provider variants) supports mid-turn push today, riding `@anthropic-ai/claude-agent-sdk`'s streaming-input mode; `codex`, `gemini`, `opencode`, and unknown architectures report `false`.
 - New example `examples/claude-code/streaming-input.ts` and a streaming-input E2E that resolves whether the SDK delivers a pushed message between tool calls or at the turn boundary (risk R1).
+
+### Fixed
+- **Subagents available to the claude-code adapter in plan mode** — `Task` was in `CLAUDE_CODE_MUTATING_BUILTINS`, so it landed in `disallowedTools` and was dropped from the plan-mode tools whitelist, blocking legitimate read-only subagent use (research, exploration) with "no access to Task". `Task` and `Agent` now live in `CLAUDE_CODE_READONLY_BUILTINS` (both names are needed: `Task`→`Agent` was renamed in Claude Code v2.1.63, but the `system:init` tools list still uses `Task`), leaving only the genuinely mutating built-ins (`Bash`, `Edit`, `Write`, `NotebookEdit`) gated. As in native Claude Code plan mode, read-only is **not** enforced inside a spawned subagent — a subagent does not inherit the parent's `disallowedTools`.
 
 All additions are optional and backward compatible — with `streamingInput` off, `execute()` behaves exactly as before (one prompt, one `result`).
 

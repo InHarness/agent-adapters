@@ -2,8 +2,8 @@
 name: unified-architecture
 description: >-
   Use when editing src/types.ts, src/index.ts, src/models.ts, or adding a new
-  adapter/event type to @inharness-ai/agent-adapters. Explains the RuntimeAdapter
-  contract, the UnifiedEvent taxonomy, NormalizedMessage shape,
+  adapter/event type to @inharness-ai/agent-adapters. Explains the
+  RuntimeAdapter contract, the UnifiedEvent taxonomy, NormalizedMessage shape,
   RuntimeExecuteParams, the capability matrix across adapters, and the checklist
   for extending the unified layer without breaking adapters.
 ---
@@ -134,6 +134,7 @@ When both `onUserInput` and `onElicitation` are provided, `onUserInput` wins.
 
 This table decides whether a new unified feature degrades gracefully. If you add a new event/field and three adapters can't emit it, design the graceful degradation (warning event, or silently skip with adapter-specific note).
 
+<!-- anchor: 6lok5126 -->
 ### Session-resume immutability (`session-resume.ts`)
 
 `model` and the reasoning/thinking config must stay constant across all turns of a resumed session. Adapters are stateless and do **not** enforce this — the library only declares it, so consumers (who hold the thread's original config) can lock UI controls or fork a new session. Source of truth: the `resumeImmutable` flag on `ArchOption` (`options.ts`) plus the always-immutable `model`. Helpers: `getSessionResumeConstraints(architecture)`, `isSessionFieldMutable(architecture, path)`, `findResumeViolations(architecture, original, next)` — all pure. When adding a new reasoning/thinking arch option, set `resumeImmutable: true` on it; generation-only knobs (temperature, top-p) stay mutable. See README "Session resume".
