@@ -4,12 +4,20 @@
 //
 // Requires: @modelcontextprotocol/sdk (peer dep) and zod (for tool input schemas).
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { createRequire } from 'node:module';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { McpSdkServerConfig } from './types.js';
 
 // Re-export McpServer for consumers who need the type
 export type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+// @modelcontextprotocol/sdk is an optional peer dependency. Importing it at the
+// top level would eagerly require it whenever the package's main entry is loaded
+// (which re-exports createMcpServer/mcpTool), crashing consumers who don't have
+// it installed. The SDK is CommonJS, so a synchronous createRequire lets us load
+// it lazily on first use while keeping createMcpServer() synchronous.
+const requireSdk = createRequire(import.meta.url);
 
 /** Handler function for an MCP tool. */
 export type McpToolHandler = (
@@ -78,6 +86,9 @@ export interface McpServerInstance {
  * ```
  */
 export function createMcpServer(options: CreateMcpServerOptions): McpServerInstance {
+  const { McpServer } = requireSdk(
+    '@modelcontextprotocol/sdk/server/mcp.js',
+  ) as typeof import('@modelcontextprotocol/sdk/server/mcp.js');
   const server = new McpServer(
     { name: options.name, version: options.version ?? '1.0.0' },
     { capabilities: { tools: options.tools?.length ? {} : undefined } },

@@ -11,8 +11,9 @@
 // do not expose MCP configuration. Incoming mcp_tool_call events from pre-configured
 // servers are normalized to UnifiedEvent.
 
-import { Codex } from '@openai/codex-sdk';
-import type { ThreadItem } from '@openai/codex-sdk';
+// SDK is an optional peer dependency — import only types at the top level
+// (erased at compile time) and load the runtime value lazily inside execute().
+import type { Codex, ThreadItem } from '@openai/codex-sdk';
 import type {
   RuntimeAdapter,
   RuntimeExecuteParams,
@@ -144,8 +145,10 @@ export class CodexAdapter implements RuntimeAdapter {
       codexOptions.baseURL = config.codex_baseUrl as string;
     }
 
+    let Codex: typeof import('@openai/codex-sdk').Codex;
     let codex: InstanceType<typeof Codex>;
     try {
+      ({ Codex } = await import('@openai/codex-sdk'));
       codex = new Codex(codexOptions as ConstructorParameters<typeof Codex>[0]);
     } catch (err) {
       yield { type: 'error', error: new AdapterInitError('codex', err), phase: 'init' };
