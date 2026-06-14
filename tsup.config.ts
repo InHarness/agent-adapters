@@ -12,6 +12,9 @@ export default defineConfig({
   format: ['esm', 'cjs'],
   dts: true,
   splitting: true,
+  // Shim import.meta.url in the CJS output (used by mcp.ts's createRequire to
+  // lazily load the optional @modelcontextprotocol/sdk peer dependency).
+  shims: true,
   clean: true,
   outDir: 'dist',
   external: [

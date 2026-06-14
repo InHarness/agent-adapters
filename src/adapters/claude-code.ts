@@ -2,7 +2,12 @@
 // SDK: @anthropic-ai/claude-agent-sdk
 // Auth: SDK manages internally (OAuth, cached credentials, ANTHROPIC_API_KEY)
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
+// SDK is an optional peer dependency — import only types at the top level
+// (erased at compile time) and load the runtime `query` value lazily inside
+// execute(), so importing this module (and the package's main entry, which
+// re-exports the adapter) never statically requires the SDK. Consumers needing
+// the SDK's in-process MCP primitives import them directly from
+// `@anthropic-ai/claude-agent-sdk` (createSdkMcpServer, tool).
 import type { SDKMessage, SDKUserMessage, Options, Query, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import type {
   RuntimeAdapter,
@@ -24,9 +29,6 @@ import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../typ
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
-
-// Re-export SDK MCP primitives for consumers building in-process MCP servers
-export { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 
 // Re-export generic MCP builder from the library
 export { createMcpServer, mcpTool } from '../mcp.js';
@@ -642,6 +644,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
     let q: Query;
     try {
+      const { query } = await import('@anthropic-ai/claude-agent-sdk');
       q = query({
         prompt: inputChannel ? inputChannel.iterable : params.prompt,
         options,

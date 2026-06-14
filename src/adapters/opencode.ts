@@ -3,9 +3,9 @@
 // Auth: OPENROUTER_API_KEY env var
 // Requires: opencode CLI in PATH
 
-import { createOpencode } from '@opencode-ai/sdk';
+// SDK is an optional peer dependency — import only types at the top level
+// (erased at compile time) and load the runtime values lazily inside execute().
 import type { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeClient as createOpencodeClientV2 } from '@opencode-ai/sdk/v2/client';
 import type {
   RuntimeAdapter,
   RuntimeExecuteParams,
@@ -134,6 +134,18 @@ export class OpencodeAdapter implements RuntimeAdapter {
         yield { type: 'error', error: new AdapterInitError('opencode', err), phase: 'init' };
         return;
       }
+    }
+
+    let createOpencode: typeof import('@opencode-ai/sdk').createOpencode;
+    let createOpencodeClientV2: typeof import('@opencode-ai/sdk/v2/client').createOpencodeClient;
+    try {
+      ({ createOpencode } = await import('@opencode-ai/sdk'));
+      ({ createOpencodeClient: createOpencodeClientV2 } = await import('@opencode-ai/sdk/v2/client'));
+    } catch (err) {
+      await mirrored?.cleanupMirror().catch(() => {});
+      await materialized?.cleanup().catch(() => {});
+      yield { type: 'error', error: new AdapterInitError('opencode', err), phase: 'init' };
+      return;
     }
 
     let client: OpencodeClient;

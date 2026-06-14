@@ -4,7 +4,11 @@
 // Auth: ANTHROPIC_API_KEY or Claude Code OAuth
 
 import { z } from 'zod';
-import { ClaudeCodeAdapter, createSdkMcpServer, tool } from '../../src/adapters/claude-code.js';
+import { ClaudeCodeAdapter } from '../../src/adapters/claude-code.js';
+// The SDK's in-process MCP primitives are imported directly from the SDK — the
+// adapter no longer re-exports them (keeps the optional peer SDK out of the
+// library's eager module graph).
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 
 // Use the SDK's `tool()` helper — gives full Zod type inference for args
 const noteStore: string[] = [];
