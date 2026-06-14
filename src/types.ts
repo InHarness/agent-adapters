@@ -540,11 +540,14 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
    * servers in plan mode.
    *
    * Per-adapter mapping:
-   * - claude-code: hides mutating built-ins (Bash, Edit, Write, NotebookEdit,
-   *   Task) from the model's catalog via `tools` + `disallowedTools` and runs
-   *   under `permissionMode: 'bypassPermissions'`. See the "Permission model &
-   *   read-only agents" section in `.claude/skills/claude-code-sdk/SKILL.md`
-   *   for why SDK's `permissionMode: 'plan'` is intentionally NOT used here.
+   * - claude-code: hides mutating built-ins (Bash, Edit, Write, NotebookEdit)
+   *   from the model's catalog via `tools` + `disallowedTools` and runs under
+   *   `permissionMode: 'bypassPermissions'`. Subagents (Task/Agent) ARE allowed
+   *   in plan mode (read-only research); as in native Claude Code, read-only is
+   *   NOT enforced inside a spawned subagent (it doesn't inherit the parent's
+   *   disallowedTools). See the "Permission model & read-only agents" section in
+   *   `.claude/skills/claude-code-sdk/SKILL.md` for why SDK's
+   *   `permissionMode: 'plan'` is intentionally NOT used here.
    * - gemini: approvalMode='plan'
    * - codex: sandboxMode='read-only'
    * - opencode: no-op with warning

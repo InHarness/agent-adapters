@@ -64,13 +64,21 @@ export const CLAUDE_CODE_READONLY_BUILTINS: string[] = [
   // be opened — the SDK reports "No such tool available: Skill". Any mutating
   // action a skill suggests is still gated by CLAUDE_CODE_MUTATING_BUILTINS.
   'Skill',
+  // Subagent spawning is allowed in plan mode (read-only research, exploration).
+  // We do NOT enforce read-only INSIDE a spawned subagent — a subagent doesn't
+  // inherit the parent's disallowedTools, so a built-in general-purpose subagent
+  // can still mutate. This matches native Claude Code plan-mode behaviour.
+  // The tool was renamed Task→Agent (Claude Code v2.1.63): the SDK emits 'Agent'
+  // in tool_use blocks but the system:init tools list still uses 'Task', so both
+  // names must be whitelisted to expose it across SDK versions.
+  'Task',
+  'Agent',
 ];
 export const CLAUDE_CODE_MUTATING_BUILTINS: string[] = [
   'Bash',
   'Edit',
   'Write',
   'NotebookEdit',
-  'Task',
 ];
 
 // --- Debug logging ---
