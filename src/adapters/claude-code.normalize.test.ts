@@ -237,4 +237,24 @@ describe('plan-mode tool whitelist', () => {
   it('does not also list Skill as a mutating built-in', () => {
     expect(CLAUDE_CODE_MUTATING_BUILTINS).not.toContain('Skill');
   });
+
+  // Subagents are allowed in plan mode (read-only research). Both names are
+  // whitelisted because Task→Agent was renamed in Claude Code v2.1.63 but the
+  // system:init tools list (what `tools`/`disallowedTools` filter against) still
+  // uses 'Task'.
+  it('exposes subagent spawning (Task and Agent) as read-only built-ins', () => {
+    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('Task');
+    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('Agent');
+  });
+
+  it('does not list subagent spawning as a mutating built-in', () => {
+    expect(CLAUDE_CODE_MUTATING_BUILTINS).not.toContain('Task');
+    expect(CLAUDE_CODE_MUTATING_BUILTINS).not.toContain('Agent');
+  });
+
+  it('still blocks the genuinely mutating built-ins in plan mode', () => {
+    expect(CLAUDE_CODE_MUTATING_BUILTINS).toEqual(
+      expect.arrayContaining(['Bash', 'Edit', 'Write', 'NotebookEdit']),
+    );
+  });
 });
