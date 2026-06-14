@@ -2,6 +2,16 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.8.0] — 2026-06-14
+
+### Fixed
+- **Optional peer SDKs are no longer required at module load.** Importing anything from the main entry (e.g. `registerAdapter`, `createAdapter`) no longer throws `Cannot find package '@anthropic-ai/claude-agent-sdk'` when an optional peer SDK is absent. The `claude-code`, `codex`, and `opencode` adapters now keep only `import type` at the top level and load their SDK values lazily via `await import()` inside `execute()` (matching the existing `gemini` adapter), and `createMcpServer` lazily `createRequire`s `@modelcontextprotocol/sdk`. A consumer that never touches a given adapter never loads its SDK. Covered by a regression guard (`no-eager-sdk.test.ts`) that asserts `dist/index.js` statically imports none of the five optional SDKs.
+
+### Removed
+- **BREAKING (minor):** `createSdkMcpServer` and `tool` are no longer re-exported from `@inharness-ai/agent-adapters/claude-code`. They were thin pass-throughs to `@anthropic-ai/claude-agent-sdk` and a source of the eager-load bug above. Import them directly from the SDK instead: `import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'`. The library's own `createMcpServer`/`mcpTool` builders are unchanged.
+
+[0.8.0]: https://github.com/InHarness/agent-adapters/compare/v0.7.0...v0.8.0
+
 ## [0.7.0] — 2026-06-14
 
 ### Added
