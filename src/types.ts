@@ -223,6 +223,19 @@ export type UnifiedEvent =
   | { type: 'warning'; message: string }
   | { type: 'user_input_request'; request: UserInputRequest }
   /**
+   * A user message that was accepted into the live session mid-turn via
+   * {@link RuntimeAdapter.pushMessage} (streaming-input mode). Emitted the
+   * moment the push is accepted onto the open input channel — before the
+   * model's response to it. Consumers persist this as a user message in the
+   * conversation and forward it over their wire protocol so the rendered
+   * order matches what the model saw.
+   *
+   * Only emitted by adapters whose {@link architectureCapabilities} report
+   * `midTurnPush: true` (currently claude-code) when run with
+   * `RuntimeExecuteParams.streamingInput`.
+   */
+  | { type: 'user_message'; text: string; timestamp: number }
+  /**
    * Unified todo-list update. Snapshot of the full list, not a delta.
    *
    * Per-adapter support:
@@ -534,6 +547,24 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   priorUsage?: UsageStats;
 
   /**
+   * Opt into streaming-input mode. When true the adapter feeds the underlying
+   * SDK an open `AsyncIterable` of user messages instead of a one-shot string
+   * prompt, enabling {@link RuntimeAdapter.pushMessage} for mid-turn injection.
+   * The initial `prompt` is seeded as the first message.
+   *
+   * In this mode `execute()` may yield MULTIPLE `result` events — one per
+   * delivered turn — and the stream stays alive across turns until the input
+   * channel drains (no pending pushes after a turn's `result`) or `abort()` is
+   * called. With `streamingInput` absent/false the one-shot contract is
+   * unchanged: a single `result` then the stream ends.
+   *
+   * Only honored by adapters whose {@link architectureCapabilities} report
+   * `midTurnPush: true` (currently claude-code). Ignored elsewhere — those
+   * adapters run the normal one-shot path and `pushMessage` returns false.
+   */
+  streamingInput?: boolean;
+
+  /**
    * When true, adapter runs in plan-only mode: read-only tools allowed,
    * writes/edits/shell-mutations blocked. MCP servers listed in `mcpServers`
    * remain executable — the consumer is responsible for only passing read-only
@@ -582,6 +613,22 @@ export interface RuntimeAdapter {
   architecture: Architecture;
   execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent>;
   abort(): void;
+  /**
+   * Push a user message into the live session mid-turn (streaming-input mode).
+   *
+   * Returns `true` if the message was accepted onto the open input channel for
+   * delivery, `false` if the channel is closed/closing (the turn ended) or the
+   * adapter is not running with `RuntimeExecuteParams.streamingInput`. On
+   * `false` the caller should re-dispatch the message after the turn as a fresh
+   * `execute()` with `resumeSessionId` — there is no lost-message window, the
+   * boolean tells you which path the message took.
+   *
+   * Accepting a push emits a {@link UnifiedEvent} `{ type: 'user_message' }`.
+   *
+   * Optional: adapters without streaming-input support omit it. Check
+   * {@link architectureCapabilities}`(arch).midTurnPush` before relying on it.
+   */
+  pushMessage?(text: string): boolean;
 }
 
 export type AdapterFactory = () => RuntimeAdapter;

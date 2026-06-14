@@ -213,6 +213,7 @@ All adapters produce the same event types:
 | `subagent_progress` | Subagent progress update |
 | `subagent_completed` | Subagent task finished |
 | `result` | Terminal event — output, rawMessages, usage (BILLING tokens), contextSize (CONTEXT WINDOW utilization) |
+| `user_message` | A message pushed into the live session mid-turn (streaming-input mode — see [Mid-turn message injection](#mid-turn-message-injection)) |
 | `error` | Error event |
 | `warning` | Non-fatal notice (e.g. an option was dropped by this adapter) |
 | `flush` | Context compaction boundary |
@@ -615,6 +616,51 @@ if (violations.length > 0) {
 
 `findResumeViolations` only flags a field when it is present on **both** sides and the values differ — partial configs never produce false positives. Per-turn fields (prompt, system prompt, tools, MCP servers, skills, plan mode, temperature/top-p) are all mutable and never reported.
 
+## Mid-turn message injection
+
+By default `execute()` is one-shot: one prompt in, one `result` out. Opt into **streaming-input mode** with `streamingInput: true` to keep the session's input channel open and push additional user messages *while the agent is still working* — useful for chat UIs that want to leave the composer unlocked during a turn.
+
+```ts
+import { createAdapter, architectureCapabilities } from '@inharness-ai/agent-adapters';
+
+// Discover support up front — no trial call needed.
+if (!architectureCapabilities('claude-code').midTurnPush) return; // → true for claude-code
+
+const adapter = createAdapter('claude-code');
+
+for await (const event of adapter.execute({
+  prompt: 'Start the long task…',
+  systemPrompt: '…',
+  model: 'sonnet-4.6',
+  streamingInput: true, // open input channel, seeded with `prompt`
+})) {
+  if (event.type === 'tool_use') {
+    // Inject a follow-up into the LIVE session.
+    const accepted = adapter.pushMessage?.('Also handle the edge case.') ?? false;
+    // accepted === false → the turn is closing; re-dispatch after it ends
+    // with a fresh execute({ resumeSessionId }) instead.
+  }
+  if (event.type === 'user_message') {
+    // The push was accepted — persist it as a user message in your transcript.
+    // Emitted before the model's response, so rendered order matches the model's view.
+  }
+  if (event.type === 'result') {
+    // In streaming-input mode you may receive MULTIPLE result events — one per
+    // delivered turn. A push accepted during a turn runs as the next turn in the
+    // same session and yields its own result.
+  }
+}
+```
+
+Contract:
+
+- **`pushMessage(text): boolean`** — `true` if the message was accepted onto the open channel, `false` if the channel is closed/closing (turn ended) or the adapter isn't in streaming-input mode. The boolean tells you which delivery path the message took — there is **no lost-message window**: on `false`, re-dispatch after the turn via `resumeSessionId`.
+- **`user_message` event** — emitted the moment a push is accepted, before the model responds to it.
+- **Multiple `result` events** — `execute()` stays alive across turns until the channel drains (no pending push after a `result`) or you call `abort()`. With `streamingInput` off, behavior is unchanged: a single `result`, then the stream ends.
+- **Capability** — only `claude-code` (and its provider variants) supports this today; `architectureCapabilities(arch).midTurnPush` is `false` for `codex`, `gemini`, `opencode`, and unknown architectures. For those, use the after-turn path (re-dispatch with `resumeSessionId`).
+
+> **Mid-turn ≠ instantaneous.** The contract is "delivered as early as the runtime allows." Whether the underlying SDK hands a pushed message to the model *between tool calls* within a turn or only at the *next turn boundary* is a property of the runtime. For `claude-code` (riding `@anthropic-ai/claude-agent-sdk`'s streaming-input mode) the observed behavior is **true mid-turn delivery**: a message pushed after the model's first tool call is acted on within the *same* turn (the model issues a follow-up tool call before the single `result`) — see the streaming-input E2E in `src/testing/e2e/claude-code.e2e.test.ts`. A push that lands exactly at the turn boundary instead runs as the next turn in the same session and yields an additional `result`.
+
 ## Token usage
 
 Every `result` event carries **two distinct metrics** — pick the right one for your UI:
@@ -789,6 +835,7 @@ interface RuntimeExecuteParams {
   cwd?: string;                                // working directory
   resumeSessionId?: string;                    // session resumption
   priorUsage?: UsageStats;                     // codex cross-process resume only — see "Token usage"
+  streamingInput?: boolean;                    // open input channel for pushMessage() — see "Mid-turn message injection"
   maxTurns?: number;                           // max conversation turns (claude-code: cumulative across resume)
   timeoutMs?: number;                          // execution timeout
   architectureConfig?: Record<string, unknown>; // architecture-specific config
@@ -828,6 +875,7 @@ examples/
     thinking.ts            # Extended thinking
     ollama-local.ts        # Local Ollama backend
     mcp-sdk-tools.ts       # SDK's createSdkMcpServer + tool()
+    streaming-input.ts     # Mid-turn pushMessage() into a live session
   codex/
     sandbox.ts             # Sandboxed execution
   opencode/

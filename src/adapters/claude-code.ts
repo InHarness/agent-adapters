@@ -3,7 +3,7 @@
 // Auth: SDK manages internally (OAuth, cached credentials, ANTHROPIC_API_KEY)
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKMessage, Options, Query, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SDKUserMessage, Options, Query, SdkPluginConfig } from '@anthropic-ai/claude-agent-sdk';
 import type {
   RuntimeAdapter,
   RuntimeExecuteParams,
@@ -200,16 +200,111 @@ function safeParseJson(s: string): Record<string, unknown> | undefined {
   }
 }
 
+// --- Streaming input channel ---
+
+/**
+ * Manually-driven `AsyncIterable<SDKUserMessage>` handed to `query()` in
+ * streaming-input mode. The SDK pulls from it at turn boundaries; the adapter
+ * pushes into it via `pushMessage()`. Closing it ends the conversation (the
+ * SDK's next pull resolves `done`).
+ */
+interface InputChannel {
+  iterable: AsyncIterable<SDKUserMessage>;
+  /** Enqueue a message for the next SDK pull (no-op once closed). */
+  enqueue(msg: SDKUserMessage): void;
+  /** Close the channel — the SDK's next pull resolves `done`. */
+  close(): void;
+  /** True once `close()` has been called. */
+  readonly closed: boolean;
+  /** True if buffered messages are waiting to be pulled by the SDK. */
+  hasPending(): boolean;
+}
+
+function buildUserMessage(text: string): SDKUserMessage {
+  return {
+    type: 'user',
+    message: { role: 'user', content: text },
+    parent_tool_use_id: null,
+  } as SDKUserMessage;
+}
+
+function createInputChannel(seed: SDKUserMessage): InputChannel {
+  const queue: SDKUserMessage[] = [seed];
+  let resolveNext: ((r: IteratorResult<SDKUserMessage>) => void) | null = null;
+  let closed = false;
+
+  const iterable: AsyncIterable<SDKUserMessage> = {
+    [Symbol.asyncIterator]() {
+      return {
+        next(): Promise<IteratorResult<SDKUserMessage>> {
+          if (queue.length > 0) {
+            return Promise.resolve({ value: queue.shift()!, done: false });
+          }
+          if (closed) {
+            return Promise.resolve({ value: undefined as never, done: true });
+          }
+          return new Promise<IteratorResult<SDKUserMessage>>((resolve) => {
+            resolveNext = resolve;
+          });
+        },
+      };
+    },
+  };
+
+  return {
+    iterable,
+    enqueue(msg) {
+      if (closed) return;
+      if (resolveNext) {
+        const r = resolveNext;
+        resolveNext = null;
+        r({ value: msg, done: false });
+      } else {
+        queue.push(msg);
+      }
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      if (resolveNext) {
+        const r = resolveNext;
+        resolveNext = null;
+        r({ value: undefined as never, done: true });
+      }
+    },
+    get closed() {
+      return closed;
+    },
+    hasPending() {
+      return queue.length > 0;
+    },
+  };
+}
+
 // --- Adapter ---
 
 export class ClaudeCodeAdapter implements RuntimeAdapter {
   architecture = 'claude-code' as const;
   private abortController: AbortController | null = null;
+  /** Streaming-input push handler — set per-`execute()` when streamingInput is on. */
+  private pushHandler: ((text: string) => boolean) | null = null;
+  /** Closes the active input channel (set per-`execute()` in streaming mode). */
+  private closeInputChannel: (() => void) | null = null;
   /** Populated by factory when a provider is configured. */
   _providerConfig?: Record<string, unknown>;
 
   abort(): void {
     this.abortController?.abort();
+    this.closeInputChannel?.();
+  }
+
+  /**
+   * Push a user message into the live session mid-turn. See
+   * {@link RuntimeAdapter.pushMessage}. Returns false when not in
+   * streaming-input mode or the channel has closed (turn ended).
+   */
+  pushMessage(text: string): boolean {
+    return this.pushHandler?.(text) ?? false;
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
@@ -356,6 +451,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         };
     const pendingUserInputs: PendingUserInput[] = [];
     let userInputWaker: (() => void) | null = null;
+
+    // Streaming-input mode: messages accepted via pushMessage() that still need
+    // a `user_message` event emitted into the loop. The push channel itself is
+    // built below (just before query()); these two queues are drained together
+    // at the top of the main loop and share the userInputWaker wake mechanism.
+    const pendingPushEmits: { text: string; timestamp: number }[] = [];
 
     // Resolve effective handler: onUserInput wins; otherwise bridge onElicitation.
     const effectiveUserInputHandler: UserInputHandler | undefined = params.onUserInput
@@ -521,11 +622,34 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       sdkConfig: redactSecrets({ options }),
     };
 
+    // Streaming-input mode: feed the SDK an open channel seeded with the prompt
+    // so pushMessage() can inject further user messages mid-conversation. When
+    // off (default), the prompt is a one-shot string — identical to before.
+    let inputChannel: InputChannel | null = null;
+    if (params.streamingInput) {
+      inputChannel = createInputChannel(buildUserMessage(params.prompt));
+      this.closeInputChannel = () => inputChannel!.close();
+      this.pushHandler = (text: string) => {
+        if (inputChannel!.closed) return false;
+        inputChannel!.enqueue(buildUserMessage(text));
+        pendingPushEmits.push({ text, timestamp: Date.now() });
+        // Wake the main loop so the user_message event is emitted promptly.
+        userInputWaker?.();
+        userInputWaker = null;
+        return true;
+      };
+    }
+
     let q: Query;
     try {
-      q = query({ prompt: params.prompt, options });
+      q = query({
+        prompt: inputChannel ? inputChannel.iterable : params.prompt,
+        options,
+      });
     } catch (err) {
       clearTimeout(timeoutId);
+      this.pushHandler = null;
+      this.closeInputChannel = null;
       await materialized?.cleanup().catch(() => {});
       yield { type: 'error', error: new AdapterInitError('claude-code', err), phase: 'init' };
       return;
@@ -585,6 +709,14 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             }
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           }
+        }
+
+        // Drain accepted mid-turn pushes: emit a user_message event for each
+        // (the SDKUserMessage is already queued on the input channel; the SDK
+        // picks it up at the next turn boundary).
+        while (pendingPushEmits.length > 0) {
+          const m = pendingPushEmits.shift()!;
+          yield { type: 'user_message', text: m.text, timestamp: m.timestamp };
         }
 
         if (!pendingNext) pendingNext = sdkIterator.next();
@@ -826,6 +958,23 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             } else {
               yield { type: 'error', error: new Error((resultEvent.result as string) ?? 'Unknown error'), phase: 'runtime' };
             }
+            // Streaming-input end-of-turn policy. The consumer just saw this
+            // turn's result (or error) and may have called pushMessage()
+            // synchronously in response; combined with any pushes that arrived
+            // during the turn, a non-empty channel keeps the session open so the
+            // SDK runs the queued message(s) as the next turn — execute() emits
+            // another result. An empty channel is closed synchronously here:
+            // this pins the race window shut, so a pushMessage() landing after
+            // close returns false and the consumer re-dispatches after-turn.
+            // No await runs between the result yield and this check, so the
+            // decision is atomic w.r.t. consumer pushes — no lost-message window.
+            if (inputChannel) {
+              if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
+                // keep open: SDK consumes the next queued message as a new turn
+              } else {
+                inputChannel.close();
+              }
+            }
             break;
           }
 
@@ -845,6 +994,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);
+      // Tear down streaming-input state: detach the push handler so a late
+      // pushMessage() returns false, and close the channel so the SDK isn't
+      // left awaiting input.
+      this.pushHandler = null;
+      this.closeInputChannel = null;
+      inputChannel?.close();
       await materialized?.cleanup().catch((err) =>
         console.warn('[agent-adapters] claude-code skill cleanup failed', err),
       );
