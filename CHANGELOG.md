@@ -2,6 +2,13 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.8.1] — 2026-06-16
+
+### Added
+- **Serialization-safe `AdapterError`.** `AdapterError` now hoists OS system-error fields (`code`, `errno`, `syscall`, `path`) off its `cause` onto the instance and exposes a `toJSON()` so the structured context survives `JSON.stringify` and worker/bridge boundaries — where `Error.message`/`.stack` (non-enumerable) and a degraded bare `{ errno, code, syscall }` cause would otherwise be dropped. `AdapterInitError` also appends actionable, code-specific hints (e.g. `EEXIST` stale temp/lock, `EACCES`/`EPERM` permissions, `EROFS` read-only FS, `ENOSPC`, `ENOENT`) to its message. Covered by new unit tests in `src/types.errors.test.ts`.
+
+[0.8.1]: https://github.com/InHarness/agent-adapters/compare/v0.8.0...v0.8.1
+
 ## [0.8.0] — 2026-06-14
 
 ### Fixed
