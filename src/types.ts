@@ -636,6 +636,15 @@ export type AdapterFactory = () => RuntimeAdapter;
 // --- Errors ---
 
 export class AdapterError extends Error {
+  /** OS error code (e.g. `EEXIST`) when the cause is a Node.js system error. */
+  readonly code?: string;
+  /** Negative OS errno when the cause is a Node.js system error. */
+  readonly errno?: number;
+  /** Failing syscall (e.g. `open`) when the cause is a Node.js system error. */
+  readonly syscall?: string;
+  /** Filesystem path involved, when the cause is a Node.js system error. */
+  readonly path?: string;
+
   constructor(
     message: string,
     public readonly adapter: string,
@@ -643,24 +652,108 @@ export class AdapterError extends Error {
   ) {
     super(message);
     this.name = 'AdapterError';
+    // Hoist structured fields off the cause so they survive serialization.
+    // `Error.message`/`.stack` are non-enumerable (dropped by JSON.stringify),
+    // and a cause that crossed a worker/bridge boundary often arrives as a
+    // bare `{ errno, code, syscall }` with its `path` and message gone. Lifting
+    // these onto the instance (plus toJSON) makes the wire payload self-describing.
+    const sys = extractSysError(cause);
+    if (sys.code !== undefined) this.code = sys.code;
+    if (sys.errno !== undefined) this.errno = sys.errno;
+    if (sys.syscall !== undefined) this.syscall = sys.syscall;
+    if (sys.path !== undefined) this.path = sys.path;
+  }
+
+  /** Serialization-safe shape: surfaces the human `message` and OS fields that
+   *  a plain `JSON.stringify(error)` would otherwise drop. */
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      message: this.message,
+      adapter: this.adapter,
+      ...(this.code !== undefined ? { code: this.code } : {}),
+      ...(this.errno !== undefined ? { errno: this.errno } : {}),
+      ...(this.syscall !== undefined ? { syscall: this.syscall } : {}),
+      ...(this.path !== undefined ? { path: this.path } : {}),
+    };
   }
 }
 
 export class AdapterInitError extends AdapterError {
   constructor(adapter: string, cause?: unknown) {
     const reason = causeToReason(cause);
-    const message = reason
-      ? `Failed to initialize ${adapter} adapter: ${reason}`
-      : `Failed to initialize ${adapter} adapter`;
+    const sys = extractSysError(cause);
+    const hint = sys.code ? initHint(sys) : undefined;
+    const message =
+      `Failed to initialize ${adapter} adapter` +
+      (reason ? `: ${reason}` : '') +
+      (hint ? ` — ${hint}` : '');
     super(message, adapter, cause);
     this.name = 'AdapterInitError';
   }
 }
 
+/** Fields lifted from a Node.js system error (or a plain object shaped like one
+ *  after losing its Error prototype crossing a worker/bridge boundary). */
+interface SysErrorFields {
+  code?: string;
+  errno?: number;
+  syscall?: string;
+  path?: string;
+}
+
+function extractSysError(cause: unknown): SysErrorFields {
+  if (!cause || typeof cause !== 'object') return {};
+  const c = cause as Record<string, unknown>;
+  const out: SysErrorFields = {};
+  if (typeof c.code === 'string') out.code = c.code;
+  if (typeof c.errno === 'number') out.errno = c.errno;
+  if (typeof c.syscall === 'string') out.syscall = c.syscall;
+  if (typeof c.path === 'string') out.path = c.path;
+  return out;
+}
+
+/** Actionable, code-specific guidance for init-phase OS failures. */
+function initHint(sys: SysErrorFields): string | undefined {
+  const target = sys.path ? `\`${sys.path}\`` : 'the target file';
+  switch (sys.code) {
+    case 'EEXIST':
+      return (
+        `a leftover file already exists (${target}) — likely a stale temp/lock from a ` +
+        'previously crashed run; remove it or point CLAUDE_CODE_TMPDIR / CLAUDE_CONFIG_DIR at a clean path'
+      );
+    case 'EACCES':
+    case 'EPERM':
+      return `permission denied for ${target} — check filesystem permissions and ownership`;
+    case 'EROFS':
+      return `read-only filesystem for ${target} — point CLAUDE_CODE_TMPDIR / CLAUDE_CONFIG_DIR at a writable path`;
+    case 'ENOSPC':
+      return `no space left on device while writing ${target}`;
+    case 'ENOENT':
+      return `a path component is missing for ${target} — check cwd and CLAUDE_CONFIG_DIR`;
+    default:
+      return undefined;
+  }
+}
+
 function causeToReason(cause: unknown): string | undefined {
   if (cause === undefined || cause === null) return undefined;
-  if (cause instanceof Error) return cause.message || undefined;
   if (typeof cause === 'string') return cause || undefined;
+
+  // Build the reason from structured OS fields so it stays useful even when the
+  // native message was lost (bare `{ errno, code, syscall }` from a bridge).
+  const sys = extractSysError(cause);
+  if (sys.code) {
+    if (cause instanceof Error && cause.message) {
+      // Native message is richest; keep it, but ensure the code is visible.
+      return cause.message.includes(sys.code) ? cause.message : `${sys.code}: ${cause.message}`;
+    }
+    const where = sys.syscall ? ` (${sys.syscall})` : '';
+    const at = sys.path ? ` at ${sys.path}` : '';
+    return `${sys.code}${where}${at}`;
+  }
+
+  if (cause instanceof Error) return cause.message || undefined;
   try {
     return JSON.stringify(cause);
   } catch {
