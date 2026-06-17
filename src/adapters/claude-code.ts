@@ -29,6 +29,7 @@ import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../typ
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
+import { ensureUsableStdin } from '../stdin-guard.js';
 
 // Re-export generic MCP builder from the library
 export { createMcpServer, mcpTool } from '../mcp.js';
@@ -310,6 +311,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
+    // Self-heal a throwing `process.stdin` (Passenger/CageFS fd-0 EEXIST) before
+    // anything imports the SDK or touches stdin. No-op when stdin is healthy.
+    ensureUsableStdin();
     this.abortController = new AbortController();
 
     let resolvedModel: string;
