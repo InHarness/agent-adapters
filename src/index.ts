@@ -119,6 +119,11 @@ export {
   findResumeViolations,
 } from './session-resume.js';
 
+// stdin guard (self-heals a throwing process.stdin under Passenger/CageFS;
+// exported so hosts that touch stdin at boot can call it at process entry)
+export type { StdinHost } from './stdin-guard.js';
+export { ensureUsableStdin } from './stdin-guard.js';
+
 // Disk skill discovery
 export type {
   DiskSkill,

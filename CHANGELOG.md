@@ -2,6 +2,13 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.8.2] — 2026-06-17
+
+### Fixed
+- **claude-code no longer crashes with `open EEXIST` (fd 0) under Phusion Passenger / CloudLinux CageFS** and similar sandboxed hosts. There, fd 0 is already owned by the process manager, so when the SDK import makes Node lazily construct `process.stdin` (`new Socket` on fd 0), libuv returns `EEXIST` — surfacing as `AdapterInitError: open EEXIST` (`syscall:"open"`, **no** `path`) on every request, right after `adapter_ready`. Despite the message this is **not** a filesystem error. `execute()` now detects a throwing `process.stdin` and replaces it with a benign empty `Readable` before importing the SDK. The SDK never reads the parent's stdin (the child `claude` process gets its own pipes), so streaming input is unaffected, and the guard is a no-op when `process.stdin` is healthy. The repair helper is also exported as `ensureUsableStdin()` for hosts that touch stdin at boot (before `execute()`) and must guard at process entry. Covered by `src/stdin-guard.test.ts`.
+
+[0.8.2]: https://github.com/InHarness/agent-adapters/compare/v0.8.1...v0.8.2
+
 ## [0.8.1] — 2026-06-16
 
 ### Added
