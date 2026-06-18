@@ -657,8 +657,9 @@ lacks, transparently:
 - **opencode** — delivered as a `file` part; `base64` is written to a temp file
   referenced as `file://…`, `url` passes through.
 
-Images ride with the initial `prompt` only (not `pushMessage`). Omitting
-`images` — or passing `[]` — is identical to a text-only prompt.
+Images ride with the initial `prompt` and, on `claude-code`, mid-turn via
+`pushMessage(text, images)` (see [Mid-turn message injection](#mid-turn-message-injection)).
+Omitting `images` — or passing `[]` — is identical to a text-only prompt.
 
 ## Mid-turn message injection
 
@@ -698,8 +699,8 @@ for await (const event of adapter.execute({
 
 Contract:
 
-- **`pushMessage(text): boolean`** — `true` if the message was accepted onto the open channel, `false` if the channel is closed/closing (turn ended) or the adapter isn't in streaming-input mode. The boolean tells you which delivery path the message took — there is **no lost-message window**: on `false`, re-dispatch after the turn via `resumeSessionId`.
-- **`user_message` event** — emitted the moment a push is accepted, before the model responds to it.
+- **`pushMessage(text, images?): boolean`** — `true` if the message was accepted onto the open channel, `false` if the channel is closed/closing (turn ended) or the adapter isn't in streaming-input mode. The boolean tells you which delivery path the message took — there is **no lost-message window**: on `false`, re-dispatch after the turn via `resumeSessionId`. Optional `images` (same shape as `RuntimeExecuteParams.images`) are normalized exactly like the initial prompt's; an unsupported media type or unreadable file **throws synchronously** (distinct from the `false` return, which only means the channel was closed).
+- **`user_message` event** — emitted the moment a push is accepted, before the model responds to it; carries `images` when the push included any.
 - **Multiple `result` events** — `execute()` stays alive across turns until the channel drains (no pending push after a `result`) or you call `abort()`. With `streamingInput` off, behavior is unchanged: a single `result`, then the stream ends.
 - **Capability** — only `claude-code` (and its provider variants) supports this today; `architectureCapabilities(arch).midTurnPush` is `false` for `codex`, `gemini`, `opencode`, and unknown architectures. For those, use the after-turn path (re-dispatch with `resumeSessionId`).
 

@@ -30,7 +30,7 @@ import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../typ
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
-import { assertAnthropicMediaType, readImageAsBase64 } from '../images-tempdir.js';
+import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
 
 // Re-export generic MCP builder from the library
@@ -233,6 +233,12 @@ function buildUserMessage(content: string | unknown[]): SDKUserMessage {
   } as SDKUserMessage;
 }
 
+/** Build a validated Anthropic base64 image block. */
+function base64ImageBlock(mediaType: string, data: string): unknown {
+  assertAnthropicMediaType(mediaType);
+  return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
+}
+
 /**
  * Resolve `params.images` into Anthropic image content blocks. `file` sources are
  * read and inlined as base64 (the SDK accepts base64 + url, not local paths); all
@@ -243,20 +249,33 @@ export async function buildClaudeImageBlocks(images: ImageInput[]): Promise<unkn
   const blocks: unknown[] = [];
   for (const img of images) {
     if (img.type === 'base64') {
-      assertAnthropicMediaType(img.mediaType);
-      blocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: img.mediaType, data: img.data },
-      });
+      blocks.push(base64ImageBlock(img.mediaType, img.data));
     } else if (img.type === 'url') {
       blocks.push({ type: 'image', source: { type: 'url', url: img.url } });
     } else {
       const { mediaType, data } = await readImageAsBase64(img.path, img.mediaType);
-      assertAnthropicMediaType(mediaType);
-      blocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: mediaType, data },
-      });
+      blocks.push(base64ImageBlock(mediaType, data));
+    }
+  }
+  return blocks;
+}
+
+/**
+ * Synchronous twin of {@link buildClaudeImageBlocks}, used by the mid-turn push
+ * path ({@link ClaudeCodeAdapter.pushMessage} returns a plain boolean and cannot
+ * await). `file` sources are read with `readFileSync`; base64/url need no I/O.
+ * Throws on an unsupported media type or unreadable file — the caller surfaces it.
+ */
+export function buildClaudeImageBlocksSync(images: ImageInput[]): unknown[] {
+  const blocks: unknown[] = [];
+  for (const img of images) {
+    if (img.type === 'base64') {
+      blocks.push(base64ImageBlock(img.mediaType, img.data));
+    } else if (img.type === 'url') {
+      blocks.push({ type: 'image', source: { type: 'url', url: img.url } });
+    } else {
+      const { mediaType, data } = readImageAsBase64Sync(img.path, img.mediaType);
+      blocks.push(base64ImageBlock(mediaType, data));
     }
   }
   return blocks;
@@ -321,7 +340,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
   architecture = 'claude-code' as const;
   private abortController: AbortController | null = null;
   /** Streaming-input push handler — set per-`execute()` when streamingInput is on. */
-  private pushHandler: ((text: string) => boolean) | null = null;
+  private pushHandler: ((text: string, images?: ImageInput[]) => boolean) | null = null;
   /** Closes the active input channel (set per-`execute()` in streaming mode). */
   private closeInputChannel: (() => void) | null = null;
   /** Populated by factory when a provider is configured. */
@@ -336,9 +355,15 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
    * Push a user message into the live session mid-turn. See
    * {@link RuntimeAdapter.pushMessage}. Returns false when not in
    * streaming-input mode or the channel has closed (turn ended).
+   *
+   * Optional `images` are normalized into Anthropic content blocks the same way
+   * the initial prompt's images are (synchronously — `file` sources are read with
+   * `readFileSync`). Throws (synchronously) on an unsupported media type or
+   * unreadable file; that is distinct from the `false` return, which means only
+   * that the channel was closed.
    */
-  pushMessage(text: string): boolean {
-    return this.pushHandler?.(text) ?? false;
+  pushMessage(text: string, images?: ImageInput[]): boolean {
+    return this.pushHandler?.(text, images) ?? false;
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
@@ -493,7 +518,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // a `user_message` event emitted into the loop. The push channel itself is
     // built below (just before query()); these two queues are drained together
     // at the top of the main loop and share the userInputWaker wake mechanism.
-    const pendingPushEmits: { text: string; timestamp: number }[] = [];
+    const pendingPushEmits: { text: string; images?: ImageInput[]; timestamp: number }[] = [];
 
     // Resolve effective handler: onUserInput wins; otherwise bridge onElicitation.
     const effectiveUserInputHandler: UserInputHandler | undefined = params.onUserInput
@@ -686,10 +711,17 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     if (params.streamingInput) {
       inputChannel = createInputChannel(buildUserMessage(seedContent));
       this.closeInputChannel = () => inputChannel!.close();
-      this.pushHandler = (text: string) => {
+      this.pushHandler = (text: string, images?: ImageInput[]) => {
         if (inputChannel!.closed) return false;
-        inputChannel!.enqueue(buildUserMessage(text));
-        pendingPushEmits.push({ text, timestamp: Date.now() });
+        // Build image blocks BEFORE enqueueing: a bad image throws here, leaving
+        // nothing half-delivered. base64/url need no I/O; `file` is read sync so
+        // enqueue stays atomic w.r.t. the end-of-turn close check (see below).
+        const blocks = images?.length ? buildClaudeImageBlocksSync(images) : null;
+        const content: string | unknown[] = blocks
+          ? [{ type: 'text', text }, ...blocks]
+          : text;
+        inputChannel!.enqueue(buildUserMessage(content));
+        pendingPushEmits.push({ text, images, timestamp: Date.now() });
         // Wake the main loop so the user_message event is emitted promptly.
         userInputWaker?.();
         userInputWaker = null;
@@ -780,7 +812,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         // picks it up at the next turn boundary).
         while (pendingPushEmits.length > 0) {
           const m = pendingPushEmits.shift()!;
-          yield { type: 'user_message', text: m.text, timestamp: m.timestamp };
+          yield {
+            type: 'user_message',
+            text: m.text,
+            ...(m.images?.length ? { images: m.images } : {}),
+            timestamp: m.timestamp,
+          };
         }
 
         if (!pendingNext) pendingNext = sdkIterator.next();
