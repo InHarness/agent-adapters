@@ -18,16 +18,23 @@ export interface ArchitectureCapabilities {
    * after-turn path (re-dispatch with `resumeSessionId`) for them.
    */
   midTurnPush: boolean;
+  /**
+   * The adapter accepts images on the initial prompt via
+   * `RuntimeExecuteParams.images`. True for all built-in adapters — those whose
+   * SDK only takes a local path or url have base64 transparently materialized to
+   * a temp file. See {@link ImageInput} for per-adapter delivery.
+   */
+  imageInput: boolean;
 }
 
 const CAPABILITIES: Record<string, ArchitectureCapabilities> = {
-  'claude-code': { midTurnPush: true },
-  'claude-code-ollama': { midTurnPush: true },
-  'claude-code-minimax': { midTurnPush: true },
-  codex: { midTurnPush: false },
-  opencode: { midTurnPush: false },
-  'opencode-openrouter': { midTurnPush: false },
-  gemini: { midTurnPush: false },
+  'claude-code': { midTurnPush: true, imageInput: true },
+  'claude-code-ollama': { midTurnPush: true, imageInput: true },
+  'claude-code-minimax': { midTurnPush: true, imageInput: true },
+  codex: { midTurnPush: false, imageInput: true },
+  opencode: { midTurnPush: false, imageInput: true },
+  'opencode-openrouter': { midTurnPush: false, imageInput: true },
+  gemini: { midTurnPush: false, imageInput: true },
 };
 
 /**
@@ -36,5 +43,5 @@ const CAPABILITIES: Record<string, ArchitectureCapabilities> = {
  * (after-turn) path.
  */
 export function architectureCapabilities(architecture: Architecture): ArchitectureCapabilities {
-  return CAPABILITIES[architecture] ?? { midTurnPush: false };
+  return CAPABILITIES[architecture] ?? { midTurnPush: false, imageInput: false };
 }

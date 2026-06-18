@@ -24,11 +24,13 @@ import type {
   UserInputQuestion,
   ElicitationRequest,
   ElicitationResponse,
+  ImageInput,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
+import { assertAnthropicMediaType, readImageAsBase64 } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
 
 // Re-export generic MCP builder from the library
@@ -223,12 +225,41 @@ interface InputChannel {
   hasPending(): boolean;
 }
 
-function buildUserMessage(text: string): SDKUserMessage {
+function buildUserMessage(content: string | unknown[]): SDKUserMessage {
   return {
     type: 'user',
-    message: { role: 'user', content: text },
+    message: { role: 'user', content },
     parent_tool_use_id: null,
   } as SDKUserMessage;
+}
+
+/**
+ * Resolve `params.images` into Anthropic image content blocks. `file` sources are
+ * read and inlined as base64 (the SDK accepts base64 + url, not local paths); all
+ * base64 media types are validated against Anthropic's accepted set. Returns the
+ * blocks to splice after the text block — never touches disk.
+ */
+export async function buildClaudeImageBlocks(images: ImageInput[]): Promise<unknown[]> {
+  const blocks: unknown[] = [];
+  for (const img of images) {
+    if (img.type === 'base64') {
+      assertAnthropicMediaType(img.mediaType);
+      blocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: img.mediaType, data: img.data },
+      });
+    } else if (img.type === 'url') {
+      blocks.push({ type: 'image', source: { type: 'url', url: img.url } });
+    } else {
+      const { mediaType, data } = await readImageAsBase64(img.path, img.mediaType);
+      assertAnthropicMediaType(mediaType);
+      blocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: mediaType, data },
+      });
+    }
+  }
+  return blocks;
 }
 
 function createInputChannel(seed: SDKUserMessage): InputChannel {
@@ -628,12 +659,32 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       sdkConfig: redactSecrets({ options }),
     };
 
+    // Resolve attached images into Anthropic content blocks. query() accepts a
+    // plain string or AsyncIterable<SDKUserMessage> — a string can't carry image
+    // blocks and a lone SDKUserMessage isn't accepted, so any images force the
+    // channel path (seeded then, when not streaming, closed immediately).
+    let imageBlocks: unknown[] | null = null;
+    if (params.images?.length) {
+      try {
+        imageBlocks = await buildClaudeImageBlocks(params.images);
+      } catch (err) {
+        clearTimeout(timeoutId);
+        await materialized?.cleanup().catch(() => {});
+        yield { type: 'error', error: new AdapterInitError('claude-code', err), phase: 'init' };
+        return;
+      }
+    }
+    const seedContent: string | unknown[] = imageBlocks
+      ? [{ type: 'text', text: params.prompt }, ...imageBlocks]
+      : params.prompt;
+
     // Streaming-input mode: feed the SDK an open channel seeded with the prompt
     // so pushMessage() can inject further user messages mid-conversation. When
-    // off (default), the prompt is a one-shot string — identical to before.
+    // off (default), the prompt is a one-shot string — identical to before,
+    // unless images are present, which require the single-message channel.
     let inputChannel: InputChannel | null = null;
     if (params.streamingInput) {
-      inputChannel = createInputChannel(buildUserMessage(params.prompt));
+      inputChannel = createInputChannel(buildUserMessage(seedContent));
       this.closeInputChannel = () => inputChannel!.close();
       this.pushHandler = (text: string) => {
         if (inputChannel!.closed) return false;
@@ -644,6 +695,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         userInputWaker = null;
         return true;
       };
+    } else if (imageBlocks) {
+      // One-shot with images: seed a channel with the single image-bearing
+      // message and close it immediately. The SDK pulls the seed then sees
+      // `done` — exactly one result, one-shot contract preserved. No pushHandler.
+      inputChannel = createInputChannel(buildUserMessage(seedContent));
+      inputChannel.close();
     }
 
     let q: Query;

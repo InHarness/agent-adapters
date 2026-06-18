@@ -13,7 +13,7 @@
 
 // SDK is an optional peer dependency — import only types at the top level
 // (erased at compile time) and load the runtime value lazily inside execute().
-import type { Codex, ThreadItem } from '@openai/codex-sdk';
+import type { Codex, ThreadItem, Input, UserInput } from '@openai/codex-sdk';
 import type {
   RuntimeAdapter,
   RuntimeExecuteParams,
@@ -21,12 +21,43 @@ import type {
   NormalizedMessage,
   ContentBlock,
   UsageStats,
+  ImageInput,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { subtractUsage } from '../usage.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
+import { createImageWorkspace, type ImageWorkspace } from '../images-tempdir.js';
+
+/**
+ * Build the Codex `Input`. With no images this is just the prompt string (the
+ * SDK's text-only fast path). With images it becomes a `UserInput[]` of one text
+ * part plus one `local_image` per image — the SDK only accepts a local PATH, so
+ * base64 is written to a temp file and url is downloaded to one (via `workspace`),
+ * while a `file` source passes through. `workspace` is created lazily inside those
+ * writes and removed by the caller's finally.
+ */
+export async function buildCodexInput(
+  text: string,
+  images: ImageInput[] | undefined,
+  workspace: ImageWorkspace,
+  signal?: AbortSignal,
+): Promise<Input> {
+  if (!images?.length) return text;
+  const parts: UserInput[] = [{ type: 'text', text }];
+  for (const img of images) {
+    if (img.type === 'file') {
+      parts.push({ type: 'local_image', path: img.path });
+    } else if (img.type === 'base64') {
+      parts.push({ type: 'local_image', path: await workspace.writeBase64(img.data, img.mediaType) });
+    } else {
+      const { path } = await workspace.download(img.url, signal);
+      parts.push({ type: 'local_image', path });
+    }
+  }
+  return parts;
+}
 
 // Codex CLI emits error events whose `message` is sometimes a JSON-stringified
 // API response body (e.g. `{"type":"error","status":400,"error":{...}}`).
@@ -216,6 +247,11 @@ export class CodexAdapter implements RuntimeAdapter {
       ? `${params.systemPrompt}\n\n${params.prompt}`
       : params.prompt;
 
+    // Lazy temp dir for materializing images (base64/url → local file path, the
+    // only image form Codex's SDK accepts). Created on first write; removed in
+    // the finally below. No disk touched when there are no images.
+    const imageWorkspace = createImageWorkspace();
+
     const rawMessages: NormalizedMessage[] = [];
     // Per-execute() delta = current cumulative (from turn.completed.usage) - prior
     // cumulative. Lookup priority:
@@ -260,7 +296,13 @@ export class CodexAdapter implements RuntimeAdapter {
     let lastErrorMessage: string | null = null;
 
     try {
-      const { events } = await thread.runStreamed(fullPrompt, {
+      const input = await buildCodexInput(
+        fullPrompt,
+        params.images,
+        imageWorkspace,
+        this.abortController.signal,
+      );
+      const { events } = await thread.runStreamed(input, {
         signal: this.abortController.signal,
       });
 
@@ -454,6 +496,9 @@ export class CodexAdapter implements RuntimeAdapter {
       );
       await materialized?.cleanup().catch((err) =>
         console.warn('[agent-adapters] codex skill cleanup failed', err),
+      );
+      await imageWorkspace.cleanup().catch((err) =>
+        console.warn('[agent-adapters] codex image cleanup failed', err),
       );
     }
   }

@@ -17,12 +17,55 @@ import type {
   UserInputRequest,
   UserInputResponse,
   UserInputQuestion,
+  ImageInput,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
+import { createImageWorkspace, inferMediaType, type ImageWorkspace } from '../images-tempdir.js';
 import { execSync } from 'node:child_process';
+import { basename, isAbsolute, resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+type OpencodeFilePart = { type: 'file'; mime: string; filename?: string; url: string };
+
+/**
+ * Resolve `params.images` into OpenCode `file` parts. The SDK accepts a `file`
+ * part with a `url` (the server runs locally, so `file://` paths resolve), so
+ * `url` passes through, a local `file` becomes `file://<abs>`, and `base64` is
+ * written to a temp file referenced as `file://…`. `mime` is required on every
+ * part — inferred from the source when not supplied. `workspace` materializes
+ * base64 lazily and is cleaned up by the caller's finally.
+ */
+export async function buildOpencodeFileParts(
+  images: ImageInput[],
+  workspace: ImageWorkspace,
+): Promise<OpencodeFilePart[]> {
+  const parts: OpencodeFilePart[] = [];
+  for (const img of images) {
+    if (img.type === 'url') {
+      parts.push({ type: 'file', mime: inferMediaType(img.url), url: img.url });
+    } else if (img.type === 'file') {
+      const abs = isAbsolute(img.path) ? img.path : resolvePath(img.path);
+      parts.push({
+        type: 'file',
+        mime: img.mediaType ?? inferMediaType(abs),
+        filename: basename(abs),
+        url: pathToFileURL(abs).href,
+      });
+    } else {
+      const path = await workspace.writeBase64(img.data, img.mediaType);
+      parts.push({
+        type: 'file',
+        mime: img.mediaType,
+        filename: basename(path),
+        url: pathToFileURL(path).href,
+      });
+    }
+  }
+  return parts;
+}
 
 /** Check if the opencode CLI is available in PATH */
 export function isOpencodeAvailable(): boolean {
@@ -299,6 +342,10 @@ export class OpencodeAdapter implements RuntimeAdapter {
     };
     maybeInitV2();
 
+    // Lazy temp dir for materializing base64 images into local files the OpenCode
+    // server can read as file:// urls. Created on first write; removed in finally.
+    const imageWorkspace = createImageWorkspace();
+
     // Timeout handling
     let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -349,12 +396,15 @@ export class OpencodeAdapter implements RuntimeAdapter {
       });
 
       // 3. Send prompt
+      const imageParts = params.images?.length
+        ? await buildOpencodeFileParts(params.images, imageWorkspace)
+        : [];
       await client.session.promptAsync({
         path: { id: sessionId },
         body: {
           system: params.systemPrompt,
           model: { providerID, modelID },
-          parts: [{ type: 'text', text: params.prompt }],
+          parts: [{ type: 'text', text: params.prompt }, ...imageParts],
         },
       });
 
@@ -688,6 +738,9 @@ export class OpencodeAdapter implements RuntimeAdapter {
       );
       await materialized?.cleanup().catch((err) =>
         console.warn('[agent-adapters] opencode skill cleanup failed', err),
+      );
+      await imageWorkspace.cleanup().catch((err) =>
+        console.warn('[agent-adapters] opencode image cleanup failed', err),
       );
     }
   }

@@ -3,6 +3,7 @@
 // Types
 export type {
   ContentBlock,
+  ImageInput,
   NormalizedMessage,
   UsageStats,
   TodoItem,
