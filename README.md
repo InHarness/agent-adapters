@@ -56,10 +56,29 @@ npm install @modelcontextprotocol/sdk zod
 
 | Architecture | SDK | Streaming | Thinking | MCP | Session Resume | Subagents |
 |---|---|---|---|---|---|---|
-| `claude-code` | @anthropic-ai/claude-agent-sdk | Native deltas | Native streaming | Full (stdio, SSE, HTTP, in-process) | Yes (sessionId) | Native (Agent tool) |
+| `claude-code` | @anthropic-ai/claude-agent-sdk | Native deltas | Native streaming | Full (stdio, SSE, HTTP, in-process) | Yes (sessionId) | Native (Agent tool) — **definable** |
 | `codex` | @openai/codex-sdk | Synthesized (full text) | Post-hoc summary | Pre-configured only | Yes (resumeThread) | No |
-| `opencode` | @opencode-ai/sdk | Native SSE | Native (reasoning) | Stdio only | Yes (session.get) | Native (task tool) |
-| `gemini` | @google/gemini-cli-core | Native | Native (thought) | Full (stdio, SSE, HTTP) | Yes (resumeChat) | Via threadId |
+| `opencode` | @opencode-ai/sdk | Native SSE | Native (reasoning) | Stdio only | Yes (session.get) | Native (task tool) — observe only |
+| `gemini` | @google/gemini-cli-core | Native | Native (thought) | Full (stdio, SSE, HTTP) | Yes (resumeChat) | Via threadId — observe only |
+
+> **Subagents — observe vs. define.** Every adapter that surfaces subagent activity emits `subagent_started` / `subagent_progress` / `subagent_completed` events (see [Event Types](#event-types)). *Defining* subagents programmatically is a separate capability: pass `subagents: SubagentDefinition[]` on `execute()` and the model can invoke them via the native agent tool. Only `claude-code*` honors it today (mapped onto the SDK's `Options.agents`); the other adapters ignore the field and emit a one-shot `warning`. Check `architectureCapabilities(arch).subagentDefinition` before relying on it.
+>
+> ```ts
+> await adapter.execute({
+>   prompt: 'Use the code-explorer agent to map the auth flow.',
+>   systemPrompt: 'You are a helpful assistant.',
+>   model: 'sonnet-4.6',
+>   subagents: [
+>     {
+>       name: 'code-explorer',
+>       description: 'Read-only codebase explorer; use for locating code.',
+>       prompt: 'You explore the codebase and report findings concisely.',
+>       tools: ['Read', 'Grep', 'Glob'],
+>       model: 'haiku',
+>     },
+>   ],
+> });
+> ```
 
 ## Providers
 

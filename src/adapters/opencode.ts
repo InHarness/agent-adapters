@@ -115,6 +115,17 @@ export class OpencodeAdapter implements RuntimeAdapter {
       console.warn('[agent-adapters] opencode: planMode not natively supported — ignored');
     }
 
+    // OpenCode has a native markdown-based agent concept, but the SDK exposes no
+    // way to define subagents programmatically per-call — surface once so callers
+    // know the field is ignored. Potential future support via OpenCode agent config.
+    if (params.subagents?.length) {
+      yield {
+        type: 'warning',
+        message:
+          'opencode adapter: subagents are not supported — the OpenCode SDK has no per-call subagent definition mechanism. The `subagents` field is ignored.',
+      };
+    }
+
     // Resolve model alias to full ID before splitting into provider/model
     const resolvedModel = resolveModel(this.architecture, params.model);
 
