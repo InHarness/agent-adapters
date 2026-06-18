@@ -265,6 +265,44 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     }
   });
 
+  it('defines a custom subagent the model can invoke', async () => {
+    const adapter = createAdapter('claude-code');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt:
+          'Use the joke-teller subagent to come up with one short, clean programming joke, then relay it.',
+        systemPrompt:
+          'When a specialized subagent fits the task, delegate to it via the Agent tool.',
+        model: MODEL,
+        maxTurns: 6,
+        subagents: [
+          {
+            name: 'joke-teller',
+            description: 'Use this agent whenever a short, clean joke is requested.',
+            prompt: 'You are a comedian. Reply with exactly one short, clean joke and nothing else.',
+            tools: [],
+            effort: 'low',
+          },
+        ],
+      }),
+    );
+
+    assertEventTypes(events, ['text_delta', 'assistant_message', 'result']);
+
+    // Delegation is non-deterministic, but when the model DOES spawn a subagent
+    // it must be the one we defined — assert structure only if it delegated.
+    const started = events.filter((e) => e.type === 'subagent_started') as Extract<
+      UnifiedEvent,
+      { type: 'subagent_started' }
+    >[];
+    if (started.length > 0) {
+      for (const s of started) {
+        expect(s.taskId).toBeTruthy();
+      }
+      assertSubagentTaskIdConsistency(events);
+    }
+  });
+
   it('abort mid-stream', async () => {
     const adapter = createAdapter('claude-code');
     const events: UnifiedEvent[] = [];

@@ -25,16 +25,25 @@ export interface ArchitectureCapabilities {
    * a temp file. See {@link ImageInput} for per-adapter delivery.
    */
   imageInput: boolean;
+  /**
+   * The adapter honors `RuntimeExecuteParams.subagents` — programmatically
+   * defining custom subagents the model can invoke. Only claude-code's
+   * underlying SDK (`@anthropic-ai/claude-agent-sdk`) exposes `Options.agents`;
+   * the other wrapped SDKs have no equivalent, so they ignore the field and
+   * emit a one-shot warning. Note: *observing* subagent events is supported
+   * more broadly — this flag is strictly about *defining* them.
+   */
+  subagentDefinition: boolean;
 }
 
 const CAPABILITIES: Record<string, ArchitectureCapabilities> = {
-  'claude-code': { midTurnPush: true, imageInput: true },
-  'claude-code-ollama': { midTurnPush: true, imageInput: true },
-  'claude-code-minimax': { midTurnPush: true, imageInput: true },
-  codex: { midTurnPush: false, imageInput: true },
-  opencode: { midTurnPush: false, imageInput: true },
-  'opencode-openrouter': { midTurnPush: false, imageInput: true },
-  gemini: { midTurnPush: false, imageInput: true },
+  'claude-code': { midTurnPush: true, imageInput: true, subagentDefinition: true },
+  'claude-code-ollama': { midTurnPush: true, imageInput: true, subagentDefinition: true },
+  'claude-code-minimax': { midTurnPush: true, imageInput: true, subagentDefinition: true },
+  codex: { midTurnPush: false, imageInput: true, subagentDefinition: false },
+  opencode: { midTurnPush: false, imageInput: true, subagentDefinition: false },
+  'opencode-openrouter': { midTurnPush: false, imageInput: true, subagentDefinition: false },
+  gemini: { midTurnPush: false, imageInput: true, subagentDefinition: false },
 };
 
 /**
@@ -43,5 +52,5 @@ const CAPABILITIES: Record<string, ArchitectureCapabilities> = {
  * (after-turn) path.
  */
 export function architectureCapabilities(architecture: Architecture): ArchitectureCapabilities {
-  return CAPABILITIES[architecture] ?? { midTurnPush: false, imageInput: false };
+  return CAPABILITIES[architecture] ?? { midTurnPush: false, imageInput: false, subagentDefinition: false };
 }

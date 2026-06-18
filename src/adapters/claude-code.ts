@@ -32,6 +32,7 @@ import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
+import { validateSubagents } from '../subagents.js';
 
 // Re-export generic MCP builder from the library
 export { createMcpServer, mcpTool } from '../mcp.js';
@@ -402,6 +403,30 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     if (params.planMode) {
       options.tools = CLAUDE_CODE_READONLY_BUILTINS;
       options.disallowedTools = CLAUDE_CODE_MUTATING_BUILTINS;
+    }
+
+    // Programmatically-defined subagents → SDK Options.agents (Record<name, AgentDefinition>).
+    // The Agent/Task tool is already whitelisted (incl. plan mode), so defined
+    // agents are invocable without further tool wiring. The subagent `model` is
+    // passed through verbatim — the SDK resolves aliases ('sonnet'/'opus'/...) —
+    // so unified model IDs are NOT re-resolved here.
+    if (params.subagents?.length) {
+      validateSubagents(params.subagents);
+      options.agents = Object.fromEntries(
+        params.subagents.map((a) => [
+          a.name,
+          {
+            description: a.description,
+            prompt: a.prompt,
+            ...(a.tools ? { tools: a.tools } : {}),
+            ...(a.disallowedTools ? { disallowedTools: a.disallowedTools } : {}),
+            ...(a.model ? { model: a.model } : {}),
+            ...(a.skills ? { skills: a.skills } : {}),
+            ...(a.maxTurns != null ? { maxTurns: a.maxTurns } : {}),
+            ...(a.effort ? { effort: a.effort } : {}),
+          },
+        ]),
+      ) as Options['agents'];
     }
 
     // Architecture-specific config (merge provider-resolved config with user-supplied config)

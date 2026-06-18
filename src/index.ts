@@ -19,6 +19,7 @@ export type {
   RuntimeAdapter,
   AdapterFactory,
   InlineSkill,
+  SubagentDefinition,
   ProviderConfig,
   ProviderPreset,
   ContractAssertion,
@@ -111,6 +112,9 @@ export {
 // Architecture capability discovery (e.g. mid-turn message push support)
 export type { ArchitectureCapabilities } from './capabilities.js';
 export { architectureCapabilities } from './capabilities.js';
+
+// Subagent definition validation
+export { validateSubagents } from './subagents.js';
 
 // Session-resume constraints (which inputs cannot change across resumed turns)
 export type { ResumeFieldConstraint, ResumeConfigSnapshot } from './session-resume.js';

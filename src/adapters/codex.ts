@@ -164,6 +164,15 @@ export class CodexAdapter implements RuntimeAdapter {
       };
     }
 
+    // Codex SDK has no concept of defining subagents — surface once so callers know.
+    if (params.subagents?.length) {
+      yield {
+        type: 'warning',
+        message:
+          'codex adapter: subagents are not supported — the Codex SDK has no subagent definition mechanism. The `subagents` field is ignored.',
+      };
+    }
+
     const sandboxMode = params.planMode
       ? 'read-only'
       : ((config.codex_sandboxMode as string) ?? 'workspace-write');

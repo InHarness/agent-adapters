@@ -491,6 +491,44 @@ export interface InlineSkill {
   metadata?: Record<string, string | number | boolean>;
 }
 
+/**
+ * Programmatically-defined subagent the model can invoke via the native agent
+ * tool (claude-code's Agent/Task). Adapter-agnostic subset of what the
+ * underlying SDK exposes; see per-adapter mapping below.
+ *
+ * Only honored by adapters whose {@link architectureCapabilities} report
+ * `subagentDefinition: true` (currently claude-code*). Other adapters ignore
+ * the definitions and emit a one-shot `warning` event — observing subagents is
+ * still supported everywhere, only *defining* them is gated.
+ *
+ * Per-adapter mapping:
+ * - claude-code: mapped 1:1 onto SDK `Options.agents[name]` (AgentDefinition).
+ */
+export interface SubagentDefinition {
+  /** Unique identifier — the agent type the model invokes (e.g. "code-explorer"). */
+  name: string;
+  /** Natural-language description of WHEN to use this agent; shown to the model. */
+  description: string;
+  /** The subagent's system prompt. */
+  prompt: string;
+  /** Tool allow-list for the subagent. Omitted → inherits the parent's tools. */
+  tools?: string[];
+  /** Tool names explicitly disallowed for the subagent. */
+  disallowedTools?: string[];
+  /**
+   * Model alias ('sonnet' | 'opus' | 'haiku') or full model ID. Omitted →
+   * inherits the main model. Passed through to the SDK verbatim (the SDK
+   * resolves aliases), so unified model IDs are NOT re-resolved here.
+   */
+  model?: string;
+  /** Skill names to preload into the subagent's context. */
+  skills?: string[];
+  /** Max agentic turns the subagent may take. */
+  maxTurns?: number;
+  /** Reasoning effort level for the subagent. */
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+}
+
 export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   prompt: string;
   /**
@@ -528,6 +566,15 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
    * removed in `finally` (abort-safe). See {@link InlineSkill} for per-adapter wiring.
    */
   skills?: InlineSkill[];
+
+  /**
+   * Programmatically-defined subagents the model can invoke via the native
+   * agent tool. Only honored by adapters whose {@link architectureCapabilities}
+   * report `subagentDefinition: true` (currently claude-code*). Other adapters
+   * ignore the field and emit a one-shot `warning` event.
+   * See {@link SubagentDefinition} for the shape and per-adapter mapping.
+   */
+  subagents?: SubagentDefinition[];
 
   cwd?: string;
   /**

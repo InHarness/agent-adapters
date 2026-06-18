@@ -168,6 +168,15 @@ export class GeminiAdapter implements RuntimeAdapter {
       return;
     }
 
+    // gemini-cli-core has no concept of defining subagents — surface once so callers know.
+    if (params.subagents?.length) {
+      yield {
+        type: 'warning',
+        message:
+          'gemini adapter: subagents are not supported — gemini-cli-core has no subagent definition mechanism. The `subagents` field is ignored.',
+      };
+    }
+
     let sdk: Record<string, unknown>;
     try {
       sdk = await import('@google/gemini-cli-core');
