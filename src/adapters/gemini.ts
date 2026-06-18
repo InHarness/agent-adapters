@@ -15,11 +15,36 @@ import type {
   UserInputRequest,
   UserInputResponse,
   UserInputQuestion,
+  ImageInput,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
+import { inferMediaType, readImageAsBase64 } from '../images-tempdir.js';
+
+/**
+ * Resolve `params.images` into gemini-cli-core `media` content parts — the same
+ * symmetric shape the adapter normalizes on output ({ type: 'media', data?, uri?,
+ * mimeType? }). `base64`/`file` become inline data (file is read into memory);
+ * `url` becomes a uri. No temp files.
+ */
+export async function buildGeminiImageParts(
+  images: ImageInput[],
+): Promise<Array<{ type: 'media'; data?: string; uri?: string; mimeType: string }>> {
+  const parts: Array<{ type: 'media'; data?: string; uri?: string; mimeType: string }> = [];
+  for (const img of images) {
+    if (img.type === 'base64') {
+      parts.push({ type: 'media', data: img.data, mimeType: img.mediaType });
+    } else if (img.type === 'url') {
+      parts.push({ type: 'media', uri: img.url, mimeType: inferMediaType(img.url) });
+    } else {
+      const { mediaType, data } = await readImageAsBase64(img.path, img.mediaType);
+      parts.push({ type: 'media', data, mimeType: mediaType });
+    }
+  }
+  return parts;
+}
 
 // Dynamic type — SDK structure may change
 type AgentEvent = {
@@ -501,9 +526,12 @@ export class GeminiAdapter implements RuntimeAdapter {
     const activeSubagents = new Set<string>();
 
     try {
+      const imageParts = params.images?.length
+        ? await buildGeminiImageParts(params.images)
+        : [];
       const eventStream = session.sendStream({
         message: {
-          content: [{ type: 'text', text: params.prompt }],
+          content: [{ type: 'text', text: params.prompt }, ...imageParts],
         },
       });
 

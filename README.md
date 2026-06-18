@@ -616,6 +616,50 @@ if (violations.length > 0) {
 
 `findResumeViolations` only flags a field when it is present on **both** sides and the values differ — partial configs never produce false positives. Per-turn fields (prompt, system prompt, tools, MCP servers, skills, plan mode, temperature/top-p) are all mutable and never reported.
 
+## Image input
+
+Attach images to the prompt with `images` — one unified shape, delivered to each
+runtime in its native form. A source is inline `base64`, a remote `url`, or a
+local `file` path; the `base64`/`url` members are byte-identical to the image
+`source` you receive on output, so the vocabulary is the same on both sides.
+
+```ts
+import { createAdapter } from '@inharness-ai/agent-adapters';
+
+const adapter = createAdapter('claude-code');
+
+for await (const event of adapter.execute({
+  prompt: 'What is in this image?',
+  systemPrompt: 'Be concise.',
+  model: 'sonnet-4.6',
+  images: [
+    { type: 'base64', mediaType: 'image/png', data: pngBase64 },
+    { type: 'url', url: 'https://example.com/diagram.png' },
+    { type: 'file', path: '/abs/path/screenshot.png' }, // mediaType inferred from extension
+  ],
+})) {
+  // …
+}
+```
+
+All four adapters accept images — `architectureCapabilities(arch).imageInput` is
+`true` for every built-in architecture. The adapter bridges whatever its SDK
+lacks, transparently:
+
+- **claude-code** — `base64`/`url` go to the SDK natively; a `file` is read and
+  inlined. `base64` `mediaType` must be `image/jpeg`, `image/png`, `image/gif`,
+  or `image/webp` (Anthropic's accepted set) or the call errors.
+- **gemini** — delivered as a `media` content part (`base64`/`file` inline,
+  `url` as a uri).
+- **codex** — the SDK takes only a local image path, so `base64` is written to a
+  temp file and `url` is downloaded to one (both removed when the call ends);
+  `file` passes through.
+- **opencode** — delivered as a `file` part; `base64` is written to a temp file
+  referenced as `file://…`, `url` passes through.
+
+Images ride with the initial `prompt` only (not `pushMessage`). Omitting
+`images` — or passing `[]` — is identical to a text-only prompt.
+
 ## Mid-turn message injection
 
 By default `execute()` is one-shot: one prompt in, one `result` out. Opt into **streaming-input mode** with `streamingInput: true` to keep the session's input channel open and push additional user messages *while the agent is still working* — useful for chat UIs that want to leave the composer unlocked during a turn.

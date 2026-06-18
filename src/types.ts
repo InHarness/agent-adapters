@@ -53,6 +53,35 @@ export type ContentBlock =
    */
   | { type: 'todoList'; items: TodoItem[] };
 
+/**
+ * An image attached to the initial prompt via {@link RuntimeExecuteParams.images}.
+ *
+ * The `base64` and `url` members are byte-identical to the image `source` shape
+ * emitted on output ({@link ContentBlock} `type: 'image'`), so a consumer reuses
+ * the same vocabulary on both sides. `file` is input-only — a path to a local
+ * image, read (or referenced) by the adapter at execute time.
+ *
+ * Per-adapter delivery (all four adapters supported; conversions are transparent):
+ * - **claude-code**: `base64`/`url` → native image content block; `file` is read
+ *   and inlined as base64. `mediaType` for base64 must be one of
+ *   `image/jpeg|png|gif|webp` (Anthropic constraint) or the call errors.
+ * - **gemini**: mapped to a `media` content part (`base64`/`file` → inline data,
+ *   `url` → uri).
+ * - **codex**: the SDK only accepts a local image PATH. `base64` is written to a
+ *   temp file and `url` is downloaded to one (both removed after the call); `file`
+ *   is passed through.
+ * - **opencode**: the SDK accepts a `file` part with a `url`. `base64` is written
+ *   to a temp file referenced as `file://…`; `file` becomes `file://<path>`;
+ *   `url` is passed through (the OpenCode server runs locally and fetches it).
+ *
+ * `mediaType` is optional for the `file` source — when omitted it is inferred from
+ * the file extension (default `image/png`).
+ */
+export type ImageInput =
+  | { type: 'base64'; mediaType: string; data: string }
+  | { type: 'url'; url: string }
+  | { type: 'file'; path: string; mediaType?: string };
+
 export interface NormalizedMessage {
   role: 'user' | 'assistant';
   content: ContentBlock[];
@@ -460,6 +489,15 @@ export interface InlineSkill {
 
 export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   prompt: string;
+  /**
+   * Images attached to the initial `prompt`. Each is delivered to the underlying
+   * SDK in its native form — see {@link ImageInput} for per-adapter mapping.
+   * Adapters that must materialize an image to disk (codex, opencode) write it to
+   * a temp dir removed when the call ends. Omitted/empty → identical to a
+   * text-only prompt. Images ride only with the initial prompt, not
+   * {@link RuntimeAdapter.pushMessage}.
+   */
+  images?: ImageInput[];
   systemPrompt: string;
   model: A extends keyof ArchitectureModelMap ? ArchitectureModelMap[A] : string;
   allowedTools?: string[];
