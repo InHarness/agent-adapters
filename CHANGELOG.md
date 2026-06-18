@@ -2,10 +2,18 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.8.3] — 2026-06-18
+## [0.8.4] — 2026-06-18
+
+### Added
+- **Programmatically defined subagents** — new `SubagentDefinition` type and optional `RuntimeExecuteParams.subagents` field give consumers a first-class, cross-adapter way to *define* subagents the model can invoke via its native agent tool (previously the library could only *observe* subagents through `subagent_started` / `subagent_progress` / `subagent_completed` / `isSubagent`). `claude-code` maps `subagents` onto the SDK's `Options.agents` (the `Agent`/`Task` tool is already whitelisted, so defined agents are invocable; each subagent's `model` is passed through verbatim for the SDK to resolve). `codex`, `gemini`, and `opencode` ignore the field and emit a one-shot `warning` event. `architectureCapabilities().subagentDefinition` reports support (true for `claude-code` and its provider variants, false elsewhere), and a `validateSubagents()` fail-fast helper enforces unique names and non-empty fields. README capability matrix and example updated.
+- **Image input on mid-turn pushes.** `RuntimeAdapter.pushMessage(text, images?)` now accepts the same `ImageInput[]` shape as the initial prompt (v0.8.3 added images on the initial prompt only). Wired through the streaming-input push path on `claude-code` (the only adapter with `midTurnPush`). `pushMessage` stays **synchronous** (returns `boolean`) to preserve the keep-open atomicity and message-ordering invariants — images are normalized synchronously via the new `buildClaudeImageBlocksSync` / `readImageAsBase64Sync` (file sources read with `readFileSync`; base64/url need no I/O), so the signature stays non-breaking. A bad media type or unreadable file throws synchronously, distinct from the `false` return that signals a closed channel. The pushed `user_message` event now carries the attached `images`.
+
+
 
 ### Added
 - **Unified image input on the initial prompt.** New optional `RuntimeExecuteParams.images` field lets consumers attach images to the initial prompt across all four adapters with one shape. `ImageInput` reuses the existing output image-source vocabulary (`{type:'base64'|'url'}`) plus an input-only `{type:'file'}` variant; each adapter delivers images in its SDK's native form — claude-code native base64/url content blocks (file read+inlined, one-shot routed through the streaming input channel), gemini media content part, codex local-path (base64/url written to an abort-safe temp file, removed in `finally`), opencode file part. New `src/images-tempdir.ts` holds the shared helpers (media-type inference, Anthropic media-type validation, base64 read, lazy abort-safe temp workspace). `architectureCapabilities` now reports `imageInput` per architecture. README documents the API.
+
+[0.8.4]: https://github.com/InHarness/agent-adapters/compare/v0.8.3...v0.8.4
 
 [0.8.3]: https://github.com/InHarness/agent-adapters/compare/v0.8.2...v0.8.3
 
