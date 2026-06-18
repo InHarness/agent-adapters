@@ -13,6 +13,7 @@
 // in the adapter's `finally`. Cleanup is idempotent — `force: true` swallows ENOENT.
 
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
@@ -87,6 +88,22 @@ export async function readImageAsBase64(
   mediaType?: string,
 ): Promise<{ mediaType: string; data: string }> {
   const buf = await readFile(path);
+  return {
+    mediaType: mediaType ?? inferMediaType(path),
+    data: buf.toString('base64'),
+  };
+}
+
+/**
+ * Synchronous twin of {@link readImageAsBase64}. Used by the claude-code
+ * mid-turn push path, whose `pushMessage` returns a plain boolean and so cannot
+ * await a file read (see the streaming-input ordering/atomicity contract).
+ */
+export function readImageAsBase64Sync(
+  path: string,
+  mediaType?: string,
+): { mediaType: string; data: string } {
+  const buf = readFileSync(path);
   return {
     mediaType: mediaType ?? inferMediaType(path),
     data: buf.toString('base64'),

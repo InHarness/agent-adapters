@@ -259,11 +259,15 @@ export type UnifiedEvent =
    * conversation and forward it over their wire protocol so the rendered
    * order matches what the model saw.
    *
+   * `images` echoes any images pushed alongside the text (same shape accepted by
+   * {@link RuntimeExecuteParams.images}), so a consumer can render them in the
+   * conversation history; absent when the push was text-only.
+   *
    * Only emitted by adapters whose {@link architectureCapabilities} report
    * `midTurnPush: true` (currently claude-code) when run with
    * `RuntimeExecuteParams.streamingInput`.
    */
-  | { type: 'user_message'; text: string; timestamp: number }
+  | { type: 'user_message'; text: string; images?: ImageInput[]; timestamp: number }
   /**
    * Unified todo-list update. Snapshot of the full list, not a delta.
    *
@@ -494,8 +498,8 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
    * SDK in its native form — see {@link ImageInput} for per-adapter mapping.
    * Adapters that must materialize an image to disk (codex, opencode) write it to
    * a temp dir removed when the call ends. Omitted/empty → identical to a
-   * text-only prompt. Images ride only with the initial prompt, not
-   * {@link RuntimeAdapter.pushMessage}.
+   * text-only prompt. Mid-turn images are also supported via
+   * {@link RuntimeAdapter.pushMessage}'s `images` argument (claude-code).
    */
   images?: ImageInput[];
   systemPrompt: string;
@@ -661,12 +665,19 @@ export interface RuntimeAdapter {
    * `execute()` with `resumeSessionId` — there is no lost-message window, the
    * boolean tells you which path the message took.
    *
+   * Optional `images` are normalized into the underlying SDK's image content the
+   * same way {@link RuntimeExecuteParams.images} is for the initial prompt, and
+   * echoed on the emitted `user_message` event. Resolution is synchronous (a
+   * `file` source is read with `readFileSync`) so the boolean contract above is
+   * preserved; an unsupported media type or unreadable file is thrown
+   * synchronously — distinct from the `false` return (closed channel).
+   *
    * Accepting a push emits a {@link UnifiedEvent} `{ type: 'user_message' }`.
    *
    * Optional: adapters without streaming-input support omit it. Check
    * {@link architectureCapabilities}`(arch).midTurnPush` before relying on it.
    */
-  pushMessage?(text: string): boolean;
+  pushMessage?(text: string, images?: ImageInput[]): boolean;
 }
 
 export type AdapterFactory = () => RuntimeAdapter;
