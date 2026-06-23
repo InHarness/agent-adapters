@@ -1048,7 +1048,15 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
           case 'result': {
             const resultEvent = event as Record<string, unknown>;
-            if (resultEvent.subtype === 'success') {
+            // A turn failed if the SDK reports an error subtype OR if it reports
+            // subtype:'success' but flags is_error:true. The latter happens when
+            // the API errors (e.g. a 500) yet the SDK still produces a final
+            // result message — it sets is_error:true and api_error_status and
+            // puts the error text in `result` (e.g. "API Error: 500 ...").
+            // Branching on subtype alone would mislabel that as a successful
+            // result and (in streaming-input mode) keep the channel open.
+            const isError = resultEvent.is_error === true || resultEvent.subtype !== 'success';
+            if (!isError) {
               const claudeUsage = normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 };
               const contextSize = claudeUsage.inputTokens + claudeUsage.outputTokens;
               if (debugUsage()) {
@@ -1082,10 +1090,40 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),
               };
             } else {
-              yield { type: 'error', error: new Error((resultEvent.result as string) ?? 'Unknown error'), phase: 'runtime' };
+              // End the turn BEFORE surfacing the error: a consumer that pushes
+              // synchronously in response to this error event then gets a clean
+              // `false` (the session is over) instead of having that push silently
+              // run as another turn against a failed session. Closing here also
+              // means that, with nothing queued, the SDK's next pull resolves
+              // `done` and execute() ends — so the stream actually closes (the
+              // reported symptom: an is_error result that left the stream open).
+              // The consumer decides whether to retry/re-dispatch (e.g. via
+              // resumeSessionId). See the streaming-input end-of-turn policy below
+              // for the success path.
+              inputChannel?.close();
+              // Build the message from, in priority order: the `errors[]` array
+              // carried by real error subtypes (error_during_execution, etc.),
+              // then the `result` string (the is_error:'success' case, e.g.
+              // "API Error: 500 ..."), then a fallback. Prefix the HTTP status
+              // from api_error_status when present so consumers see it.
+              const errorList = Array.isArray(resultEvent.errors)
+                ? (resultEvent.errors as unknown[]).filter((e): e is string => typeof e === 'string')
+                : [];
+              let message =
+                errorList.length > 0
+                  ? errorList.join('; ')
+                  : typeof resultEvent.result === 'string' && resultEvent.result.length > 0
+                    ? resultEvent.result
+                    : 'Unknown error';
+              if (typeof resultEvent.api_error_status === 'number') {
+                message = `API error ${resultEvent.api_error_status}: ${message}`;
+              }
+              yield { type: 'error', error: new Error(message), phase: 'runtime' };
+              break;
             }
-            // Streaming-input end-of-turn policy. The consumer just saw this
-            // turn's result (or error) and may have called pushMessage()
+            // Streaming-input end-of-turn policy (success path only — the error
+            // path above already closed the channel before yielding). The consumer
+            // just saw this turn's result and may have called pushMessage()
             // synchronously in response; combined with any pushes that arrived
             // during the turn, a non-empty channel keeps the session open so the
             // SDK runs the queued message(s) as the next turn — execute() emits
@@ -1095,9 +1133,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             // No await runs between the result yield and this check, so the
             // decision is atomic w.r.t. consumer pushes — no lost-message window.
             if (inputChannel) {
-              if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
+              if (inputChannel.hasPending()) {
                 // keep open: SDK consumes the next queued message as a new turn
               } else {
+                // Clean drain with nothing queued: close so the SDK's next pull
+                // resolves `done` and execute() ends (one-shot behavior).
                 inputChannel.close();
               }
             }
