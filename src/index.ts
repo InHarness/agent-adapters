@@ -113,6 +113,16 @@ export {
 export type { ArchitectureCapabilities } from './capabilities.js';
 export { architectureCapabilities } from './capabilities.js';
 
+// Filesystem path scoping — runtime gate-strength signal + helpers
+export type { PathScopeStrength, ResolvedPathScope, ClaudeSandboxConfig } from './path-scope.js';
+export {
+  probePathScope,
+  normalizePaths,
+  isPathScopeRequested,
+  detectOsSandbox,
+  getClaudeSandboxConfig,
+} from './path-scope.js';
+
 // Subagent definition validation
 export { validateSubagents } from './subagents.js';
 

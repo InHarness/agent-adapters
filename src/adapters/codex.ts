@@ -29,6 +29,7 @@ import { redactSecrets } from '../redact.js';
 import { subtractUsage } from '../usage.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 import { createImageWorkspace, type ImageWorkspace } from '../images-tempdir.js';
+import { probePathScope } from '../path-scope.js';
 
 /**
  * Build the Codex `Input`. With no images this is just the prompt string (the
@@ -209,6 +210,26 @@ export class CodexAdapter implements RuntimeAdapter {
 
     const userCwd = params.cwd ?? process.cwd();
 
+    // Filesystem path scoping. Codex's OS sandbox is allow-list-only: `allowedPaths`
+    // extend the writable roots via `additionalDirectories` (only meaningful under
+    // `workspace-write`; we never widen an existing read-only/plan-mode sandbox).
+    // `disallowedPaths` CANNOT be enforced — there is no deny-list primitive — so we
+    // surface it as an expressiveness limitation rather than silently dropping it.
+    const pathScope = probePathScope('codex', params);
+    const existingAdditionalDirs = Array.isArray(config.codex_additionalDirectories)
+      ? (config.codex_additionalDirectories as string[])
+      : [];
+    const additionalDirectories = [...existingAdditionalDirs, ...pathScope.allowed];
+    if (pathScope.unenforceable.length) {
+      yield {
+        type: 'warning',
+        message:
+          'codex adapter: disallowedPaths cannot be enforced — the Codex sandbox is allow-list-only ' +
+          '(no deny carve-outs inside an allowed root). These paths are NOT blocked: ' +
+          `${pathScope.unenforceable.join(', ')}.`,
+      };
+    }
+
     // Materialize inline skills BEFORE thread start so codex CLI's first scan
     // of <cwd>/.agents/skills/ picks them up. The Codex SDK has no programmatic
     // skills API; we mirror under uuid-prefixed dirs and remove only what we
@@ -235,6 +256,7 @@ export class CodexAdapter implements RuntimeAdapter {
       modelReasoningEffort: config.codex_reasoningEffort as
         | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
         | undefined,
+      ...(additionalDirectories.length ? { additionalDirectories } : {}),
     };
 
     yield {
@@ -245,6 +267,7 @@ export class CodexAdapter implements RuntimeAdapter {
         threadOptions,
         ...(params.resumeSessionId ? { resumeSessionId: params.resumeSessionId } : {}),
       }),
+      ...(pathScope.requested ? { pathScope } : {}),
     };
 
     const thread = params.resumeSessionId

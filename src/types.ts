@@ -2,6 +2,7 @@
 // Based on InHarness M04 spec (m04-orchestration.md)
 
 import type { ArchitectureModelMap } from './models.js';
+import type { ResolvedPathScope } from './path-scope.js';
 
 // --- Content & Messages ---
 
@@ -165,8 +166,16 @@ export type UnifiedEvent =
    *
    * Secrets are redacted by key name (see `src/redact.ts`). Unknown custom
    * fields whose names don't match the redaction regex are NOT filtered.
+   *
+   * `pathScope` (when path-scope was requested) is the runtime-resolved gate:
+   * its `strength` ('hard' | 'soft' | 'none') is the enforcement this run
+   * actually gets on this host — distinct from the static
+   * `architectureCapabilities(adapter).pathScope` bool. Because `adapter_ready`
+   * fires before the first SDK call, a consumer can confirm enforcement here
+   * (or via {@link probePathScope} before calling `execute`) rather than relying
+   * on a post-hoc warning.
    */
-  | { type: 'adapter_ready'; adapter: Architecture; sdkConfig: Record<string, unknown> }
+  | { type: 'adapter_ready'; adapter: Architecture; sdkConfig: Record<string, unknown>; pathScope?: ResolvedPathScope }
   | { type: 'text_delta'; text: string; isSubagent: boolean; subagentTaskId?: string }
   | { type: 'tool_use'; toolName: string; toolUseId: string; input: unknown; isSubagent: boolean; subagentTaskId?: string }
   | { type: 'tool_result'; toolUseId: string; summary: string; isSubagent: boolean; isError?: boolean; subagentTaskId?: string }
@@ -577,6 +586,31 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   subagents?: SubagentDefinition[];
 
   cwd?: string;
+  /**
+   * Filesystem path scoping for the agent's tools — an engine-neutral way to say
+   * "this run may only read/write under these paths". Each adapter maps the intent
+   * onto its SDK's native sandbox primitive (or, where it has none, emits a one-shot
+   * `warning` and runs unscoped). Both fields absent/empty is a no-op (identical to
+   * the pre-scoping behavior).
+   *
+   * - **Precedence:** `disallowedPaths` > `allowedPaths` > the implicit base (`cwd`).
+   *   A path matched by `disallowedPaths` is blocked even if it sits inside an
+   *   `allowedPaths` root.
+   * - **Scope:** read AND write combined (no separate read/write split yet).
+   * - **Relative entries are normalized, not rejected** — resolved against `cwd`
+   *   before mapping.
+   * - Composes **additively** with {@link planMode}: both only ever narrow access.
+   * - **Immutable on resume:** changing either field on a resumed session is a
+   *   violation (see {@link findResumeViolations}) — a sandbox must not be re-scoped
+   *   mid-session; fork a new session instead.
+   *
+   * Whether an adapter honors these at all is advertised by
+   * `architectureCapabilities(arch).pathScope`. The actual enforcement *strength*
+   * (hard OS-syscall vs soft model-visible) is a separate, runtime-confirmable
+   * signal — see {@link probePathScope} and the `adapter_ready` event's `pathScope`.
+   */
+  allowedPaths?: string[];
+  disallowedPaths?: string[];
   /**
    * Resume a prior session/thread so this turn continues the same conversation.
    *

@@ -34,16 +34,26 @@ export interface ArchitectureCapabilities {
    * more broadly — this flag is strictly about *defining* them.
    */
   subagentDefinition: boolean;
+  /**
+   * The adapter honors `RuntimeExecuteParams.allowedPaths`/`disallowedPaths` —
+   * mapping the engine-neutral path scope onto its SDK's native sandbox primitive.
+   * `false` means the adapter has no native primitive: it emits a one-shot warning
+   * and runs unscoped. This flag is strictly "does it honor the fields at all" — it
+   * says NOTHING about enforcement strength (hard OS-syscall vs soft model-visible),
+   * which is a separate, runtime-confirmable signal owned by the path-scope module
+   * (see {@link probePathScope} and the `adapter_ready` event's `pathScope`).
+   */
+  pathScope: boolean;
 }
 
 const CAPABILITIES: Record<string, ArchitectureCapabilities> = {
-  'claude-code': { midTurnPush: true, imageInput: true, subagentDefinition: true },
-  'claude-code-ollama': { midTurnPush: true, imageInput: true, subagentDefinition: true },
-  'claude-code-minimax': { midTurnPush: true, imageInput: true, subagentDefinition: true },
-  codex: { midTurnPush: false, imageInput: true, subagentDefinition: false },
-  opencode: { midTurnPush: false, imageInput: true, subagentDefinition: false },
-  'opencode-openrouter': { midTurnPush: false, imageInput: true, subagentDefinition: false },
-  gemini: { midTurnPush: false, imageInput: true, subagentDefinition: false },
+  'claude-code': { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true },
+  'claude-code-ollama': { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true },
+  'claude-code-minimax': { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true },
+  codex: { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: true },
+  opencode: { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false },
+  'opencode-openrouter': { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false },
+  gemini: { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: true },
 };
 
 /**
@@ -52,5 +62,12 @@ const CAPABILITIES: Record<string, ArchitectureCapabilities> = {
  * (after-turn) path.
  */
 export function architectureCapabilities(architecture: Architecture): ArchitectureCapabilities {
-  return CAPABILITIES[architecture] ?? { midTurnPush: false, imageInput: false, subagentDefinition: false };
+  return (
+    CAPABILITIES[architecture] ?? {
+      midTurnPush: false,
+      imageInput: false,
+      subagentDefinition: false,
+      pathScope: false,
+    }
+  );
 }
