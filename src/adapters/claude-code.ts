@@ -33,6 +33,7 @@ import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js
 import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
 import { validateSubagents } from '../subagents.js';
+import { probePathScope, getClaudeSandboxConfig } from '../path-scope.js';
 
 // Re-export generic MCP builder from the library
 export { createMcpServer, mcpTool } from '../mcp.js';
@@ -519,6 +520,47 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       options.resume = params.resumeSessionId;
     }
 
+    // Filesystem path scoping (RuntimeExecuteParams.allowedPaths/disallowedPaths).
+    // Soft default: allowedPaths → Options.additionalDirectories; disallowedPaths →
+    // settings.permissions.deny Read/Edit rules. Deny outranks permissionMode in the
+    // SDK precedence chain, so the deny rules survive our `bypassPermissions` default
+    // (this is a model-visible/soft gate — nothing at the OS level stops a subprocess).
+    // Opt-in `claude_sandbox.enabled` + a host with bubblewrap/seatbelt flips to
+    // OS-syscall enforcement; without one, the hard guarantee degrades to soft.
+    const pathScope = probePathScope('claude-code', params);
+    if (pathScope.requested) {
+      if (pathScope.allowed.length) {
+        options.additionalDirectories = pathScope.allowed;
+      }
+      if (pathScope.disallowed.length) {
+        const deny = pathScope.disallowed.flatMap((p) => [`Read(${p}/**)`, `Edit(${p}/**)`]);
+        options.settings = { permissions: { deny } } as Options['settings'];
+      }
+
+      const sandbox = getClaudeSandboxConfig(config);
+      if (sandbox?.enabled) {
+        if (pathScope.strength === 'hard') {
+          options.sandbox = {
+            enabled: true,
+            filesystem: {
+              allowWrite: [...pathScope.allowed, ...(sandbox.filesystem?.allowWrite ?? [])],
+              denyWrite: [...pathScope.disallowed, ...(sandbox.filesystem?.denyWrite ?? [])],
+              denyRead: [...pathScope.disallowed, ...(sandbox.filesystem?.denyRead ?? [])],
+              ...(sandbox.filesystem?.allowRead ? { allowRead: sandbox.filesystem.allowRead } : {}),
+            },
+          } as Options['sandbox'];
+        } else {
+          yield {
+            type: 'warning',
+            message:
+              'claude-code: claude_sandbox.enabled was requested but this host has no OS sandbox ' +
+              '(bubblewrap on Linux / seatbelt on macOS) — filesystem path scope degraded hard→soft. ' +
+              'The gate is model-visible permission rules only, NOT OS-syscall enforced.',
+          };
+        }
+      }
+    }
+
     // User input — unified bridge covering two SDK-side channels:
     //  (a) AskUserQuestion tool (first-class model tool) via canUseTool
     //  (b) MCP elicitation (server-side side-channel) via options.onElicitation
@@ -707,6 +749,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       type: 'adapter_ready',
       adapter: 'claude-code',
       sdkConfig: redactSecrets({ options }),
+      ...(pathScope.requested ? { pathScope } : {}),
     };
 
     // Resolve attached images into Anthropic content blocks. query() accepts a

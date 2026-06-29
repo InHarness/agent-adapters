@@ -18,8 +18,10 @@
 // a thread is active, or treat a change as a request to start a NEW session.
 //
 // Source of truth is the per-architecture `ArchOption` schema in `options.ts`
-// (`resumeImmutable` flag). `model` is a top-level field (not an arch option) and
-// is always session-immutable, handled here directly.
+// (`resumeImmutable` flag). A few top-level `RuntimeExecuteParams` fields are not
+// arch options but are always session-immutable, handled here directly: `model`
+// (thinking-block binding) and the path-scope fields `allowedPaths`/`disallowedPaths`
+// (a sandbox must not be re-scoped mid-session).
 
 import { getArchitectureOptions } from './options.js';
 
@@ -38,7 +40,21 @@ export interface ResumeFieldConstraint {
 export interface ResumeConfigSnapshot {
   model?: string;
   architectureConfig?: Record<string, unknown>;
+  /** Filesystem path scope — frozen for a session's lifetime (see below). */
+  allowedPaths?: string[];
+  disallowedPaths?: string[];
 }
+
+// Path-scope fields are top-level (not arch options) and immutable on resume for
+// every architecture: a sandbox must not be re-scoped mid-session — to change the
+// scope, the consumer forks a NEW session.
+const PATH_SCOPE_IMMUTABLE_REASON =
+  'Filesystem path scope is fixed for a session’s lifetime; a sandbox must not be re-scoped mid-session. Start a new session to change it.';
+
+const PATH_SCOPE_CONSTRAINTS: ResumeFieldConstraint[] = [
+  { path: 'allowedPaths', reason: PATH_SCOPE_IMMUTABLE_REASON },
+  { path: 'disallowedPaths', reason: PATH_SCOPE_IMMUTABLE_REASON },
+];
 
 const MODEL_IMMUTABLE_REASON: Record<string, string> = {
   'claude-code':
@@ -75,7 +91,7 @@ export function getSessionResumeConstraints(architecture: string): ResumeFieldCo
         o.resumeImmutableReason ??
         `"${o.label}" is fixed once a session has started; changing it requires a new session.`,
     }));
-  return [modelConstraint(architecture), ...immutableOptions];
+  return [modelConstraint(architecture), ...PATH_SCOPE_CONSTRAINTS, ...immutableOptions];
 }
 
 /**
@@ -88,6 +104,8 @@ export function isSessionFieldMutable(architecture: string, path: string): boole
 
 function valueAtPath(path: string, snapshot: ResumeConfigSnapshot): unknown {
   if (path === 'model') return snapshot.model;
+  if (path === 'allowedPaths') return snapshot.allowedPaths;
+  if (path === 'disallowedPaths') return snapshot.disallowedPaths;
   if (path.startsWith('architectureConfig.')) {
     return snapshot.architectureConfig?.[path.slice('architectureConfig.'.length)];
   }

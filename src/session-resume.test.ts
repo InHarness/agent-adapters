@@ -39,9 +39,18 @@ describe('getSessionResumeConstraints', () => {
     }
   });
 
-  it('returns only the model constraint for an unknown architecture', () => {
+  it('always includes the path-scope fields as immutable', () => {
+    for (const arch of ['claude-code', 'codex', 'gemini', 'opencode']) {
+      const paths = getSessionResumeConstraints(arch).map((c) => c.path);
+      expect(paths).toEqual(expect.arrayContaining(['allowedPaths', 'disallowedPaths']));
+    }
+  });
+
+  it('includes model and path-scope fields even for an unknown architecture', () => {
     expect(getSessionResumeConstraints('does-not-exist')).toEqual([
       { path: 'model', reason: expect.any(String) },
+      { path: 'allowedPaths', reason: expect.any(String) },
+      { path: 'disallowedPaths', reason: expect.any(String) },
     ]);
   });
 });
@@ -127,5 +136,37 @@ describe('findResumeViolations', () => {
     expect(violations.map((v) => v.path).sort()).toEqual(
       ['architectureConfig.claude_thinking', 'model'].sort(),
     );
+  });
+
+  it('flags a changed allowedPaths (path scope is frozen for a session)', () => {
+    const violations = findResumeViolations(
+      'claude-code',
+      { model: 'opus-4.8', allowedPaths: ['/work/a'] },
+      { model: 'opus-4.8', allowedPaths: ['/work/a', '/work/b'] },
+    );
+    expect(violations.map((v) => v.path)).toEqual(['allowedPaths']);
+  });
+
+  it('flags a changed disallowedPaths', () => {
+    const violations = findResumeViolations(
+      'codex',
+      { model: 'gpt-5-codex', disallowedPaths: ['/work/secret'] },
+      { model: 'gpt-5-codex', disallowedPaths: [] },
+    );
+    expect(violations.map((v) => v.path)).toEqual(['disallowedPaths']);
+  });
+
+  it('does not flag identical path scope', () => {
+    const cfg = { model: 'opus-4.8', allowedPaths: ['/work/a'], disallowedPaths: ['/work/a/secret'] };
+    expect(findResumeViolations('claude-code', cfg, cfg)).toEqual([]);
+  });
+
+  it('does not flag path scope absent on one side (partial config = no change)', () => {
+    const violations = findResumeViolations(
+      'claude-code',
+      { model: 'opus-4.8', allowedPaths: ['/work/a'] },
+      { model: 'opus-4.8' },
+    );
+    expect(violations).toEqual([]);
   });
 });

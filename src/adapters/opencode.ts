@@ -24,6 +24,7 @@ import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 import { createImageWorkspace, inferMediaType, type ImageWorkspace } from '../images-tempdir.js';
+import { probePathScope } from '../path-scope.js';
 import { execSync } from 'node:child_process';
 import { basename, isAbsolute, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -123,6 +124,18 @@ export class OpencodeAdapter implements RuntimeAdapter {
         type: 'warning',
         message:
           'opencode adapter: subagents are not supported — the OpenCode SDK has no per-call subagent definition mechanism. The `subagents` field is ignored.',
+      };
+    }
+
+    // Filesystem path scoping is not supported — the OpenCode SDK exposes no path
+    // sandbox primitive. Surface once and run UNSCOPED (no silent pretense of a
+    // sandbox); never throw for "unsupported".
+    const pathScope = probePathScope('opencode', params);
+    if (pathScope.requested) {
+      yield {
+        type: 'warning',
+        message:
+          'opencode adapter: allowedPaths/disallowedPaths are not supported — the OpenCode SDK has no filesystem path sandbox. The run proceeds UNSCOPED.',
       };
     }
 
@@ -235,6 +248,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
         type: 'adapter_ready',
         adapter: 'opencode',
         sdkConfig: redactSecrets({ port, config: opencodeConfig }),
+        ...(pathScope.requested ? { pathScope } : {}),
       };
 
       const result = await createOpencode({

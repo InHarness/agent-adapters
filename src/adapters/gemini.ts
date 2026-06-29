@@ -22,6 +22,7 @@ import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 import { inferMediaType, readImageAsBase64 } from '../images-tempdir.js';
+import { probePathScope } from '../path-scope.js';
 
 /**
  * Resolve `params.images` into gemini-cli-core `media` content parts — the same
@@ -246,6 +247,22 @@ export class GeminiAdapter implements RuntimeAdapter {
       (archConfig.gemini_approvalMode as string | undefined) ?? (params.onUserInput ? 'default' : 'yolo');
     const cwd = params.cwd ?? process.cwd();
 
+    // Filesystem path scoping — SOFT gate (model-visible, NOT OS-enforced).
+    // `allowedPaths` map to Config.includeDirectories so those roots join the
+    // workspace gemini-cli's tools validate against (WorkspaceContext). gemini has
+    // no construct-time deny primitive, so `disallowedPaths` carve-outs are surfaced
+    // as unenforceable rather than silently honored.
+    const pathScope = probePathScope('gemini', params);
+    if (pathScope.unenforceable.length) {
+      yield {
+        type: 'warning',
+        message:
+          'gemini adapter: disallowedPaths cannot be enforced — gemini-cli has no path deny primitive; ' +
+          'the path gate is soft (model-visible workspace scoping only). These paths are NOT blocked: ' +
+          `${pathScope.unenforceable.join(', ')}.`,
+      };
+    }
+
     const generateContentConfig: Record<string, unknown> = {};
     if (archConfig.gemini_temperature !== undefined) generateContentConfig.temperature = archConfig.gemini_temperature;
     if (archConfig.gemini_topP !== undefined) generateContentConfig.topP = archConfig.gemini_topP;
@@ -332,6 +349,7 @@ export class GeminiAdapter implements RuntimeAdapter {
       modelConfigServiceConfig: hasModelParams
         ? { overrides: [{ match: { model: resolvedModel }, modelConfig: { generateContentConfig } }] }
         : undefined,
+      ...(pathScope.allowed.length ? { includeDirectories: pathScope.allowed } : {}),
     };
 
     if (materialized && params.skills?.length) {
@@ -348,6 +366,7 @@ export class GeminiAdapter implements RuntimeAdapter {
       type: 'adapter_ready',
       adapter: 'gemini',
       sdkConfig: redactSecrets(geminiConfigParams),
+      ...(pathScope.requested ? { pathScope } : {}),
     };
 
     // ask_user bridge state — declared early so the messageBus subscriber
