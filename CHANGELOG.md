@@ -3,6 +3,14 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+<!-- anchor: r8k2v5q1 -->
+## [0.8.5] — 2026-06-30
+
+<!-- anchor: 9m3p7w2d -->
+### Added
+- **Filesystem path scoping (`allowedPaths` / `disallowedPaths`).** New engine-neutral path-scoping fields on `RuntimeExecuteParams` let consumers confine an agent's filesystem reach; each adapter maps the intent onto its SDK's native sandbox primitive, or emits a one-shot `warning` and runs unscoped. Purely additive — both fields absent is a no-op. `claude-code` maps `allowedPaths` → `additionalDirectories` and `disallowedPaths` → `settings.permissions.deny` (Read/Edit), with opt-in `claude_sandbox.enabled` flipping to a hard OS sandbox (seatbelt/bubblewrap) and a hard→soft `warning` when the host lacks one; `codex` maps `allowedPaths` → `additionalDirectories` (allow-list-only OS sandbox) and surfaces `disallowedPaths` as unenforceable; `gemini` applies a soft gate via `Config.includeDirectories`; `opencode` warns and runs unscoped. The new `src/path-scope.ts` module adds `probePathScope()` — a runtime-confirmable gate-strength signal (`'hard'|'soft'|'none'`) distinct from the static capability bool and callable before dispatch. `architectureCapabilities().pathScope` reports per-architecture support (`claude-code*`/`codex`/`gemini` true, `opencode` false); the `adapter_ready` event now carries the resolved `pathScope`. Path-scope fields are frozen for a resumed session's lifetime.
+- **Claude Sonnet 5 in the `claude-code` catalog.** Registered the `sonnet-5` → `claude-sonnet-5` alias, marked adaptive-only (1M context window, adaptive thinking only — no fixed budget), mirroring the M02 model catalog canon.
+
 <!-- anchor: x6ljutom -->
 ## [0.8.4] — 2026-06-18
 
@@ -16,6 +24,8 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 <!-- anchor: 98fmhy4z -->
 ### Added
 - **Unified image input on the initial prompt.** New optional `RuntimeExecuteParams.images` field lets consumers attach images to the initial prompt across all four adapters with one shape. `ImageInput` reuses the existing output image-source vocabulary (`{type:'base64'|'url'}`) plus an input-only `{type:'file'}` variant; each adapter delivers images in its SDK's native form — claude-code native base64/url content blocks (file read+inlined, one-shot routed through the streaming input channel), gemini media content part, codex local-path (base64/url written to an abort-safe temp file, removed in `finally`), opencode file part. New `src/images-tempdir.ts` holds the shared helpers (media-type inference, Anthropic media-type validation, base64 read, lazy abort-safe temp workspace). `architectureCapabilities` now reports `imageInput` per architecture. README documents the API.
+
+[0.8.5]: https://github.com/InHarness/agent-adapters/compare/v0.8.4...v0.8.5
 
 [0.8.4]: https://github.com/InHarness/agent-adapters/compare/v0.8.3...v0.8.4
 
