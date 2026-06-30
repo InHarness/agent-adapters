@@ -1,3 +1,4 @@
+<!-- anchor: 5oq2k4d9 -->
 # Testing
 
 This library ships two tiers of tests:
@@ -7,6 +8,7 @@ This library ships two tiers of tests:
 | **Unit / contract** | Fast checks of adapter behaviour against `MockAdapter`; shared assertions for the unified event stream | No | `vitest.config.ts` (excludes `**/e2e/**`) | `src/**/*.test.ts` |
 | **E2E** | Hit real vendor SDKs through each adapter (Claude Code, Codex, OpenCode, Gemini) | Yes | `vitest.config.e2e.ts` (120 s timeout, `retry: 0`, loads `.env`) | `src/testing/e2e/*.e2e.test.ts` |
 
+<!-- anchor: 2c8r78v9 -->
 ## Prerequisites
 
 ```bash
@@ -17,6 +19,7 @@ npm install
 - Tests are **auto-skipped** when required env vars are missing — you can safely run `npm run test:e2e` with only some keys set.
 - OpenCode E2E requires the `opencode` CLI on `PATH`.
 
+<!-- anchor: mohjlmkp -->
 ## Unit tests
 
 ```bash
@@ -29,6 +32,7 @@ npm run test:gemini
 
 These need no API keys and no external binaries.
 
+<!-- anchor: abgtr4l4 -->
 ## Adapter normalization tests
 
 Each adapter normalizes its native SDK events into the unified `NormalizedMessage` (with `ContentBlock[]`). These tests verify that mapping without hitting any real vendor API.
@@ -65,6 +69,7 @@ npx vitest run normalize
 
 E2E tests additionally call `assertNormalization` on the live event stream in their text/tool/thinking scenarios, so the same contract is verified against real SDK output as well.
 
+<!-- anchor: bvr330b2 -->
 ## E2E tests
 
 ```bash
@@ -75,6 +80,7 @@ npm run test:e2e:opencode       # OpenCode only
 npm run test:e2e:gemini         # Gemini only
 ```
 
+<!-- anchor: cxo9xe0o -->
 ### Claude — pick a specific model
 
 Claude E2E reads the model from `E2E_CLAUDE_MODEL` (default: `sonnet-4.6`). See `src/testing/e2e/claude-code.e2e.test.ts:45`.
@@ -105,6 +111,7 @@ To force-skip the Claude E2E suite (e.g. on CI without credentials):
 SKIP_CLAUDE_E2E=1 npm run test:e2e
 ```
 
+<!-- anchor: auc8ss61 -->
 ### Other adapters — pick a specific model
 
 Codex, OpenCode, and Gemini E2E tests currently hardcode their model inside the test file. To try a different model, either edit the `MODEL` constant at the top of the relevant `*.e2e.test.ts`, or add an env-var override the same way `claude-code.e2e.test.ts` does.
@@ -120,6 +127,7 @@ Available aliases per architecture (from `src/models.ts` `MODEL_ALIASES`) — yo
 | `opencode-openrouter` | `claude-fable-5`, `claude-opus-4.8`, `claude-sonnet-4.6`, `claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1` |
 | `gemini` | `gemini-3.1-pro`, `gemini-3.1-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash` |
 
+<!-- anchor: 25dgpmka -->
 ## Environment variables
 
 | Adapter | Required | Optional |
@@ -131,19 +139,24 @@ Available aliases per architecture (from `src/models.ts` `MODEL_ALIASES`) — yo
 
 Each E2E file calls `requireEnv(...)` (see `src/testing/e2e/shared.ts:27`) and uses `describe.skipIf(...)` to skip cleanly when keys are absent.
 
+<!-- anchor: yvcm25lw -->
 ## Running a single file or test
 
 ```bash
+<!-- anchor: lf1anlet -->
 # One file
 npx vitest run --config vitest.config.e2e.ts src/testing/e2e/claude-code.e2e.test.ts
 
+<!-- anchor: 2fhk73xl -->
 # One test by name (substring match on `it(...)` / `describe(...)`)
 npx vitest run --config vitest.config.e2e.ts -t "streams text deltas"
 
+<!-- anchor: 97ajyp8s -->
 # Bump the timeout for a slow model
 npx vitest run --config vitest.config.e2e.ts --testTimeout 240000 claude-code
 ```
 
+<!-- anchor: bao0oeda -->
 ## Writing new tests
 
 **Unit / contract** — import helpers from the public `@inharness-ai/agent-adapters/testing` subpath (exported by `src/testing/index.ts`):
@@ -161,6 +174,7 @@ npx vitest run --config vitest.config.e2e.ts --testTimeout 240000 claude-code
 - Session-resume scenario: `runResumeScenario`, `RESUME_EXPECTED_NUMBER` — runs a memorize-and-recall round-trip; turn 2 resumes via `resumeSessionId` captured from turn 1's `result` event
 - Env guard: `requireEnv(...vars)` — returns `true` only when all vars are set
 
+<!-- anchor: sq3qyovw -->
 ## Troubleshooting
 
 - **Suite reports 0 tests / silently skips** — a required env var is missing. Check the `requireEnv(...)` call at the top of the adapter's E2E file.

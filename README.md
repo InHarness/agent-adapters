@@ -1,3 +1,4 @@
+<!-- anchor: k8fhrxmn -->
 # @inharness-ai/agent-adapters
 
 Unified TypeScript interface for AI agent SDKs. Run prompts through Claude Code, Codex, OpenCode, or Gemini with one consistent `AsyncIterable<UnifiedEvent>` stream.
@@ -21,6 +22,7 @@ for await (const event of adapter.execute({
 }
 ```
 
+<!-- anchor: iijtiowr -->
 ## Try it
 
 Want to see all adapters in action? Spin up an interactive chat that lets you talk to each one in turn:
@@ -31,27 +33,32 @@ npx @inharness-ai/agent-chat basic
 
 See [`@inharness-ai/agent-chat`](https://www.npmjs.com/package/@inharness-ai/agent-chat) for details.
 
+<!-- anchor: obf5pmld -->
 ## Why
 
 Every AI agent SDK has its own event protocol. Claude Code emits `SDKMessage`, Codex emits `ThreadEvent`, OpenCode uses SSE, Gemini has `AgentEvent`. This package normalizes all of them into a single typed stream — `AsyncIterable<UnifiedEvent>` — so your application code doesn't change when you swap agents.
 
 **No existing package does this.** `coder/agentapi` wraps CLI processes (Go, no types). AG-UI is a wire protocol. Vercel AI SDK covers LLM APIs, not agent SDKs.
 
+<!-- anchor: h5vvqppf -->
 ## Install
 
 ```bash
 npm install @inharness-ai/agent-adapters
 
+<!-- anchor: q4gzg5d2 -->
 # Install only the SDKs you need (peer dependencies):
 npm install @anthropic-ai/claude-agent-sdk   # for claude-code
 npm install @openai/codex-sdk                 # for codex
 npm install @opencode-ai/sdk                  # for opencode
 npm install @google/gemini-cli-core           # for gemini
 
+<!-- anchor: iivglsw9 -->
 # For in-process MCP servers (optional):
 npm install @modelcontextprotocol/sdk zod
 ```
 
+<!-- anchor: eh1q9qhx -->
 ## Adapters
 
 | Architecture | SDK | Streaming | Thinking | MCP | Session Resume | Subagents |
@@ -80,6 +87,7 @@ npm install @modelcontextprotocol/sdk zod
 > });
 > ```
 
+<!-- anchor: szf9iagq -->
 ## Providers
 
 Adapters can run against alternative API backends via **providers**. A provider knows how to configure each adapter for a given backend (env vars, base URLs, model names, etc.).
@@ -115,6 +123,7 @@ const local2 = createAdapter('claude-code', {
 });
 ```
 
+<!-- anchor: rc87w4e0 -->
 ### Architecture aliases
 
 These convenience aliases create an adapter with a pre-configured provider:
@@ -125,6 +134,7 @@ These convenience aliases create an adapter with a pre-configured provider:
 | `claude-code-minimax` | `createAdapter('claude-code', { provider: 'minimax' })` |
 | `opencode-openrouter` | `createAdapter('opencode', { provider: 'openrouter' })` |
 
+<!-- anchor: nn2ydb1w -->
 ### Custom providers
 
 Register your own provider for any API-compatible backend:
@@ -159,6 +169,7 @@ registerProvider({
 const adapter = createAdapter('claude-code', { provider: 'openrouter', apiKey: '...' });
 ```
 
+<!-- anchor: ogehxq8r -->
 ## Model aliases
 
 Each architecture has a set of short aliases for popular models. Use an alias instead of the full model ID — the adapter resolves it at runtime. You can also pass the full model ID directly.
@@ -216,6 +227,7 @@ MODEL_ALIASES['claude-code'];
 
 Unknown aliases throw an `AdapterError` with the list of available aliases for that architecture. TypeScript also provides compile-time autocomplete for known aliases when the architecture generic is specified.
 
+<!-- anchor: qorczfyw -->
 ## UnifiedEvent
 
 All adapters produce the same event types:
@@ -237,6 +249,7 @@ All adapters produce the same event types:
 | `warning` | Non-fatal notice (e.g. an option was dropped by this adapter) |
 | `flush` | Context compaction boundary |
 
+<!-- anchor: m9otdye2 -->
 ### adapter_ready — startup audit trail
 
 Every `execute()` emits exactly one `adapter_ready` event right after the adapter finishes building its SDK-native config, and before the first SDK call. It lets consumers see what the underlying library actually received — useful when options differ per adapter (e.g. Codex hardcodes `approvalPolicy='never'`, OpenCode drops `planMode`, Gemini maps `planMode → approvalMode:'plan'`).
@@ -260,6 +273,7 @@ for await (const event of adapter.execute(params)) {
 
 If the adapter had to drop or override options (e.g. Codex emits a `warning` when `mcpServers` is provided), those `warning` events fire *before* `adapter_ready`, so the ordering reads as: "here is what I threw away → here is what I kept".
 
+<!-- anchor: 05ijf13u -->
 ## MCP servers
 
 The library supports four MCP server transport types, matching the Model Context Protocol spec:
@@ -271,6 +285,7 @@ The library supports four MCP server transport types, matching the Model Context
 | **HTTP** | `{ type: 'http', url, headers }` | claude-code, gemini |
 | **In-process (SDK)** | `{ type: 'sdk', name, instance }` | claude-code |
 
+<!-- anchor: f0msjzy9 -->
 ### Stdio MCP servers
 
 External MCP servers that run as subprocesses — works across most adapters:
@@ -293,6 +308,7 @@ for await (const event of adapter.execute({
 }
 ```
 
+<!-- anchor: 4z6hz5dh -->
 ### In-process MCP servers
 
 Create custom MCP tools that run in the same process — no subprocess spawning, direct access to your application state:
@@ -331,6 +347,7 @@ for await (const event of adapter.execute({
 
 `createMcpServer` requires `@modelcontextprotocol/sdk` and `zod` as peer dependencies. Input schemas must be Zod raw shapes (e.g. `{ name: z.string() }`).
 
+<!-- anchor: z0tewkbk -->
 ### Mixing server types
 
 You can combine different server types in a single execution:
@@ -355,6 +372,7 @@ adapter.execute({
 });
 ```
 
+<!-- anchor: lu6qg8rz -->
 ### MCP per adapter
 
 | Adapter | Behavior |
@@ -364,6 +382,7 @@ adapter.execute({
 | **opencode** | Stdio only — other types are silently skipped. |
 | **codex** | No dynamic MCP configuration. The SDK does not expose MCP setup. Pre-configure servers via `codex mcp add` CLI or `~/.codex/config.toml`. A warning is logged if `mcpServers` is provided. |
 
+<!-- anchor: qmp0wgdf -->
 ### McpServerConfig types
 
 ```ts
@@ -376,6 +395,7 @@ import type {
 } from '@inharness-ai/agent-adapters';
 ```
 
+<!-- anchor: yy933loh -->
 ## Inline skills
 
 Pass skill definitions directly via `RuntimeExecuteParams.skills` instead of writing files into `.claude/skills/` ahead of time. Each skill is a `{ name, description, content }` triple — content is the Markdown body the model would normally read from a `SKILL.md` file. The library materializes them to a per-call tmpdir, wires the running SDK to load them, and removes everything in `finally` (abort-safe — works through SDK errors, timeouts, and `AbortController.abort()`).
@@ -401,6 +421,7 @@ for await (const event of adapter.execute({
 }
 ```
 
+<!-- anchor: 1u8g4t8m -->
 ### How each adapter receives the skill
 
 | Adapter | Mechanism | Pollutes user cwd? |
@@ -412,6 +433,7 @@ for await (const event of adapter.execute({
 
 OpenCode and Codex SDKs have no programmatic skills API, so the library mirrors the SKILL.md files into the directories those agents auto-scan. The `agent-adapters-<uuid>-` prefix guarantees no collision with skills the user already keeps under those paths, and cleanup removes only the directories this call created.
 
+<!-- anchor: gmkfocfk -->
 ### InlineSkill type
 
 ```ts
@@ -428,6 +450,7 @@ interface InlineSkill {
 
 Validation: names with `/`, `\`, or `..` are rejected (path traversal); slugs longer than 64 chars or that collide within the same call throw. `files` keys must be relative (no leading `/`, no absolute paths), must not contain `..` segments, must not equal `SKILL.md` (use `content` for the main body), and are capped at 200 chars.
 
+<!-- anchor: l27wqkzc -->
 ### Multi-file skills
 
 Real Claude Code skills are often directories — a main `SKILL.md` plus helper files the model can `Read`/`Glob`. Pass them via `files`:
@@ -457,6 +480,7 @@ Materialized layout:
 
 For codex/opencode the entire tree is mirrored under `<cwd>/<subdir>/agent-adapters-<uuid>-codereview/`. **Gemini exception:** its `SkillDefinition.body` API takes a single string, so extra `files` are written to disk for parity but the model only sees `content`. The gemini adapter emits a `console.warn` when `files` is non-empty.
 
+<!-- anchor: 9p6er8yi -->
 ### Listing disk skills
 
 `InlineSkill` is the write side. For the read side — discovering the skills a runtime **already auto-loads from disk** (the directories it scans whether you want it to or not) — use `listDiskSkills(architecture)`. It scans the same project/global/system directories the runtime reads and returns one entry per `<name>/SKILL.md`, parsed for frontmatter `name`/`description` (block scalars folded) plus any extra flat metadata keys.
@@ -484,6 +508,7 @@ Directories scanned per architecture:
 
 Results are **not** deduplicated: the same skill name in both a project and a global directory yields two entries, each with its own `scope` (`project`/`global`/`system`) and `source` so you can see where each came from. `cwd` defaults to `process.cwd()` and `home` to `os.homedir()`. Gemini skills live only inside extensions, so a repo without extensions returns `[]`. Missing directories and unknown architectures return `[]`.
 
+<!-- anchor: stbvlncx -->
 ## Error handling
 
 All adapters emit typed errors via the `error` event. The error hierarchy lets you distinguish failure causes:
@@ -511,6 +536,7 @@ for await (const event of adapter.execute(params)) {
 
 When `timeoutMs` is set, the adapter emits an `AdapterTimeoutError` event and stops. When `adapter.abort()` is called manually, it emits an `AdapterAbortError` event and stops.
 
+<!-- anchor: whjvx5rk -->
 ## Tree-shakeable imports
 
 Import only the adapter you need — no unnecessary SDK dependencies:
@@ -522,6 +548,7 @@ import { OpencodeAdapter } from '@inharness-ai/agent-adapters/opencode';
 import { GeminiAdapter } from '@inharness-ai/agent-adapters/gemini';
 ```
 
+<!-- anchor: t74z1v32 -->
 ## Observer pattern
 
 Attach observers to the event stream without consuming it. For quick debugging, use the built-in `createConsoleObserver`:
@@ -570,6 +597,7 @@ for await (const event of observeStream(stream, [logger])) {
 }
 ```
 
+<!-- anchor: vlyshel0 -->
 ## Streaming utilities
 
 ```ts
@@ -593,6 +621,7 @@ const { main, subagent } = await splitBySubagent(stream);
 const text = await extractText(stream);
 ```
 
+<!-- anchor: shzuzrl3 -->
 ## Session resume
 
 Pass `resumeSessionId` (from a prior `result.sessionId`) to continue a conversation. One invariant holds across every adapter:
@@ -635,6 +664,7 @@ if (violations.length > 0) {
 
 `findResumeViolations` only flags a field when it is present on **both** sides and the values differ — partial configs never produce false positives. Per-turn fields (prompt, system prompt, tools, MCP servers, skills, plan mode, temperature/top-p) are all mutable and never reported.
 
+<!-- anchor: q2v7de4o -->
 ## Image input
 
 Attach images to the prompt with `images` — one unified shape, delivered to each
@@ -680,6 +710,7 @@ Images ride with the initial `prompt` and, on `claude-code`, mid-turn via
 `pushMessage(text, images)` (see [Mid-turn message injection](#mid-turn-message-injection)).
 Omitting `images` — or passing `[]` — is identical to a text-only prompt.
 
+<!-- anchor: mmfqedyu -->
 ## Mid-turn message injection
 
 By default `execute()` is one-shot: one prompt in, one `result` out. Opt into **streaming-input mode** with `streamingInput: true` to keep the session's input channel open and push additional user messages *while the agent is still working* — useful for chat UIs that want to leave the composer unlocked during a turn.
@@ -725,6 +756,7 @@ Contract:
 
 > **Mid-turn ≠ instantaneous.** The contract is "delivered as early as the runtime allows." Whether the underlying SDK hands a pushed message to the model *between tool calls* within a turn or only at the *next turn boundary* is a property of the runtime. For `claude-code` (riding `@anthropic-ai/claude-agent-sdk`'s streaming-input mode) the observed behavior is **true mid-turn delivery**: a message pushed after the model's first tool call is acted on within the *same* turn (the model issues a follow-up tool call before the single `result`) — see the streaming-input E2E in `src/testing/e2e/claude-code.e2e.test.ts`. A push that lands exactly at the turn boundary instead runs as the next turn in the same session and yields an additional `result`.
 
+<!-- anchor: dv0f1to5 -->
 ## Token usage
 
 Every `result` event carries **two distinct metrics** — pick the right one for your UI:
@@ -736,6 +768,7 @@ Every `result` event carries **two distinct metrics** — pick the right one for
 
 Both are emitted by every adapter (claude-code, codex, gemini, opencode) on every `result`. They mean different things: billing totals can grow without bound across resumed turns (replayed history is re-billed, often at a cache-discounted rate), while context-window utilization is capped by the model and can never exceed it.
 
+<!-- anchor: 1fxt5p78 -->
 ### USAGE CONTEXT WINDOW — show "X / 200k" utilization
 
 Take the LAST turn's `contextSize` and divide by the model's window. `getModelContextWindow(architecture, model)` returns the cap.
@@ -764,6 +797,7 @@ console.log(`Context: ${lastContextSize.toLocaleString()} / ${cap.toLocaleString
 
 `contextSize = usage.inputTokens + usage.outputTokens` after THIS turn — do NOT sum it across turns. Each turn's `inputTokens` already includes the full conversation up to that point (the model is re-fed the history every turn); adding `outputTokens` gives the post-turn conversation size. The `contextSize()` helper from `@inharness-ai/agent-adapters` exposes the same calculation if you only have a `UsageStats` in hand.
 
+<!-- anchor: e6drht70 -->
 ### USAGE BILLING TOKENS — sum across turns for session totals
 
 `result.usage` is the cost of THIS `execute()` call only. On a resumed session (`resumeSessionId`), the new turn's `usage` does NOT include prior turns. To show a running session-level total, sum across calls:
@@ -789,6 +823,7 @@ const total2 = addUsage(sumUsageFromEvents(turn1), sumUsageFromEvents(turn2));
 
 This pattern matches the [Anthropic Agent SDK cost-tracking docs](https://code.claude.com/docs/en/agent-sdk/cost-tracking): *"each result only reflects the cost of that individual call… accumulate the totals yourself."*
 
+<!-- anchor: rf10rh9z -->
 ### Cache fields
 
 `cacheReadInputTokens` and `cacheCreationInputTokens` are **subsets** of `inputTokens`, not separate buckets (OpenAI convention; the claude-code adapter normalizes Anthropic's three additive fields to match). To compute "fresh" input billed at the full rate:
@@ -799,6 +834,7 @@ const fresh = usage.inputTokens - (usage.cacheReadInputTokens ?? 0) - (usage.cac
 
 Per-adapter coverage: codex surfaces `cacheReadInputTokens`; claude-code surfaces both; gemini and opencode currently surface neither.
 
+<!-- anchor: ybzh3jgh -->
 ### Helpers
 
 All exported from `@inharness-ai/agent-adapters`:
@@ -812,6 +848,7 @@ All exported from `@inharness-ai/agent-adapters`:
 
 All are pure, stateless, and never mutate their inputs.
 
+<!-- anchor: wuws6tre -->
 ### Cross-process resume (codex only)
 
 Codex's underlying SDK reports session-level cumulative usage (issue [openai/codex#17539](https://github.com/openai/codex/issues/17539)); the adapter converts it to per-`execute()` delta via a module-scoped LRU. In a single long-running process this is transparent. If your runtime spawns a new Node process per `execute()` call (per-request workers, serverless, CLI invoked per turn), pass the prior turn's raw cumulative as `priorUsage` so the per-call delta stays accurate:
@@ -826,6 +863,7 @@ const r2 = await adapter.execute({
 
 Without `priorUsage` in a cross-process setup, the first resumed turn after each restart returns the full session cumulative as `result.usage` — a known artifact, documented in `.claude/skills/codex-sdk/SKILL.md` quirk #9. Other adapters ignore `priorUsage` (their SDKs already report per-call).
 
+<!-- anchor: xs83kh4d -->
 ## Factory API
 
 ```ts
@@ -844,6 +882,7 @@ interface ProviderConfig {
 }
 ```
 
+<!-- anchor: wpnoszxt -->
 ## Custom adapters
 
 Register your own adapters for any agent architecture:
@@ -863,6 +902,7 @@ registerAdapter('aider', () => new AiderAdapter());
 const adapter = createAdapter('aider');
 ```
 
+<!-- anchor: 8ct21odo -->
 ## Contract testing
 
 Validate that your custom adapter produces correct event sequences:
@@ -875,6 +915,7 @@ console.log(result.passed); // true/false
 console.log(result.assertions); // detailed per-assertion results
 ```
 
+<!-- anchor: 41iwfwn9 -->
 ## Auth per adapter
 
 | Adapter | Default auth | With provider |
@@ -884,6 +925,7 @@ console.log(result.assertions); // detailed per-assertion results
 | opencode | `OPENROUTER_API_KEY` env var + `opencode` CLI in PATH | `providerConfig.apiKey` or `opencode_apiKey` in architectureConfig |
 | gemini | `GOOGLE_API_KEY` or `GEMINI_API_KEY` env var | — |
 
+<!-- anchor: x6pg09i5 -->
 ## RuntimeExecuteParams
 
 ```ts
@@ -908,6 +950,7 @@ interface RuntimeExecuteParams {
 
 `builtinMCPServers` and `allowedMCPTools` are consumer-level hints — the consumer (e.g. orchestrator) resolves them into concrete `mcpServers` entries before calling the adapter. Adapters only read `mcpServers`.
 
+<!-- anchor: xnf2ezp3 -->
 ### Architecture-specific config
 
 | Key | Adapter | Description |
@@ -930,6 +973,7 @@ interface RuntimeExecuteParams {
 | `gemini_thinkingBudget` | gemini | Thinking token budget |
 | `gemini_temperature` | gemini | Temperature (0-2) |
 
+<!-- anchor: glbinxd5 -->
 ## Examples
 
 ```
@@ -957,6 +1001,7 @@ examples/
     timeout-and-abort.ts   # Timeout and manual abort
 ```
 
+<!-- anchor: 9l76joh3 -->
 ## License
 
 MIT
