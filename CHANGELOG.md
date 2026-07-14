@@ -3,6 +3,13 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+<!-- anchor: q4wz1k7f -->
+## [0.8.6] — 2026-07-14
+
+<!-- anchor: t8n2r5xp -->
+### Fixed
+- **`claude-code` task-tracking (`TaskCreate`/`TaskGet`/`TaskUpdate`/`TaskList`) now merges into `todo_list_updated` with the real SDK field names.** Newer Claude models emit this per-item CRUD family (behind a `ToolSearch` discovery gate) instead of the single `TodoWrite` tool. The projection now merges any of these into the running snapshot (`TodoWrite` still replaces it wholesale) using the actual `sdk-tools.d.ts` schema — `TaskCreateInput`/`TaskUpdateInput` key on `subject`/`description` with no `id`, and `TaskUpdateInput`/`TaskGetInput` key on `taskId`, not the previously guessed `id`/`content` shape. `TaskCreate` entries are keyed by `toolUseId` since the server-assigned id only appears in the `tool_result`, which the adapter doesn't parse; bare `TaskGet`/`TaskList` calls (no writable field) now leave their `tool_use`/`tool_result` events visible instead of being silently discarded. The whole `Task*` family plus `ToolSearch` was also added to the plan-mode read-only allowlist so a plan-mode turn never silently falls back to prose-only planning on a newer model.
+
 <!-- anchor: r8k2v5q1 -->
 ## [0.8.5] — 2026-06-30
 
@@ -24,6 +31,8 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 <!-- anchor: 98fmhy4z -->
 ### Added
 - **Unified image input on the initial prompt.** New optional `RuntimeExecuteParams.images` field lets consumers attach images to the initial prompt across all four adapters with one shape. `ImageInput` reuses the existing output image-source vocabulary (`{type:'base64'|'url'}`) plus an input-only `{type:'file'}` variant; each adapter delivers images in its SDK's native form — claude-code native base64/url content blocks (file read+inlined, one-shot routed through the streaming input channel), gemini media content part, codex local-path (base64/url written to an abort-safe temp file, removed in `finally`), opencode file part. New `src/images-tempdir.ts` holds the shared helpers (media-type inference, Anthropic media-type validation, base64 read, lazy abort-safe temp workspace). `architectureCapabilities` now reports `imageInput` per architecture. README documents the API.
+
+[0.8.6]: https://github.com/InHarness/agent-adapters/compare/v0.8.5...v0.8.6
 
 [0.8.5]: https://github.com/InHarness/agent-adapters/compare/v0.8.4...v0.8.5
 
