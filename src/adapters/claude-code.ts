@@ -58,13 +58,39 @@ export type {
 //
 // When the SDK gains per-MCP-tool filtering at the options level, revisit —
 // see the TODO in .claude/skills/claude-code-sdk/SKILL.md.
+// Task-tracking tool family: TodoWrite (legacy, full-list-replace) plus the
+// per-item CRUD tools newer Claude models ship instead (accumulated into a
+// running snapshot — see mergeTaskToolInputIntoSnapshot below). Shared by the
+// plan-mode allowlist and the assistant-message projection matcher so the two
+// can never drift apart on a future rename — the same discipline already
+// applied to the Task → Agent rename below. TaskCreate/TaskGet/TaskUpdate/
+// TaskList are confirmed real tools with a fully-specified schema in
+// `@anthropic-ai/claude-agent-sdk`'s `sdk-tools.d.ts` (TaskCreateInput etc.) —
+// this is not speculative.
+export const CLAUDE_CODE_TASK_TRACKING_TOOLS: string[] = [
+  'TodoWrite',
+  'TaskCreate',
+  'TaskGet',
+  'TaskUpdate',
+  'TaskList',
+];
+
 export const CLAUDE_CODE_READONLY_BUILTINS: string[] = [
   'Read',
   'Grep',
   'Glob',
   'WebFetch',
   'WebSearch',
-  'TodoWrite',
+  ...CLAUDE_CODE_TASK_TRACKING_TOOLS,
+  // ToolSearch is presumed to be the discovery gate future models will use to
+  // find deferred built-ins, including the TaskCreate/TaskUpdate family above.
+  // Unlike those Task* names (confirmed in sdk-tools.d.ts, see above),
+  // ToolSearch does not appear anywhere in the pinned SDK
+  // (@anthropic-ai/claude-agent-sdk) today — this entry is precautionary and
+  // unverified. Whitelisting a tool name the SDK doesn't recognize is
+  // harmless, so keeping it costs nothing while guarding against the case
+  // where it does ship and gates those tools' discoverability in plan mode.
+  'ToolSearch',
   'AskUserQuestion',
   // Skill only loads a skill's body into context (read-only). Without it on the
   // plan-mode whitelist, inline skills materialized as a local plugin can never
@@ -196,6 +222,68 @@ export function todoItemsFromTodoWriteInput(input: Record<string, unknown>): Tod
     ...(typeof t.activeForm === 'string' ? { activeForm: t.activeForm } : {}),
     status: (typeof t.status === 'string' ? t.status : 'pending') as TodoItem['status'],
   }));
+}
+
+/**
+ * @internal Exported for unit tests.
+ * Upsert a single task-tracking CRUD call (TaskCreate/TaskGet/TaskUpdate/
+ * TaskList) into the running snapshot. Field names match the real tool
+ * schema (`@anthropic-ai/claude-agent-sdk`'s `sdk-tools.d.ts`):
+ * `TaskCreateInput`/`TaskUpdateInput` use `subject`/`description`, and
+ * `TaskUpdateInput`/`TaskGetInput` key on `taskId` — never `id`, and
+ * `TaskCreateInput` carries no identifier at all (the server only assigns
+ * one in the `tool_result`, which this adapter does not parse). A created
+ * item is keyed by its `toolUseId` instead, so it will NOT reconcile with a
+ * later `TaskUpdate({ taskId: <real server id> })` referencing the same
+ * task — a known limitation, tracked via a clarification patch on the
+ * 0-0-5-to-0-0-6 brief.
+ *
+ * Returns `undefined` (no merge) when the call carries no writable field —
+ * `TaskGet`'s `{ taskId }` and `TaskList`'s `{}` inputs never do. The caller
+ * must then leave the `toolUse`/`tool_result` untouched: the real answer for
+ * those two read verbs lives entirely in the `tool_result` payload (e.g.
+ * `TaskListOutput.tasks`), which this function does not have access to and
+ * this adapter does not parse — suppressing it here would silently discard
+ * the only place that data exists.
+ */
+export function mergeTaskToolInputIntoSnapshot(
+  snapshot: TodoItem[],
+  toolUseId: string,
+  input: Record<string, unknown>,
+): TodoItem[] | undefined {
+  const hasWritableField =
+    typeof input.subject === 'string' ||
+    typeof input.description === 'string' ||
+    typeof input.activeForm === 'string' ||
+    typeof input.status === 'string';
+  if (!hasWritableField) return undefined;
+
+  const explicitId =
+    typeof input.taskId === 'string' ? input.taskId : typeof input.id === 'string' ? input.id : undefined;
+  const id = explicitId ?? toolUseId;
+
+  const next = snapshot.slice();
+  const idx = next.findIndex((item) => item.id === id);
+  const existing = idx >= 0 ? next[idx] : undefined;
+  const content =
+    typeof input.description === 'string'
+      ? input.description
+      : typeof input.subject === 'string'
+        ? input.subject
+        : (existing?.content ?? '');
+  const merged: TodoItem = {
+    id,
+    content,
+    ...(typeof input.activeForm === 'string'
+      ? { activeForm: input.activeForm }
+      : existing?.activeForm !== undefined
+        ? { activeForm: existing.activeForm }
+        : {}),
+    status: (typeof input.status === 'string' ? input.status : (existing?.status ?? 'pending')) as TodoItem['status'],
+  };
+  if (idx >= 0) next[idx] = merged;
+  else next.push(merged);
+  return next;
 }
 
 function safeParseJson(s: string): Record<string, unknown> | undefined {
@@ -709,11 +797,18 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // parent_tool_use_id → task_id lookup. Populated on `system` subtype
     // `task_started`; read on every delta/tool event to resolve subagentTaskId.
     const subagentTaskIdByParentToolUseId = new Map<string, string>();
-    // Track TodoWrite tool_use IDs so we can suppress their matching tool_result
-    // (both the UnifiedEvent and the ContentBlock in rawMessages). The payload
-    // of that tool_result is `{ oldTodos, newTodos }` — redundant with the
-    // snapshot already surfaced via `todoList` / `todo_list_updated`.
+    // Track task-tracking tool_use IDs (TodoWrite or the TaskCreate/TaskGet/
+    // TaskUpdate/TaskList family) so we can suppress their matching tool_result
+    // (both the UnifiedEvent and the ContentBlock in rawMessages). That
+    // tool_result payload is redundant with the snapshot already surfaced via
+    // `todoList` / `todo_list_updated`.
     const pendingTodoToolUseIds = new Set<string>();
+    // Scoped to this execute() call, so a resumed session starts with an
+    // empty snapshot. TodoWrite is immune (the model always resends the full
+    // list), but a TaskUpdate referencing a taskId created in a prior turn/
+    // session has no existing entry to merge fields against and produces a
+    // stub with blank content instead of the real one. Fixing this needs
+    // session-level state persisted across execute() calls, out of scope here.
     let lastTodoSnapshot: TodoItem[] | undefined;
 
     // Timeout handling
@@ -948,17 +1043,30 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               ? subagentTaskIdByParentToolUseId.get(parentToolUseId)
               : undefined;
 
-            // Replace TodoWrite `toolUse` blocks with unified `todoList` blocks
-            // in-place so rawMessages and the assistant_message event both
-            // carry the normalized shape.
+            // Replace task-tracking `toolUse` blocks with unified `todoList`
+            // blocks in-place so rawMessages and the assistant_message event
+            // both carry the normalized shape. TodoWrite replaces the whole
+            // snapshot. The newer TaskCreate/TaskGet/TaskUpdate/TaskList family
+            // merges per-item instead — but TaskGet/TaskList carry no writable
+            // field (mergeTaskToolInputIntoSnapshot returns undefined), so
+            // those blocks are deliberately left untouched: their tool_use and
+            // matching tool_result stay visible since the real answer for
+            // those two read verbs lives in the tool_result, not this input.
             for (let i = 0; i < normalized.content.length; i++) {
               const block = normalized.content[i];
-              if (block.type === 'toolUse' && block.toolName === 'TodoWrite') {
-                const items = todoItemsFromTodoWriteInput(block.input);
-                pendingTodoToolUseIds.add(block.toolUseId);
-                lastTodoSnapshot = items;
-                normalized.content[i] = { type: 'todoList', items };
+              if (block.type !== 'toolUse') continue;
+
+              let items: TodoItem[] | undefined;
+              if (block.toolName === 'TodoWrite') {
+                items = todoItemsFromTodoWriteInput(block.input);
+              } else if (CLAUDE_CODE_TASK_TRACKING_TOOLS.includes(block.toolName)) {
+                items = mergeTaskToolInputIntoSnapshot(lastTodoSnapshot ?? [], block.toolUseId, block.input);
               }
+              if (items === undefined) continue;
+
+              pendingTodoToolUseIds.add(block.toolUseId);
+              lastTodoSnapshot = items;
+              normalized.content[i] = { type: 'todoList', items };
             }
 
             rawMessages.push(normalized);
@@ -998,10 +1106,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             const message = userMsg.message as Record<string, unknown>;
             if (message && Array.isArray(message.content)) {
               const rawContent = normalizeContentBlocks(message.content);
-              // Strip tool_result blocks that correspond to a TodoWrite tool_use
-              // we already projected as `todo_list_updated`. The tool_result's
-              // `{ oldTodos, newTodos }` payload is redundant and would leak
-              // the raw TodoWrite shape back into rawMessages / the event stream.
+              // Strip tool_result blocks that correspond to a task-tracking
+              // tool_use we already projected as `todo_list_updated`. That
+              // tool_result payload is redundant and would leak the raw
+              // TodoWrite/TaskCreate/etc. shape back into rawMessages / the
+              // event stream.
               const content = rawContent.filter((block) => {
                 if (block.type === 'toolResult' && pendingTodoToolUseIds.has(block.toolUseId)) {
                   pendingTodoToolUseIds.delete(block.toolUseId);
