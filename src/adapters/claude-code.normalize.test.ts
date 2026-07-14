@@ -7,8 +7,10 @@ import {
   normalizeContentBlocks,
   normalizeAssistantMessage,
   todoItemsFromTodoWriteInput,
+  mergeTaskToolInputIntoSnapshot,
   CLAUDE_CODE_READONLY_BUILTINS,
   CLAUDE_CODE_MUTATING_BUILTINS,
+  CLAUDE_CODE_TASK_TRACKING_TOOLS,
 } from './claude-code.js';
 
 describe('normalizeContentBlocks', () => {
@@ -225,6 +227,51 @@ describe('todoItemsFromTodoWriteInput', () => {
   });
 });
 
+// Newer Claude models ship task-tracking as a per-item CRUD family
+// (TaskCreate/TaskGet/TaskUpdate/TaskList) instead of the single TodoWrite
+// tool. Unlike TodoWrite (full-list replace), each call carries at most one
+// entry and must be merged into the running snapshot.
+describe('mergeTaskToolInputIntoSnapshot', () => {
+  it('upserts a new item by id into an empty snapshot (TaskCreate)', () => {
+    const out = mergeTaskToolInputIntoSnapshot([], { id: '1', content: 'Do X', status: 'pending' });
+    expect(out).toEqual([{ id: '1', content: 'Do X', status: 'pending' }]);
+  });
+
+  it('accumulates a create then an update: preserves untouched fields, overwrites patched ones', () => {
+    const afterCreate = mergeTaskToolInputIntoSnapshot([], {
+      id: '1',
+      content: 'Do X',
+      status: 'pending',
+    });
+    const afterUpdate = mergeTaskToolInputIntoSnapshot(afterCreate, { id: '1', status: 'completed' });
+    expect(afterUpdate).toEqual([{ id: '1', content: 'Do X', status: 'completed' }]);
+  });
+
+  it('appends a second id rather than replacing the first entry (accumulation, not full-list-replace)', () => {
+    const afterFirst = mergeTaskToolInputIntoSnapshot([], { id: '1', content: 'Do X', status: 'pending' });
+    const afterSecond = mergeTaskToolInputIntoSnapshot(afterFirst, {
+      id: '2',
+      content: 'Do Y',
+      status: 'pending',
+    });
+    expect(afterSecond).toEqual([
+      { id: '1', content: 'Do X', status: 'pending' },
+      { id: '2', content: 'Do Y', status: 'pending' },
+    ]);
+  });
+
+  it('stringifies a numeric id', () => {
+    const out = mergeTaskToolInputIntoSnapshot([], { id: 1, content: 'Do X', status: 'pending' });
+    expect(out).toEqual([{ id: '1', content: 'Do X', status: 'pending' }]);
+  });
+
+  it('leaves the snapshot unchanged when no id is resolvable (e.g. a bare TaskList query)', () => {
+    const snapshot = [{ id: '1', content: 'Do X', status: 'pending' as const }];
+    const out = mergeTaskToolInputIntoSnapshot(snapshot, {});
+    expect(out).toEqual(snapshot);
+  });
+});
+
 // Regression: plan mode sets options.tools = CLAUDE_CODE_READONLY_BUILTINS, which is
 // the only knob that shapes the model's built-in catalog. Skill must be on it, or
 // inline skills materialized as a local plugin can never be opened ("No such tool
@@ -256,5 +303,33 @@ describe('plan-mode tool whitelist', () => {
     expect(CLAUDE_CODE_MUTATING_BUILTINS).toEqual(
       expect.arrayContaining(['Bash', 'Edit', 'Write', 'NotebookEdit']),
     );
+  });
+
+  // Newer Claude models replace TodoWrite with a per-item CRUD family
+  // (TaskCreate/TaskGet/TaskUpdate/TaskList) discovered via ToolSearch. Both
+  // must stay whitelisted or a plan-mode turn on a newer model silently falls
+  // back to prose-only planning (no usable task-tracking tool at all).
+  it('exposes every task-tracking alias plus the ToolSearch discovery gate as read-only built-ins', () => {
+    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TodoWrite');
+    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TaskCreate');
+    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TaskGet');
+    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TaskUpdate');
+    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TaskList');
+    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('ToolSearch');
+  });
+
+  it('does not list the task-tracking family as mutating built-ins', () => {
+    for (const tool of CLAUDE_CODE_TASK_TRACKING_TOOLS) {
+      expect(CLAUDE_CODE_MUTATING_BUILTINS).not.toContain(tool);
+    }
+  });
+
+  // The alias-tracking invariant itself: the shared constant — not a
+  // hand-copied second list — is what the allowlist is built from, so a
+  // future rename only needs updating in one place.
+  it('derives the read-only allowlist from CLAUDE_CODE_TASK_TRACKING_TOOLS (no drift between the two)', () => {
+    for (const tool of CLAUDE_CODE_TASK_TRACKING_TOOLS) {
+      expect(CLAUDE_CODE_READONLY_BUILTINS).toContain(tool);
+    }
   });
 });
