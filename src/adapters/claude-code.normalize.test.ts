@@ -229,46 +229,58 @@ describe('todoItemsFromTodoWriteInput', () => {
 
 // Newer Claude models ship task-tracking as a per-item CRUD family
 // (TaskCreate/TaskGet/TaskUpdate/TaskList) instead of the single TodoWrite
-// tool. Unlike TodoWrite (full-list replace), each call carries at most one
-// entry and must be merged into the running snapshot.
+// tool. Field names below match the real schema in
+// @anthropic-ai/claude-agent-sdk's sdk-tools.d.ts (TaskCreateInput uses
+// subject/description with no id; TaskUpdateInput/TaskGetInput key on
+// taskId). Unlike TodoWrite (full-list replace), each call carries at most
+// one entry and must be merged into the running snapshot.
 describe('mergeTaskToolInputIntoSnapshot', () => {
-  it('upserts a new item by id into an empty snapshot (TaskCreate)', () => {
-    const out = mergeTaskToolInputIntoSnapshot([], { id: '1', content: 'Do X', status: 'pending' });
-    expect(out).toEqual([{ id: '1', content: 'Do X', status: 'pending' }]);
-  });
-
-  it('accumulates a create then an update: preserves untouched fields, overwrites patched ones', () => {
-    const afterCreate = mergeTaskToolInputIntoSnapshot([], {
-      id: '1',
-      content: 'Do X',
-      status: 'pending',
+  it('creates a new item for TaskCreate, keyed by toolUseId (TaskCreateInput has no id)', () => {
+    const out = mergeTaskToolInputIntoSnapshot([], 'toolu_1', {
+      subject: 'Do X',
+      description: 'Do the X thing',
+      activeForm: 'Doing X',
     });
-    const afterUpdate = mergeTaskToolInputIntoSnapshot(afterCreate, { id: '1', status: 'completed' });
-    expect(afterUpdate).toEqual([{ id: '1', content: 'Do X', status: 'completed' }]);
+    expect(out).toEqual([{ id: 'toolu_1', content: 'Do the X thing', activeForm: 'Doing X', status: 'pending' }]);
   });
 
-  it('appends a second id rather than replacing the first entry (accumulation, not full-list-replace)', () => {
-    const afterFirst = mergeTaskToolInputIntoSnapshot([], { id: '1', content: 'Do X', status: 'pending' });
-    const afterSecond = mergeTaskToolInputIntoSnapshot(afterFirst, {
-      id: '2',
-      content: 'Do Y',
-      status: 'pending',
+  it('merges a TaskUpdate by taskId, preserving untouched fields and overwriting patched ones', () => {
+    const afterCreate = mergeTaskToolInputIntoSnapshot([], 'toolu_1', {
+      subject: 'Do X',
+      description: 'Do the X thing',
+    });
+    const afterUpdate = mergeTaskToolInputIntoSnapshot(afterCreate ?? [], 'toolu_2', {
+      taskId: 'toolu_1',
+      status: 'completed',
+    });
+    expect(afterUpdate).toEqual([{ id: 'toolu_1', content: 'Do the X thing', status: 'completed' }]);
+  });
+
+  it('appends a second task rather than replacing the first (accumulation, not full-list-replace)', () => {
+    const afterFirst = mergeTaskToolInputIntoSnapshot([], 'toolu_1', { subject: 'X', description: 'Do X' });
+    const afterSecond = mergeTaskToolInputIntoSnapshot(afterFirst ?? [], 'toolu_2', {
+      subject: 'Y',
+      description: 'Do Y',
     });
     expect(afterSecond).toEqual([
-      { id: '1', content: 'Do X', status: 'pending' },
-      { id: '2', content: 'Do Y', status: 'pending' },
+      { id: 'toolu_1', content: 'Do X', status: 'pending' },
+      { id: 'toolu_2', content: 'Do Y', status: 'pending' },
     ]);
   });
 
-  it('stringifies a numeric id', () => {
-    const out = mergeTaskToolInputIntoSnapshot([], { id: 1, content: 'Do X', status: 'pending' });
-    expect(out).toEqual([{ id: '1', content: 'Do X', status: 'pending' }]);
+  it('returns undefined for a bare TaskGet (no writable field) — caller must leave tool_use/tool_result untouched', () => {
+    const snapshot = [{ id: 't1', content: 'Do X', status: 'pending' as const }];
+    expect(mergeTaskToolInputIntoSnapshot(snapshot, 'toolu_3', { taskId: 't1' })).toBeUndefined();
   });
 
-  it('leaves the snapshot unchanged when no id is resolvable (e.g. a bare TaskList query)', () => {
-    const snapshot = [{ id: '1', content: 'Do X', status: 'pending' as const }];
-    const out = mergeTaskToolInputIntoSnapshot(snapshot, {});
-    expect(out).toEqual(snapshot);
+  it('returns undefined for a bare TaskList (empty input) — caller must leave tool_use/tool_result untouched', () => {
+    const snapshot = [{ id: 't1', content: 'Do X', status: 'pending' as const }];
+    expect(mergeTaskToolInputIntoSnapshot(snapshot, 'toolu_4', {})).toBeUndefined();
+  });
+
+  it('creates a blank-content stub when TaskUpdate references an unknown taskId (e.g. resumed session)', () => {
+    const out = mergeTaskToolInputIntoSnapshot([], 'toolu_5', { taskId: 'unknown', status: 'completed' });
+    expect(out).toEqual([{ id: 'unknown', content: '', status: 'completed' }]);
   });
 });
 
