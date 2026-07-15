@@ -8,6 +8,8 @@ import { createRequire } from 'node:module';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { McpSdkServerConfig } from './types.js';
+import { AdapterInitError } from './types.js';
+import { checkPeerSdkVersion } from './sdk-version.js';
 
 // Re-export McpServer for consumers who need the type
 export type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -86,9 +88,18 @@ export interface McpServerInstance {
  * ```
  */
 export function createMcpServer(options: CreateMcpServerOptions): McpServerInstance {
-  const { McpServer } = requireSdk(
-    '@modelcontextprotocol/sdk/server/mcp.js',
-  ) as typeof import('@modelcontextprotocol/sdk/server/mcp.js');
+  let McpServer: typeof import('@modelcontextprotocol/sdk/server/mcp.js').McpServer;
+  try {
+    ({ McpServer } = requireSdk(
+      '@modelcontextprotocol/sdk/server/mcp.js',
+    ) as typeof import('@modelcontextprotocol/sdk/server/mcp.js'));
+  } catch (err) {
+    throw new AdapterInitError('mcp', err);
+  }
+  const versionIssue = checkPeerSdkVersion('@modelcontextprotocol/sdk', '>=1.0.0 <2.0.0');
+  if (versionIssue) {
+    throw new AdapterInitError('mcp', new Error(versionIssue));
+  }
   const server = new McpServer(
     { name: options.name, version: options.version ?? '1.0.0' },
     { capabilities: { tools: options.tools?.length ? {} : undefined } },

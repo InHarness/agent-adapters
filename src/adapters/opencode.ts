@@ -22,6 +22,7 @@ import type {
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
+import { checkPeerSdkVersion } from '../sdk-version.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 import { createImageWorkspace, inferMediaType, type ImageWorkspace } from '../images-tempdir.js';
 import { probePathScope } from '../path-scope.js';
@@ -208,6 +209,13 @@ export class OpencodeAdapter implements RuntimeAdapter {
     try {
       ({ createOpencode } = await import('@opencode-ai/sdk'));
       ({ createOpencodeClient: createOpencodeClientV2 } = await import('@opencode-ai/sdk/v2/client'));
+      const versionIssue = checkPeerSdkVersion('@opencode-ai/sdk', '>=1.4.0 <2.0.0');
+      if (versionIssue) {
+        await mirrored?.cleanupMirror().catch(() => {});
+        await materialized?.cleanup().catch(() => {});
+        yield { type: 'error', error: new AdapterInitError('opencode', new Error(versionIssue)), phase: 'init' };
+        return;
+      }
     } catch (err) {
       await mirrored?.cleanupMirror().catch(() => {});
       await materialized?.cleanup().catch(() => {});

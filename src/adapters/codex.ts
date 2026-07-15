@@ -26,6 +26,7 @@ import type {
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
+import { checkPeerSdkVersion } from '../sdk-version.js';
 import { subtractUsage } from '../usage.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 import { createImageWorkspace, type ImageWorkspace } from '../images-tempdir.js';
@@ -190,6 +191,11 @@ export class CodexAdapter implements RuntimeAdapter {
     let codex: InstanceType<typeof Codex>;
     try {
       ({ Codex } = await import('@openai/codex-sdk'));
+      const versionIssue = checkPeerSdkVersion('@openai/codex-sdk', '>=0.120.0 <0.121.0');
+      if (versionIssue) {
+        yield { type: 'error', error: new AdapterInitError('codex', new Error(versionIssue)), phase: 'init' };
+        return;
+      }
       codex = new Codex(codexOptions as ConstructorParameters<typeof Codex>[0]);
     } catch (err) {
       yield { type: 'error', error: new AdapterInitError('codex', err), phase: 'init' };
