@@ -3,6 +3,23 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+<!-- anchor: pf03z7hn -->
+## [0.9.0] — 2026-07-15
+
+<!-- anchor: kw2t8r4m -->
+### Added
+- **Hard peer-SDK version gate at init.** Every adapter that wraps a peer SDK (`claude-code`, `codex`, `opencode`, `gemini`) plus `createMcpServer` now checks the *installed* peer-SDK version against a narrow, CI-verified semver range immediately after the existing lazy `import()`/`require()` succeeds — a subtly incompatible SDK release used to fail silently or in confusing ways downstream instead of failing clearly at init. On a **confirmed** mismatch, init emits (or, for `createMcpServer`, throws) a non-suppressible `AdapterInitError` naming the installed version and required range; there is no config bypass. Version comparison accepts in-range prerelease builds (`semver.satisfies(..., { includePrerelease: true })`), so a beta/rc/alpha SDK install isn't wrongly flagged. New `src/sdk-version.ts` resolves the installed version primarily by walking `node_modules/<pkg>/package.json` upward from its own location (several peer SDKs block the `./package.json` subpath in their `exports` map, and `import.meta.resolve()` is invalid syntax in this package's CJS build output, ruling out both as the primary mechanism), with a `require.resolve()`-based fallback for layouts the walk can't see (chiefly Yarn PnP, which has no physical `node_modules` tree). When neither mechanism can determine the installed version — despite the SDK having just loaded successfully — that's treated as a distinct **'undeterminable'** outcome, not a mismatch: adapters degrade to a one-shot `warning` event and proceed (`createMcpServer` proceeds silently, having no event stream to warn through) rather than hard-failing a working install. Each package's range is declared once, in `sdk-version.ts`'s `PEER_SDK_RANGES`, which `package.json`'s `peerDependencies` mirrors (guarded by a test asserting they match) — the range is no longer duplicated as a second literal string at every adapter call site. Version resolution is memoized per package, since the installed version can't change within a process's lifetime.
+
+<!-- anchor: hm91xq6c -->
+### Changed
+- **BREAKING (minor):** `peerDependencies` narrowed to the ranges actually verified in CI. Most were tightening an over-wide `>=` floor with no ceiling; `@anthropic-ai/claude-agent-sdk` goes from `>=0.2.0` to `>=0.3.0 <0.4.0` — a consumer still pinned to `@anthropic-ai/claude-agent-sdk` 0.2.x now hits the new hard init gate above. Full table: `@anthropic-ai/claude-agent-sdk` `>=0.3.0 <0.4.0`, `@openai/codex-sdk` `>=0.120.0 <0.121.0`, `@opencode-ai/sdk` `>=1.4.0 <2.0.0`, `@google/gemini-cli-core` `>=0.38.0 <0.39.0`, `@modelcontextprotocol/sdk` `>=1.0.0 <2.0.0`.
+
+<!-- anchor: dz5c9ktf -->
+### Fixed
+- **`createMcpServer` now throws `AdapterInitError` instead of a raw `MODULE_NOT_FOUND` when `@modelcontextprotocol/sdk` is missing.** Previously the lazy `createRequire` load had no surrounding try/catch.
+
+[0.9.0]: https://github.com/InHarness/agent-adapters/compare/v0.8.6...v0.9.0
+
 <!-- anchor: q4wz1k7f -->
 ## [0.8.6] — 2026-07-14
 

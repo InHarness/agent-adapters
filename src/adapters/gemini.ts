@@ -20,6 +20,7 @@ import type {
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
+import { checkPeerSdkVersion } from '../sdk-version.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 import { inferMediaType, readImageAsBase64 } from '../images-tempdir.js';
 import { probePathScope } from '../path-scope.js';
@@ -184,6 +185,15 @@ export class GeminiAdapter implements RuntimeAdapter {
     } catch (err) {
       yield { type: 'error', error: new AdapterInitError('gemini', err), phase: 'init' };
       return;
+    }
+
+    const versionCheck = checkPeerSdkVersion('@google/gemini-cli-core');
+    if (versionCheck.status === 'mismatch') {
+      yield { type: 'error', error: new AdapterInitError('gemini', new Error(versionCheck.message)), phase: 'init' };
+      return;
+    }
+    if (versionCheck.status === 'undeterminable') {
+      yield { type: 'warning', message: versionCheck.message! };
     }
 
     const GeminiConfig = sdk.Config as

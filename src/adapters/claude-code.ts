@@ -29,6 +29,7 @@ import type {
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
 import { redactSecrets } from '../redact.js';
+import { checkPeerSdkVersion } from '../sdk-version.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
@@ -901,6 +902,22 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     let q: Query;
     try {
       const { query } = await import('@anthropic-ai/claude-agent-sdk');
+      const versionCheck = checkPeerSdkVersion('@anthropic-ai/claude-agent-sdk');
+      if (versionCheck.status === 'mismatch') {
+        clearTimeout(timeoutId);
+        this.pushHandler = null;
+        this.closeInputChannel = null;
+        await materialized?.cleanup().catch(() => {});
+        yield {
+          type: 'error',
+          error: new AdapterInitError('claude-code', new Error(versionCheck.message)),
+          phase: 'init',
+        };
+        return;
+      }
+      if (versionCheck.status === 'undeterminable') {
+        yield { type: 'warning', message: versionCheck.message! };
+      }
       q = query({
         prompt: inputChannel ? inputChannel.iterable : params.prompt,
         options,
