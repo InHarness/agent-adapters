@@ -44,18 +44,61 @@ async function importAdapter() {
 }
 
 describe('claude-code path scoping', () => {
-  it('maps allowedPaths → additionalDirectories and disallowedPaths → settings.permissions.deny', async () => {
+  it('under a soft gate: default-deny dontAsk + allow-confinement over cwd ∪ allowedPaths + Read/Edit/Write deny', async () => {
     const ClaudeCodeAdapter = await importAdapter();
     const adapter = new ClaudeCodeAdapter();
     await collectEvents(
       adapter.execute(
-        createTestParams({ allowedPaths: ['/work/a'], disallowedPaths: ['/work/a/secret'] }),
+        createTestParams({
+          cwd: '/work',
+          allowedPaths: ['/work/a'],
+          disallowedPaths: ['/work/a/secret'],
+        }),
       ),
     );
+
+    // bypassPermissions is dropped for a default-deny mode — a bare deny under
+    // bypassPermissions never fired (the bug this fixes).
+    expect(capturedOptions?.permissionMode).toBe('dontAsk');
+    expect(capturedOptions?.allowDangerouslySkipPermissions).toBeUndefined();
+
+    // allowedPaths still widen reach so the ceiling dirs are addressable.
     expect(capturedOptions?.additionalDirectories).toEqual(['/work/a']);
-    const deny = (capturedOptions?.settings as { permissions?: { deny?: string[] } } | undefined)
-      ?.permissions?.deny;
-    expect(deny).toEqual(['Read(/work/a/secret/**)', 'Edit(/work/a/secret/**)']);
+
+    // Config-discovery containment: the global `~/.claude` ('user') tier is excluded.
+    expect(capturedOptions?.settingSources).toEqual(['project', 'local']);
+
+    const perms = (
+      capturedOptions?.settings as { permissions?: { allow?: string[]; deny?: string[] } } | undefined
+    )?.permissions;
+
+    // Allow-confinement over cwd ∪ allowedPaths, covering Read/Edit/Write.
+    expect(perms?.allow).toEqual([
+      'Read(/work/**)',
+      'Edit(/work/**)',
+      'Write(/work/**)',
+      'Read(/work/a/**)',
+      'Edit(/work/a/**)',
+      'Write(/work/a/**)',
+    ]);
+
+    // Deny for disallowedPaths now also covers Write (a new file could be created).
+    expect(perms?.deny).toEqual([
+      'Read(/work/a/secret/**)',
+      'Edit(/work/a/secret/**)',
+      'Write(/work/a/secret/**)',
+    ]);
+  });
+
+  it('without path-scope: keeps bypassPermissions and sets no confinement settings', async () => {
+    const ClaudeCodeAdapter = await importAdapter();
+    const adapter = new ClaudeCodeAdapter();
+    await collectEvents(adapter.execute(createTestParams({ cwd: '/work' })));
+    expect(capturedOptions?.permissionMode).toBe('bypassPermissions');
+    expect(capturedOptions?.allowDangerouslySkipPermissions).toBe(true);
+    expect(capturedOptions?.settings).toBeUndefined();
+    expect(capturedOptions?.settingSources).toBeUndefined();
+    expect(capturedOptions?.additionalDirectories).toBeUndefined();
   });
 
   it('surfaces the resolved gate on adapter_ready (soft by default, no OS sandbox opt-in)', async () => {

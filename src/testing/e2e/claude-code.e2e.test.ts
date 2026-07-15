@@ -4,7 +4,7 @@
 // Run specific model: E2E_CLAUDE_MODEL=opus-4.7 npm run test:e2e:claude
 
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAdapter } from '../../factory.js';
@@ -749,17 +749,13 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       }
     }, 120_000);
 
-    // KNOWN GAP — skipped, not deleted: this is the acceptance test for a fix.
-    // A live run (sonnet-4.6, 2026-07-15) showed the soft `disallowedPaths` gate
-    // does NOT block a Read: the adapter sets `permissionMode: 'bypassPermissions'`
-    // by default and, contrary to the adapter comment at claude-code.ts ~L614
-    // ("deny outranks permissionMode"), the `settings.permissions.deny`
-    // `Read(<path>/**)` rule was bypassed and the secret leaked into the output.
-    // The existing unit test (claude-code.path-scope.test.ts) only asserts the deny
-    // string is CONSTRUCTED, never that it ENFORCES. Un-skip once the soft read-deny
-    // is actually enforced (correct rule format, or downgrading permissionMode when
-    // disallowedPaths is set). See c4s finding patch "path-scope-soft-deny-not-enforced".
-    it.skip('a file under a disallowedPath cannot be read (soft deny blocks Read)', async () => {
+    // ACCEPTANCE TEST for the soft path-scope fix: the soft gate must actually block
+    // a Read of a file under `disallowedPaths`. Previously the adapter ran under
+    // `permissionMode: 'bypassPermissions'`, which auto-approved everything and made
+    // the `settings.permissions.deny` rule decorative — the marker leaked into output
+    // (reproduced live on sonnet-4.6, 2026-07-15). The fix drops bypassPermissions for
+    // a default-deny `dontAsk` mode with allow-confinement over `cwd ∪ allowedPaths`.
+    it('a file under a disallowedPath cannot be read (soft deny blocks Read)', async () => {
       const { cwd, secretDir, secretFile, cleanup } = createPathScopeDirs();
       try {
         const adapter = createAdapter('claude-code');
@@ -780,6 +776,35 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
           result!.output.includes('TOP-SECRET-1729'),
           `disallowedPath leaked: secret content appeared in output: ${result!.output}`,
         ).toBe(false);
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    // Companion coverage for the write half of the confinement (brief item 3): the
+    // soft gate previously denied only Read/Edit, so a new file could be created under
+    // a disallowed path. The fix denies Write(<disallowed>/**) too.
+    it('a new file cannot be written under a disallowedPath (soft deny blocks Write)', async () => {
+      const { cwd, secretDir, cleanup } = createPathScopeDirs();
+      const target = join(secretDir, 'planted.txt');
+      try {
+        const adapter = createAdapter('claude-code');
+        const events = await collectEvents(
+          adapter.execute({
+            prompt: `Use the Write tool to create the file ${target} with the contents "planted". If the write is denied, reply with exactly the word BLOCKED.`,
+            systemPrompt: 'You have a Write tool. If a write is denied by permissions, reply with exactly: BLOCKED.',
+            model: MODEL,
+            maxTurns: 3,
+            cwd,
+            disallowedPaths: [secretDir],
+          }),
+        );
+        const result = findResult(events);
+        expect(result, 'expected a result event').toBeDefined();
+        // The soft gate should deny Write(secret/**) — the file must not exist.
+        expect(existsSync(target), `disallowedPath write was not blocked: ${target} exists`).toBe(
+          false,
+        );
       } finally {
         cleanup();
       }
