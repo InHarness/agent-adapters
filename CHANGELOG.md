@@ -3,14 +3,6 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased]
-
-### Changed
-- **`claude-code` path-scope now confines to `cwd ∪ allowedPaths`, not deny-only.** When `allowedPaths`/`disallowedPaths` are requested under the soft (non-OS-sandbox) gate, the adapter drops its default `permissionMode: 'bypassPermissions'` (which auto-approved every tool, so the deny rules never fired) for a default-deny `dontAsk` mode with explicit `permissions.allow` rules over `cwd ∪ allowedPaths` and `permissions.deny` rules for `disallowedPaths`, each covering `Read`/`Edit`/`Write`. A read (or write) of a path outside the ceiling is now blocked even when it is not named in `disallowedPaths`. Config discovery is also contained: `settingSources` is narrowed to exclude the global `~/.claude` tier so ambient global settings / on-disk skill discovery cannot re-widen reach (inline skills, delivered via `options.plugins`, are unaffected). Outside path-scope, behaviour is unchanged — consumers not using scope keep `bypassPermissions`. The opt-in hard OS-sandbox path (`claude_sandbox.enabled`) is unchanged.
-
-### Fixed
-- **`claude-code` soft path-scope no longer leaks a `disallowedPaths` file's contents.** A live model could `Read` (or `Write` under) a disallowed path because the soft gate layered a bare deny-list on top of `bypassPermissions`, which ignored it; the deny also never covered `Write`. Both are closed by the allow-confinement change above.
-
 <!-- anchor: pf03z7hn -->
 ## [0.9.0] — 2026-07-15
 
@@ -20,10 +12,12 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 
 <!-- anchor: hm91xq6c -->
 ### Changed
+- **`claude-code` path-scope now confines to `cwd ∪ allowedPaths`, not deny-only.** When `allowedPaths`/`disallowedPaths` are requested under the soft (non-OS-sandbox) gate, the adapter drops its default `permissionMode: 'bypassPermissions'` (which auto-approved every tool, so the deny rules never fired) for a default-deny `dontAsk` mode with explicit `permissions.allow` rules over `cwd ∪ allowedPaths` and `permissions.deny` rules for `disallowedPaths`, each covering `Read`/`Edit`/`Write`. A read (or write) of a path outside the ceiling is now blocked even when it is not named in `disallowedPaths`. Config discovery is also contained: `settingSources` is narrowed to exclude the global `~/.claude` tier so ambient global settings / on-disk skill discovery cannot re-widen reach (inline skills, delivered via `options.plugins`, are unaffected). Outside path-scope, behaviour is unchanged — consumers not using scope keep `bypassPermissions`. The opt-in hard OS-sandbox path (`claude_sandbox.enabled`) is unchanged.
 - **BREAKING (minor):** `peerDependencies` narrowed to the ranges actually verified in CI. Most were tightening an over-wide `>=` floor with no ceiling; `@anthropic-ai/claude-agent-sdk` goes from `>=0.2.0` to `>=0.3.0 <0.4.0` — a consumer still pinned to `@anthropic-ai/claude-agent-sdk` 0.2.x now hits the new hard init gate above. Full table: `@anthropic-ai/claude-agent-sdk` `>=0.3.0 <0.4.0`, `@openai/codex-sdk` `>=0.120.0 <0.121.0`, `@opencode-ai/sdk` `>=1.4.0 <2.0.0`, `@google/gemini-cli-core` `>=0.38.0 <0.39.0`, `@modelcontextprotocol/sdk` `>=1.0.0 <2.0.0`.
 
 <!-- anchor: dz5c9ktf -->
 ### Fixed
+- **`claude-code` soft path-scope no longer leaks a `disallowedPaths` file's contents.** A live model could `Read` (or `Write` under) a disallowed path because the soft gate layered a bare deny-list on top of `bypassPermissions`, which ignored it; the deny also never covered `Write`. Both are closed by the allow-confinement change above.
 - **`createMcpServer` now throws `AdapterInitError` instead of a raw `MODULE_NOT_FOUND` when `@modelcontextprotocol/sdk` is missing.** Previously the lazy `createRequire` load had no surrounding try/catch.
 
 [0.9.0]: https://github.com/InHarness/agent-adapters/compare/v0.8.6...v0.9.0
