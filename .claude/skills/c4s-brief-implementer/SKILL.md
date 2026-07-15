@@ -59,6 +59,23 @@ Continue the brief thread with `c4s agent "..." --thread <threadId> --project 'a
 
 Standard code flow in your target repository: read existing code, plan, edit, test. Stay focused on what the brief specifies.
 
+**Set the package version to the brief's target release.** As part of the same implementation edits, update the `"version"` field in `package.json` to the brief's `to_release` (read the `from_release` / `to_release` pair from the brief frontmatter). This records, in the code repo, which release the brief brings the codebase to — so the bump lands in the same commit/PR as the feature code.
+
+- If `to_release` is a clean SemVer string (e.g. `0.0.9`), set `package.json` → `"version"` to exactly that value.
+- If `to_release` is **absent, `null`, non-SemVer, or otherwise ambiguous** (e.g. an open brief whose target is not yet a fixed release), do **NOT** guess. Ask the user whether to change the version and to what, and write only the value they confirm. If they decline, leave `package.json` untouched.
+
+Note: `"version"` is also managed by the `/release-process` skill (npm SemVer from git tags), which is a separate numbering axis from spec releases — writing `to_release` here intentionally overrides it for this repo's tracking.
+
+**Verifying live-model e2e conformance — step by step, not one big run.** When a brief adds or touches real-model e2e scenarios (`src/testing/e2e/*.e2e.test.ts`), those tests hit live models: they cost money and minutes, and their pass/fail is the actual conformance evidence. Verify incrementally rather than firing the whole suite blind:
+
+1. **Cheap gates first.** `npm run typecheck` → `npm run test` (unit; excludes e2e) → `SKIP_CLAUDE_E2E=1 npm run test:e2e:claude` (collects the e2e file and runs only the deterministic, creds-free cases). This catches wiring/type/collection bugs before spending a single live call.
+2. **Then run live, narrowed.** Iterate one scenario (or a small group) at a time with a name filter — `npm run test:e2e:claude -- -t "<scenario name regex>"` — instead of the full file. Use the per-model scripts (`test:e2e:claude:<alias>`) to pin the model. Only do a full-suite live run once the narrowed scenarios are green.
+3. **Triage each live failure honestly — never weaken an assertion just to go green.** Decide what kind it is:
+   - **Real product finding** (the code doesn't do what the brief/spec claims): keep the test as the acceptance criterion but `it.skip(...)` it with a comment explaining the gap, and file a `drift`/`incorrect` patch. Un-skipping is the fix's definition of done.
+   - **Not-yet-supported by the underlying SDK** (the scenario can't pass until the SDK changes): make the test self-skip at runtime (`ctx.skip()`) when the capability is absent, so it auto-activates the moment support lands. File a `clarification` patch.
+   - **Pre-existing flake in a test you did not touch**: attribute it explicitly (it is not your regression), report it, and leave it — do not silently "fix" unrelated tests inside a brief PR.
+4. **Record the evidence.** Note in the PR which scenarios ran green live, which were skipped and why, and which need creds you didn't have — so "the suite passed" never overstates what was actually proven.
+
 ### 4. Feedback loop (patches)
 
 When you discover that the brief diverges from reality — a missing detail, an incorrect assumption, an edge case not covered, or anything else the spec-author should know — file a patch. Use `c4s file-patch`, which records the patch on the spec side for you:
