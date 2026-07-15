@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-validatesubagents-rejects-a-malformed-su",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "text": "validateSubagents rejects a malformed subagent definition before the run starts.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-claude-code-adapter-rolls-anthropic",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "text": "The claude-code adapter rolls Anthropic's three input buckets (input + cache_read + cache_creation) into a single inputTokens, and reports contextSize as input + output.",
+  "verifies": []
+}

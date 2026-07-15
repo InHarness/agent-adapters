@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-adapter-that-reports-only-cumulative",
+  "status": "active",
+  "tags": [
+    "m08",
+    "m08-edge"
+  ],
+  "text": "An adapter that reports only cumulative usage yields per-delta values by subtracting priorUsage.",
+  "verifies": []
+}

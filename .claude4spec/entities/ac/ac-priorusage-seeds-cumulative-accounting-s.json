@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-priorusage-seeds-cumulative-accounting-s",
+  "status": "active",
+  "tags": [
+    "m08"
+  ],
+  "text": "priorUsage seeds cumulative accounting so cross-process (codex) usage deltas are computed correctly.",
+  "verifies": []
+}

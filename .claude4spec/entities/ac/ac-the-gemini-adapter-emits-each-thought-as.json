@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-gemini-adapter-emits-each-thought-as",
+  "status": "active",
+  "tags": [
+    "a04"
+  ],
+  "text": "The gemini adapter emits each thought as a thinking event with replace: true (a whole-block summary that supersedes the prior, never concatenated).",
+  "verifies": []
+}

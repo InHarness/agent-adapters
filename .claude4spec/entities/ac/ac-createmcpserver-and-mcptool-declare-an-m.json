@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-createmcpserver-and-mcptool-declare-an-m",
+  "status": "active",
+  "tags": [
+    "m04"
+  ],
+  "text": "createMcpServer and mcpTool declare an MCP server and tool uniformly across adapters.",
+  "verifies": []
+}

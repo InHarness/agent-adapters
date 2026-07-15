@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-package-ships-both-esm-and-cjs-build",
+  "status": "active",
+  "tags": [
+    "core"
+  ],
+  "text": "The package ships both ESM and CJS builds with tree-shakeable subpath exports and optional per-adapter peer dependencies.",
+  "verifies": []
+}

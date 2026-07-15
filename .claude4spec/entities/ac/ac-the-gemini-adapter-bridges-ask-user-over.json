@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-gemini-adapter-bridges-ask-user-over",
+  "status": "active",
+  "tags": [
+    "a04"
+  ],
+  "text": "The gemini adapter bridges ask_user over the messageBus (TOOL_CALLS_UPDATE to user_input_request, replying on TOOL_CONFIRMATION_RESPONSE), requiring approvalMode 'default' plus interactive when onUserInput is wired.",
+  "verifies": []
+}

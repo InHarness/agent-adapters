@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-under-a-bounded-sandboxed-run-global-ho",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "Under a bounded/sandboxed run, global home-tier config and skill discovery (e.g. ~/.claude settings and skills) is not auto-loaded, so the agent cannot re-widen its scope via ambient configuration.",
+  "verifies": []
+}

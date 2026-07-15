@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-on-a-newer-claude-model-where-task-track",
+  "status": "active",
+  "tags": [
+    "m16",
+    "m16-edge"
+  ],
+  "text": "On a newer Claude model where task-tracking is the TaskCreate/TaskUpdate CRUD family gated behind ToolSearch, a claude-code plan-mode turn still surfaces a usable task tool and still projects todo_list_updated — no regression to prose-only planning.",
+  "verifies": []
+}

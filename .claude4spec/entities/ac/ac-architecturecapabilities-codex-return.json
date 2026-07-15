@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-architecturecapabilities-codex-return",
+  "status": "active",
+  "tags": [
+    "a02"
+  ],
+  "text": "architectureCapabilities('codex') returns { midTurnPush: false, imageInput: true, subagentDefinition: false }.",
+  "verifies": []
+}

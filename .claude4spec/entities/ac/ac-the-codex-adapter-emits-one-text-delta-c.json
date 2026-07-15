@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-codex-adapter-emits-one-text-delta-c",
+  "status": "active",
+  "tags": [
+    "a02"
+  ],
+  "text": "The codex adapter emits one text_delta carrying the whole agent_message text (synthetic streaming) plus assistant_message, and maps command_execution/file_change/mcp_tool_call to tool_use+tool_result, reasoning to thinking, and turn.completed to result.",
+  "verifies": []
+}

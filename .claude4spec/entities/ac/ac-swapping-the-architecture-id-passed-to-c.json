@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-swapping-the-architecture-id-passed-to-c",
+  "status": "active",
+  "tags": [
+    "core"
+  ],
+  "text": "Swapping the architecture id passed to createAdapter requires no change to consumer code that reads the UnifiedEvent stream.",
+  "verifies": []
+}

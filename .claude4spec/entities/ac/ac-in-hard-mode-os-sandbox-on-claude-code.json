@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-in-hard-mode-os-sandbox-on-claude-code",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "In hard mode (OS sandbox) on claude-code, a read outside cwd ∪ allowedPaths is cut off at the OS level via managed allow-read confinement, not merely by a model-visible rule.",
+  "verifies": []
+}

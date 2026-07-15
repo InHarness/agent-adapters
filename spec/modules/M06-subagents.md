@@ -53,4 +53,6 @@ Exports `SubagentDefinition` and `validateSubagents` from the package root.
 
 These verify lifecycle observability and that the optional `subagentTaskId` is always safe to read.
 
+Real-model proof: the e2e `subagents` scenario (delegation lifecycle + a consumer-defined subagent) exercises this against a live model — scenario catalog in M12 (<section_ref anchor="xe2ecat1"/>); per-adapter coverage in the adapter files (<section_ref anchor="a01e2ecv"/>).
+
 <tagged_list type="ac" tags="m06"/>

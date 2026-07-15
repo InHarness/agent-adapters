@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-listdiskskills-enumerates-the-skills-d",
+  "status": "active",
+  "tags": [
+    "m05"
+  ],
+  "text": "listDiskSkills() enumerates the skills discovered under the configured search directories.",
+  "verifies": []
+}

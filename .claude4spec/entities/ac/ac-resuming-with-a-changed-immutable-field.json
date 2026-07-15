@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-resuming-with-a-changed-immutable-field",
+  "status": "active",
+  "tags": [
+    "m07",
+    "m07-edge"
+  ],
+  "text": "Resuming with a changed immutable field makes findResumeViolations return the violation and the resume is blocked.",
+  "verifies": []
+}

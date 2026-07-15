@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-findresumeviolations-detects-an-attempt",
+  "status": "active",
+  "tags": [
+    "m07"
+  ],
+  "text": "findResumeViolations detects an attempt to mutate an immutable field on a resumed session.",
+  "verifies": []
+}

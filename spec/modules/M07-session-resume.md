@@ -54,4 +54,6 @@ Exports `getSessionResumeConstraints`, `isSessionFieldMutable`, `findResumeViola
 
 These verify the helpers are pure and that every immutable field is detectable before a resumed run.
 
+Real-model proof: the e2e `resume` scenario (turn-2 recalls turn-1 state; per-call usage independence) exercises this against a live model — scenario catalog in M12 (<section_ref anchor="xe2ecat1"/>); per-adapter coverage in the adapter files (<section_ref anchor="a01e2ecv"/>).
+
 <tagged_list type="ac" tags="m07"/>

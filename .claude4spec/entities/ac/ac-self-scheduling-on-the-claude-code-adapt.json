@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-self-scheduling-on-the-claude-code-adapt",
+  "status": "active",
+  "tags": [
+    "a01",
+    "a01-edge"
+  ],
+  "text": "Self-scheduling on the claude-code adapter does not end in a silent no-op: because the scheduling tools are invisible to the model, no wake-up can be requested and then silently dropped when the turn ends.",
+  "verifies": []
+}

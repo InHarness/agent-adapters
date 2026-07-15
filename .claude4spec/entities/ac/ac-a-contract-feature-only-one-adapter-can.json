@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-contract-feature-only-one-adapter-can",
+  "status": "active",
+  "tags": [
+    "m12",
+    "m12-edge"
+  ],
+  "text": "A contract feature only one adapter can emit must be documented in the type JSDoc and degrade in the others, or conformance flags the gap.",
+  "verifies": []
+}

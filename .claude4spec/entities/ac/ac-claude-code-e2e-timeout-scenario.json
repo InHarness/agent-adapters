@@ -1,0 +1,21 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-claude-code-e2e-timeout-scenario",
+  "status": "active",
+  "tags": [
+    "m13",
+    "m13-edge"
+  ],
+  "text": "The claude-code e2e timeout scenario exceeds timeoutMs on a live run and emits AdapterTimeoutError at runtime phase with the input channel closed.",
+  "verifies": [
+    {
+      "slug": "ac-adaptererror-records-whether-a-failure-o",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-adaptertimeouterror-is-produced-when-tim",
+      "type": "ac"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-a-mid-turn-pushmessage-is-accepted-emit",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "text": "A mid-turn pushMessage is accepted, emitted as a user_message, and enqueued onto a live streaming-input channel that stays open across turns while messages are pending.",
+  "verifies": []
+}

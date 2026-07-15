@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-the-gemini-adapter-requires-google-api-k",
+  "status": "active",
+  "tags": [
+    "a04",
+    "a04-edge"
+  ],
+  "text": "The gemini adapter requires GOOGLE_API_KEY or GEMINI_API_KEY; absence yields an error with phase 'init' (AdapterInitError) before SDK import.",
+  "verifies": []
+}

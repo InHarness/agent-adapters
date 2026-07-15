@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-with-scope-declared-a-read-or-write-of",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "With scope declared, a read or write of a path outside cwd ∪ allowedPaths is blocked even though that path is not listed in disallowedPaths (allow-confinement, not deny-only).",
+  "verifies": []
+}

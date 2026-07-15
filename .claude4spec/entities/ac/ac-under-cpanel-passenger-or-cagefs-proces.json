@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-under-cpanel-passenger-or-cagefs-proces",
+  "status": "active",
+  "tags": [
+    "m13",
+    "m13-edge"
+  ],
+  "text": "Under cPanel/Passenger or CageFS, process.stdin is replaced with an empty Readable before the SDK loads, preventing the open EEXIST crash.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-subagent-attributed-events-carry-issubag",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "text": "Subagent-attributed events carry isSubagent and subagentTaskId so the stream can be partitioned by subagent.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-architecturecapabilities-architecture-m",
+  "status": "active",
+  "tags": [
+    "m11"
+  ],
+  "text": "architectureCapabilities(architecture).midTurnPush advertises mid-turn push support up front.",
+  "verifies": []
+}

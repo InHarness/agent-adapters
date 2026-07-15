@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-adapter-without-resume-support-return",
+  "status": "active",
+  "tags": [
+    "m07",
+    "m07-edge"
+  ],
+  "text": "An adapter without resume support returns a documented degraded result from the constraints query rather than crashing.",
+  "verifies": []
+}

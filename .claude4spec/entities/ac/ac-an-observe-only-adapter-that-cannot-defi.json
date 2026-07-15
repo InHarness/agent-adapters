@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-observe-only-adapter-that-cannot-defi",
+  "status": "active",
+  "tags": [
+    "m06",
+    "m06-edge"
+  ],
+  "text": "An observe-only adapter that cannot define subagents degrades definition per the matrix while still emitting lifecycle events.",
+  "verifies": []
+}

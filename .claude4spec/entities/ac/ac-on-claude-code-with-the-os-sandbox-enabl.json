@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-on-claude-code-with-the-os-sandbox-enabl",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "On claude-code with the OS sandbox enabled, filesystem operations outside the declared scope are blocked at the syscall level (hard gate).",
+  "verifies": []
+}

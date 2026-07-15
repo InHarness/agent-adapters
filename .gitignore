@@ -2,7 +2,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 .env
-.claude4spec/
+.claude4spec/*
+!.claude4spec/entities
 .buddy/buddy.yml
 .claude/skills/release-process/
 

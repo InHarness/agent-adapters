@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-imageinput-attaches-an-image-uniformly-a",
+  "status": "active",
+  "tags": [
+    "m10"
+  ],
+  "text": "ImageInput attaches an image uniformly and is materialized per adapter into base64, a URL, or a file path.",
+  "verifies": []
+}

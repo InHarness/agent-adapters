@@ -1,0 +1,16 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-claude-code-e2e-verified-range-evidence",
+  "status": "active",
+  "tags": [
+    "m12"
+  ],
+  "text": "The e2e suite is the verified-range evidence, so a peer-SDK bump re-runs the full suite before peerDependencies is narrowed.",
+  "verifies": [
+    {
+      "slug": "ac-e2e-suite-is-the-verified-range-evidence",
+      "type": "ac"
+    }
+  ]
+}

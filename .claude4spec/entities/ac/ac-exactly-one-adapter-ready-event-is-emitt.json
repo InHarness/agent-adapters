@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-exactly-one-adapter-ready-event-is-emitt",
+  "status": "active",
+  "tags": [
+    "m14"
+  ],
+  "text": "Exactly one adapter_ready event is emitted per run, as the first non-warning event on the stream.",
+  "verifies": []
+}

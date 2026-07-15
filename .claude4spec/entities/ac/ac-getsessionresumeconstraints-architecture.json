@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-getsessionresumeconstraints-architecture",
+  "status": "active",
+  "tags": [
+    "m07"
+  ],
+  "text": "getSessionResumeConstraints(architecture) reports which session fields are immutable on resume.",
+  "verifies": []
+}

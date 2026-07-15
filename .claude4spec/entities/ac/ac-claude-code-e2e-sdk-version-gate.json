@@ -1,0 +1,17 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-claude-code-e2e-sdk-version-gate",
+  "status": "active",
+  "tags": [
+    "a01",
+    "a01-edge"
+  ],
+  "text": "Installing the claude-agent-sdk outside the declared range emits an init phase AdapterInitError naming installed X requires Y, non-suppressible. Intended behavior; the version gate is not yet implemented in code.",
+  "verifies": [
+    {
+      "slug": "ac-out-of-range-sdk-version-emits-adapterin",
+      "type": "ac"
+    }
+  ]
+}

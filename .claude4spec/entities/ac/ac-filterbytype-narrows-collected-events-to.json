@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-filterbytype-narrows-collected-events-to",
+  "status": "active",
+  "tags": [
+    "m09"
+  ],
+  "text": "filterByType narrows collected events to one variant and splitBySubagent partitions them by subagent.",
+  "verifies": []
+}

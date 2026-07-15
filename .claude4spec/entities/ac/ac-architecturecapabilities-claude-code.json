@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-architecturecapabilities-claude-code",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "text": "architectureCapabilities('claude-code') returns { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true } — the only adapter with midTurnPush and subagentDefinition true.",
+  "verifies": []
+}

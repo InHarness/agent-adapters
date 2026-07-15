@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-getskillsearchdirs-reports-the-directo",
+  "status": "active",
+  "tags": [
+    "m05"
+  ],
+  "text": "getSkillSearchDirs() reports the directories scanned for disk skills.",
+  "verifies": []
+}

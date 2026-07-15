@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-the-opencode-adapter-opens-its-sse-subsc",
+  "status": "active",
+  "tags": [
+    "a03",
+    "a03-edge"
+  ],
+  "text": "The opencode adapter opens its SSE subscription before promptAsync so the first events of the run are not missed.",
+  "verifies": []
+}

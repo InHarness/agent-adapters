@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-local-provider-with-no-api-key-ollama",
+  "status": "active",
+  "tags": [
+    "m03",
+    "m03-edge"
+  ],
+  "text": "A local provider with no API key (ollama) initializes without requiring any credential env.",
+  "verifies": []
+}

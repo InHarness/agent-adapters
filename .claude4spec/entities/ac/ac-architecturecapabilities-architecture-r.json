@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-architecturecapabilities-architecture-r",
+  "status": "active",
+  "tags": [
+    "m01"
+  ],
+  "text": "architectureCapabilities(architecture) returns a capability map for any registered architecture.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-an-inlineskill-is-materialized-into-the",
+  "status": "active",
+  "tags": [
+    "m05"
+  ],
+  "text": "An InlineSkill is materialized into the form each adapter accepts, per the skill delivery matrix.",
+  "verifies": []
+}

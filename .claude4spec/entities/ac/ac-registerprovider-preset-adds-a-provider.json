@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-registerprovider-preset-adds-a-provider",
+  "status": "active",
+  "tags": [
+    "m03"
+  ],
+  "text": "registerProvider(preset) adds a provider whose architecture alias becomes resolvable by createAdapter.",
+  "verifies": []
+}

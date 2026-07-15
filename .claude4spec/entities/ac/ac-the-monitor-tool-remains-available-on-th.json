@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-monitor-tool-remains-available-on-th",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "text": "The Monitor tool remains available on the claude-code adapter and is not affected by the scheduling suppression, because it works under the headless SDK.",
+  "verifies": []
+}

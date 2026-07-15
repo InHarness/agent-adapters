@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-claude-code-adapter-projects-task-tr",
+  "status": "active",
+  "tags": [
+    "m16"
+  ],
+  "text": "The claude-code adapter projects task-tracking into todo_list_updated (source model-tool) whether the SDK emits legacy TodoWrite or the per-item TaskCreate/TaskUpdate CRUD family.",
+  "verifies": []
+}

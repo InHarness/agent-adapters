@@ -77,6 +77,33 @@ The SDK manages credentials internally — local OAuth / cached subscription cre
 - **Known schema-drift points** — the task-tracking tool cutover is the reference case: `TodoWrite` (full-list replace, removed ~0.2.82) → the per-item `TaskCreate` / `TaskGet` / `TaskUpdate` / `TaskList` CRUD family, fronted by a `ToolSearch` discovery gate on newer models. Because the declared range starts at 0.3.0, `TodoWrite` is **out-of-declared-range** and retained only as a defensive read. Matrix + projection: M16 (see <section_ref anchor="3dln3isl"/>).
 - **Defensive-read / in-range degradation** — the projection reads task-tracking input from `Record<string,unknown>` on a dual path across the legacy and CRUD field names (`subject` / `description` / `taskId`), so a field rename inside the range never yields a silent empty todo (see M16).
 
+<!-- anchor: a01e2ecv -->
+## e2e coverage (L5)
+
+claude-code's per-adapter real-model coverage — which scenarios from the M12 catalog (see <section_ref anchor="xe2ecat1"/>) its `claude-code.e2e.test.ts` suite exercises. This is the **coverage home** for this adapter (one-home for coverage; the capability nuance for each scenario lives in the owning module beside its matrix). Verified against the dev-pinned SDK `^0.3.153` (the L7 *verified range*, see <section_ref anchor="49zu34oc"/>), parametrized over the M02 model catalog via `E2E_CLAUDE_MODEL` / the `test:e2e:claude:*` scripts.
+
+| Scenario | Owning module | Status |
+| --- | --- | --- |
+| `simple-text` (alias + full id) | M01 / M02 | ✅ covered |
+| `thinking` | M01 | ✅ covered |
+| `tool-use` (in-process MCP) | M04 | ✅ covered |
+| `subagents` (+ consumer-defined subagent) | M06 | ✅ covered |
+| `plan-mode` (blocks writes / allows reads / keeps MCP executable) | M15 | ✅ covered |
+| `todo` (TodoWrite → `todo_list_updated`) | M16 | ✅ covered |
+| `user-input` (AskUserQuestion + decline path) | M01 | ✅ covered |
+| `resume` (turn-2 recall + per-call usage) | M07 | ✅ covered |
+| `abort` | M13 | ✅ covered |
+| `unknown-model` (warn + passthrough) | M02 | ✅ covered |
+| `image` (base64 / url / file → described) | M10 | ◻ planned |
+| `mid-turn` (real `pushMessage` round-trip → `user_message`) | M11 | ◻ planned |
+| `path-scope` (allow-confinement `allowedPaths` / `disallowedPaths`) | M15 | ◻ planned |
+| `usage` (billing vs `contextSize`, cache buckets) | M08 | ◻ planned |
+| MCP elicitation (`elicitation_request` / `onElicitation`) | M04 | ◻ planned |
+| model matrix (core scenarios × M02 catalog) | M02 | ◻ planned |
+| error/resilience (`timeoutMs`, out-of-range SDK → `AdapterInitError`) | M13 | ◻ planned |
+
+Per-scenario acceptance detail is authored as AC entities: claude-code-specific ones under `a01` / `a01-edge` (below), shared-capability ones under the owning module's `mNN` tag with `verifies` pointing at the capability.
+
 <!-- anchor: 677rc2wh -->
 ## Edge cases
 

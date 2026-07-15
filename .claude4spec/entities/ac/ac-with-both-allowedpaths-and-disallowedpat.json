@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-with-both-allowedpaths-and-disallowedpat",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "With both allowedPaths and disallowedPaths absent, run behavior is identical to today (no-op, backward compatible).",
+  "verifies": []
+}

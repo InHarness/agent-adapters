@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-an-image-normalizes-to-a-contentblock-im",
+  "status": "active",
+  "tags": [
+    "m10"
+  ],
+  "text": "An image normalizes to a ContentBlock image variant with a base64 or url source.",
+  "verifies": []
+}

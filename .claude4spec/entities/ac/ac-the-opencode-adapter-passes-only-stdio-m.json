@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-opencode-adapter-passes-only-stdio-m",
+  "status": "active",
+  "tags": [
+    "a03"
+  ],
+  "text": "The opencode adapter passes only stdio MCP servers through; SSE, HTTP, and in-process sdk servers are dropped from the config.",
+  "verifies": []
+}

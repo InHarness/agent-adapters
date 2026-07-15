@@ -1,0 +1,248 @@
+[
+  {
+    "color": "#6e8a5f",
+    "description": null,
+    "name": "a01",
+    "slug": "a01"
+  },
+  {
+    "color": "#c45a3b",
+    "description": null,
+    "name": "a01-edge",
+    "slug": "a01-edge"
+  },
+  {
+    "color": "#8a6da3",
+    "description": null,
+    "name": "a02",
+    "slug": "a02"
+  },
+  {
+    "color": "#4d7e86",
+    "description": null,
+    "name": "a02-edge",
+    "slug": "a02-edge"
+  },
+  {
+    "color": "#b6553c",
+    "description": null,
+    "name": "a03",
+    "slug": "a03"
+  },
+  {
+    "color": "#c4a24f",
+    "description": null,
+    "name": "a03-edge",
+    "slug": "a03-edge"
+  },
+  {
+    "color": "#7a7368",
+    "description": null,
+    "name": "a04",
+    "slug": "a04"
+  },
+  {
+    "color": "#7a7368",
+    "description": null,
+    "name": "a04-edge",
+    "slug": "a04-edge"
+  },
+  {
+    "color": "#4d7e86",
+    "description": null,
+    "name": "core",
+    "slug": "core"
+  },
+  {
+    "color": "#c4a24f",
+    "description": null,
+    "name": "m01",
+    "slug": "m01"
+  },
+  {
+    "color": "#b6553c",
+    "description": null,
+    "name": "m01-edge",
+    "slug": "m01-edge"
+  },
+  {
+    "color": "#4d7e86",
+    "description": null,
+    "name": "m02",
+    "slug": "m02"
+  },
+  {
+    "color": "#8a6da3",
+    "description": null,
+    "name": "m02-edge",
+    "slug": "m02-edge"
+  },
+  {
+    "color": "#c45a3b",
+    "description": null,
+    "name": "m03",
+    "slug": "m03"
+  },
+  {
+    "color": "#6e8a5f",
+    "description": null,
+    "name": "m03-edge",
+    "slug": "m03-edge"
+  },
+  {
+    "color": "#5d7ea2",
+    "description": null,
+    "name": "m04",
+    "slug": "m04"
+  },
+  {
+    "color": "#5d7ea2",
+    "description": null,
+    "name": "m04-edge",
+    "slug": "m04-edge"
+  },
+  {
+    "color": "#6e8a5f",
+    "description": null,
+    "name": "m05",
+    "slug": "m05"
+  },
+  {
+    "color": "#c45a3b",
+    "description": null,
+    "name": "m05-edge",
+    "slug": "m05-edge"
+  },
+  {
+    "color": "#8a6da3",
+    "description": null,
+    "name": "m06",
+    "slug": "m06"
+  },
+  {
+    "color": "#4d7e86",
+    "description": null,
+    "name": "m06-edge",
+    "slug": "m06-edge"
+  },
+  {
+    "color": "#b6553c",
+    "description": null,
+    "name": "m07",
+    "slug": "m07"
+  },
+  {
+    "color": "#c4a24f",
+    "description": null,
+    "name": "m07-edge",
+    "slug": "m07-edge"
+  },
+  {
+    "color": "#7a7368",
+    "description": null,
+    "name": "m08",
+    "slug": "m08"
+  },
+  {
+    "color": "#7a7368",
+    "description": null,
+    "name": "m08-edge",
+    "slug": "m08-edge"
+  },
+  {
+    "color": "#c4a24f",
+    "description": null,
+    "name": "m09",
+    "slug": "m09"
+  },
+  {
+    "color": "#b6553c",
+    "description": null,
+    "name": "m09-edge",
+    "slug": "m09-edge"
+  },
+  {
+    "color": "#b6553c",
+    "description": null,
+    "name": "m10",
+    "slug": "m10"
+  },
+  {
+    "color": "#c4a24f",
+    "description": null,
+    "name": "m10-edge",
+    "slug": "m10-edge"
+  },
+  {
+    "color": "#7a7368",
+    "description": null,
+    "name": "m11",
+    "slug": "m11"
+  },
+  {
+    "color": "#7a7368",
+    "description": null,
+    "name": "m11-edge",
+    "slug": "m11-edge"
+  },
+  {
+    "color": "#c4a24f",
+    "description": null,
+    "name": "m12",
+    "slug": "m12"
+  },
+  {
+    "color": "#b6553c",
+    "description": null,
+    "name": "m12-edge",
+    "slug": "m12-edge"
+  },
+  {
+    "color": "#4d7e86",
+    "description": null,
+    "name": "m13",
+    "slug": "m13"
+  },
+  {
+    "color": "#8a6da3",
+    "description": null,
+    "name": "m13-edge",
+    "slug": "m13-edge"
+  },
+  {
+    "color": "#c45a3b",
+    "description": null,
+    "name": "m14",
+    "slug": "m14"
+  },
+  {
+    "color": "#6e8a5f",
+    "description": null,
+    "name": "m14-edge",
+    "slug": "m14-edge"
+  },
+  {
+    "color": "#5d7ea2",
+    "description": "Acceptance criteria for M15 — Filesystem path scoping (sandbox)",
+    "name": "m15",
+    "slug": "m15"
+  },
+  {
+    "color": "#c45a3b",
+    "description": "Edge-case acceptance criteria for M15 — Filesystem path scoping",
+    "name": "m15-edge",
+    "slug": "m15-edge"
+  },
+  {
+    "color": "#5d7ea2",
+    "description": "Acceptance criteria for M16 — Task / todo tracking",
+    "name": "m16",
+    "slug": "m16"
+  },
+  {
+    "color": "#b6553c",
+    "description": "Edge-case acceptance criteria for M16 — Task / todo tracking",
+    "name": "m16-edge",
+    "slug": "m16-edge"
+  }
+]

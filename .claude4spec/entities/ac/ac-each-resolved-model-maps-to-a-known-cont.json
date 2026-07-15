@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-each-resolved-model-maps-to-a-known-cont",
+  "status": "active",
+  "tags": [
+    "m02"
+  ],
+  "text": "Each resolved model maps to a known context-window size that usage accounting uses for contextSize.",
+  "verifies": []
+}

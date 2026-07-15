@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-an-unsupported-advanced-capability-degra",
+  "status": "active",
+  "tags": [
+    "core"
+  ],
+  "text": "An unsupported advanced capability degrades via warn, skip, or synthesize and is never a silent failure.",
+  "verifies": []
+}

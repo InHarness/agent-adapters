@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-an-adapter-lacking-path-scope-support-o",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "An adapter lacking path-scope support (opencode) emits a one-shot warning and runs the operation unscoped, never throwing for \"unsupported\".",
+  "verifies": []
+}

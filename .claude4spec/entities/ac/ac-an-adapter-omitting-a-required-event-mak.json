@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-adapter-omitting-a-required-event-mak",
+  "status": "active",
+  "tags": [
+    "m12",
+    "m12-edge"
+  ],
+  "text": "An adapter omitting a required event makes ContractResult fail the relevant assertion with a specific message; the suite does not silently pass.",
+  "verifies": []
+}

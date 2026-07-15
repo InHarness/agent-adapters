@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-issessionfieldmutable-architecture-fiel",
+  "status": "active",
+  "tags": [
+    "m07"
+  ],
+  "text": "isSessionFieldMutable(architecture, field) answers per-field mutability for a resumed session.",
+  "verifies": []
+}

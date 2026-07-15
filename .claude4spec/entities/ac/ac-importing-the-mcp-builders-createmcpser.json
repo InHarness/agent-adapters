@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-importing-the-mcp-builders-createmcpser",
+  "status": "active",
+  "tags": [
+    "m04"
+  ],
+  "text": "Importing the MCP builders (createMcpServer / mcpTool / McpServerConfig) from the ./mcp subpath brings no adapter class into the consumer's static import graph, while the package root continues to export the same builders.",
+  "verifies": []
+}

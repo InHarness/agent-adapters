@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-claude-code-adapter-does-not-offer-t",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "text": "The claude-code adapter does not offer the harness scheduling tools (ScheduleWakeup and CronCreate/CronList/CronDelete) to the model — they are hard-suppressed via custom_env (CLAUDE_CODE_DISABLE_CRON=1) and/or disallowedTools, with no config gate to re-enable them.",
+  "verifies": []
+}

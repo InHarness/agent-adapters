@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-a-question-asked-frame-on-the-opencode-v",
+  "status": "active",
+  "tags": [
+    "a03"
+  ],
+  "text": "A question.asked frame on the opencode v2 SSE side-channel becomes a user_input_request, answered via question.reply or question.reject.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-usagestats-represents-cache-token-fields",
+  "status": "active",
+  "tags": [
+    "m08"
+  ],
+  "text": "UsageStats represents cache token fields (cache read and cache write) distinctly from fresh input tokens.",
+  "verifies": []
+}

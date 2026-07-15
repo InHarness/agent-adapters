@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-bash-subprocess-writing-outside-scope",
+  "status": "active",
+  "tags": [
+    "m15",
+    "m15-edge"
+  ],
+  "text": "A Bash subprocess writing outside scope is blocked at the syscall level when the OS sandbox is enabled, and only soft-protected under permission rules.",
+  "verifies": []
+}

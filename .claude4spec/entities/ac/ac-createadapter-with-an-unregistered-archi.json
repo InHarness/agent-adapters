@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-createadapter-with-an-unregistered-archi",
+  "status": "active",
+  "tags": [
+    "m01",
+    "m01-edge"
+  ],
+  "text": "createAdapter with an unregistered architecture id raises AdapterInitError before any event-stream work begins.",
+  "verifies": []
+}

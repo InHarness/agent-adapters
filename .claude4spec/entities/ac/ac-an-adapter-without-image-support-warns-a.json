@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-adapter-without-image-support-warns-a",
+  "status": "active",
+  "tags": [
+    "m10",
+    "m10-edge"
+  ],
+  "text": "An adapter without image support warns and skips the image; the text prompt still runs.",
+  "verifies": []
+}

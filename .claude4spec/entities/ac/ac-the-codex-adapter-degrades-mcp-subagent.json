@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-codex-adapter-degrades-mcp-subagent",
+  "status": "active",
+  "tags": [
+    "a02"
+  ],
+  "text": "The codex adapter degrades MCP, subagents, and user-input to warn-and-ignore, emitting the warning once at startup before adapter_ready.",
+  "verifies": []
+}

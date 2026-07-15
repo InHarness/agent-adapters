@@ -42,4 +42,6 @@ Exports `UsageStats`, the aggregation helpers, and the `priorUsage` seed from th
 
 These verify billing/window separation and correct delta computation from cumulative sources.
 
+Real-model proof: the e2e `usage` scenario (billing vs `contextSize`, cache buckets legible on `result`) exercises this against a live model — scenario catalog in M12 (<section_ref anchor="xe2ecat1"/>); per-adapter coverage in the adapter files (<section_ref anchor="a01e2ecv"/>).
+
 <tagged_list type="ac" tags="m08"/>

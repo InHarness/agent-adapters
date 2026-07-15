@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-under-cpanel-passenger-or-cagefs-ensure",
+  "status": "active",
+  "tags": [
+    "a01",
+    "a01-edge"
+  ],
+  "text": "Under cPanel/Passenger or CageFS, ensureUsableStdin() replaces a throwing process.stdin with an empty Readable before the claude-code SDK is imported, preventing the open EEXIST crash.",
+  "verifies": []
+}

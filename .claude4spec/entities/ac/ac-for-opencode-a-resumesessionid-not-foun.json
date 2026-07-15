@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-for-opencode-a-resumesessionid-not-foun",
+  "status": "active",
+  "tags": [
+    "a03",
+    "a03-edge"
+  ],
+  "text": "For opencode, a resumeSessionId not found on the server yields AdapterInitError, timeoutMs/abort() yield AdapterTimeoutError/AdapterAbortError (runtime phase), and the spawned server is always closed in finally.",
+  "verifies": []
+}

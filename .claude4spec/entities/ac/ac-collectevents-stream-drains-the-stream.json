@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-collectevents-stream-drains-the-stream",
+  "status": "active",
+  "tags": [
+    "m09"
+  ],
+  "text": "collectEvents(stream) drains the stream into an array of UnifiedEvent.",
+  "verifies": []
+}

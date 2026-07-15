@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-relative-path-in-allowedpaths-disallow",
+  "status": "active",
+  "tags": [
+    "m15",
+    "m15-edge"
+  ],
+  "text": "A relative path in allowedPaths/disallowedPaths is normalized against cwd before mapping (not rejected), and path-scope composes additively with planMode (both narrow).",
+  "verifies": []
+}

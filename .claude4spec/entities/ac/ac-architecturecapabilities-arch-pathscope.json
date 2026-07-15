@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-architecturecapabilities-arch-pathscope",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "architectureCapabilities(arch).pathScope advertises whether an adapter honors allowedPaths/disallowedPaths at all.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-architecturecapabilities-gemini-retur",
+  "status": "active",
+  "tags": [
+    "a04"
+  ],
+  "text": "architectureCapabilities('gemini') returns { midTurnPush: false, imageInput: true, subagentDefinition: false }.",
+  "verifies": []
+}

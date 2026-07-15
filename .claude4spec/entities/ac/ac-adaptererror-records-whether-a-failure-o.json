@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-adaptererror-records-whether-a-failure-o",
+  "status": "active",
+  "tags": [
+    "m13"
+  ],
+  "text": "AdapterError records whether a failure occurred in the init phase or the runtime phase.",
+  "verifies": []
+}

@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-mcp-tool-failure-surfaces-as-tool-res",
+  "status": "active",
+  "tags": [
+    "m04",
+    "m04-edge"
+  ],
+  "text": "An MCP tool failure surfaces as tool_result with isError true, never as a thrown exception out of the stream.",
+  "verifies": []
+}

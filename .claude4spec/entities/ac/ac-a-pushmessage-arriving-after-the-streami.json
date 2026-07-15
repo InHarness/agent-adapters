@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-pushmessage-arriving-after-the-streami",
+  "status": "active",
+  "tags": [
+    "a01",
+    "a01-edge"
+  ],
+  "text": "A pushMessage arriving after the streaming-input channel has closed returns false, and a streaming-input run may emit multiple result events.",
+  "verifies": []
+}

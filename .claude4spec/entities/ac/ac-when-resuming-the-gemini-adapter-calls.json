@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-when-resuming-the-gemini-adapter-calls",
+  "status": "active",
+  "tags": [
+    "a04",
+    "a04-edge"
+  ],
+  "text": "When resuming, the gemini adapter calls resumeChat and deliberately skips initialize() to avoid clobbering the on-disk session file, and a missing or unreadable prior session degrades to a warning and a fresh start.",
+  "verifies": []
+}

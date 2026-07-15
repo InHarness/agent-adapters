@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-for-claude-code-timeoutms-yields-adapte",
+  "status": "active",
+  "tags": [
+    "a01",
+    "a01-edge"
+  ],
+  "text": "For claude-code, timeoutMs yields AdapterTimeoutError and abort() yields AdapterAbortError (both runtime phase), and the input channel is closed.",
+  "verifies": []
+}

@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-for-codex-plan-mode-forces-sandbox-read",
+  "status": "active",
+  "tags": [
+    "a02",
+    "a02-edge"
+  ],
+  "text": "For codex, plan mode forces sandbox read-only (otherwise workspace-write), and timeoutMs/abort() yield AdapterTimeoutError/AdapterAbortError (runtime phase).",
+  "verifies": []
+}

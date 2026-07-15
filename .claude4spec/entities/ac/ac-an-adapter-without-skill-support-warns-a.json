@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-adapter-without-skill-support-warns-a",
+  "status": "active",
+  "tags": [
+    "m05",
+    "m05-edge"
+  ],
+  "text": "An adapter without skill support warns and skips skill delivery; the run still proceeds.",
+  "verifies": []
+}

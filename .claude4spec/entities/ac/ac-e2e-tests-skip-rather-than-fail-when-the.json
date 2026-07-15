@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-e2e-tests-skip-rather-than-fail-when-the",
+  "status": "active",
+  "tags": [
+    "m12"
+  ],
+  "text": "e2e tests skip rather than fail when the SDK's credentials are absent, keeping the contract suite green without secrets.",
+  "verifies": []
+}

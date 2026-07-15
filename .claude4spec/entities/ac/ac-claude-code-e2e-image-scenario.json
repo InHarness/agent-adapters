@@ -1,0 +1,20 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-claude-code-e2e-image-scenario",
+  "status": "active",
+  "tags": [
+    "m10"
+  ],
+  "text": "The claude-code e2e image scenario passes an image on input and the live model returns a description of it.",
+  "verifies": [
+    {
+      "slug": "ac-an-image-normalizes-to-a-contentblock-im",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-imageinput-attaches-an-image-uniformly-a",
+      "type": "ac"
+    }
+  ]
+}

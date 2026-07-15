@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-event-with-missing-usage-contributes",
+  "status": "active",
+  "tags": [
+    "m08",
+    "m08-edge"
+  ],
+  "text": "An event with missing usage contributes zero to the run total, never NaN.",
+  "verifies": []
+}

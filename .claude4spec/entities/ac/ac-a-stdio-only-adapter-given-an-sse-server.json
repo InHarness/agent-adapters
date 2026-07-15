@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-stdio-only-adapter-given-an-sse-server",
+  "status": "active",
+  "tags": [
+    "m04",
+    "m04-edge"
+  ],
+  "text": "A stdio-only adapter given an SSE server config warns and skips that server per the matrix; the run still proceeds.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-createconsoleobserver-returns-a-ready",
+  "status": "active",
+  "tags": [
+    "m09"
+  ],
+  "text": "createConsoleObserver() returns a ready-made observer that logs events to the console.",
+  "verifies": []
+}

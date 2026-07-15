@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-per-adapter-mcp-transport-support-ma",
+  "status": "active",
+  "tags": [
+    "m04"
+  ],
+  "text": "The per-adapter MCP transport support matrix is the single source of truth for which transport each adapter accepts.",
+  "verifies": []
+}

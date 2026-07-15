@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-error-tojson-yields-a-stable-loggable",
+  "status": "active",
+  "tags": [
+    "m13"
+  ],
+  "text": "error.toJSON() yields a stable, loggable shape with OS error fields (errno, code, syscall) hoisted onto the error.",
+  "verifies": []
+}

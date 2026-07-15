@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-an-unknown-model-string-passes-through-r",
+  "status": "active",
+  "tags": [
+    "m02"
+  ],
+  "text": "An unknown model string passes through resolveModel unchanged and is treated as a literal model id.",
+  "verifies": []
+}

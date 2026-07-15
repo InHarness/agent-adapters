@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-per-event-usage-folds-into-a-single-run",
+  "status": "active",
+  "tags": [
+    "m08"
+  ],
+  "text": "Per-event usage folds into a single run total via the stream collectors.",
+  "verifies": []
+}

@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-adaptive-thinking-only-model-ignores",
+  "status": "active",
+  "tags": [
+    "m02",
+    "m02-edge"
+  ],
+  "text": "An ADAPTIVE_THINKING_ONLY model ignores an explicit thinking-budget setting rather than raising an error.",
+  "verifies": []
+}

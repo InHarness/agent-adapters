@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-disallowedpaths-carve-out-is-not-guara",
+  "status": "active",
+  "tags": [
+    "m15",
+    "m15-edge"
+  ],
+  "text": "A disallowedPaths carve-out is not guaranteed on an allow-list-only adapter (codex) and is surfaced as an expressiveness limitation so consumers do not assume an unenforced deny.",
+  "verifies": []
+}

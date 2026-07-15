@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-resolvemodel-alias-maps-a-friendly-alia",
+  "status": "active",
+  "tags": [
+    "m02"
+  ],
+  "text": "resolveModel(alias) maps a friendly alias to a concrete model id via MODEL_ALIASES.",
+  "verifies": []
+}

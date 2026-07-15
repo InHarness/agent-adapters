@@ -45,4 +45,6 @@ Exports the `ImageInput` type and the image materialization helpers from the pac
 
 These verify uniform attachment and per-adapter materialization with graceful skip.
 
+Real-model proof: the e2e `image` scenario (an image on input is materialized and described by the model) exercises this against a live model — scenario catalog in M12 (<section_ref anchor="xe2ecat1"/>); per-adapter coverage in the adapter files (<section_ref anchor="a01e2ecv"/>).
+
 <tagged_list type="ac" tags="m10"/>

@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-adapter-that-accepts-only-file-paths",
+  "status": "active",
+  "tags": [
+    "m10",
+    "m10-edge"
+  ],
+  "text": "An adapter that accepts only file paths has an inline base64 ImageInput materialized to a temp file whose path is passed.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-every-adapter-emits-an-adapter-ready-eve",
+  "status": "active",
+  "tags": [
+    "core"
+  ],
+  "text": "Every adapter emits an adapter_ready event whose payload is safe to log by construction.",
+  "verifies": []
+}

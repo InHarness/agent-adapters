@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-model-with-no-known-context-window-fal",
+  "status": "active",
+  "tags": [
+    "m02",
+    "m02-edge"
+  ],
+  "text": "A model with no known context window falls back to a documented default for accounting rather than producing NaN.",
+  "verifies": []
+}

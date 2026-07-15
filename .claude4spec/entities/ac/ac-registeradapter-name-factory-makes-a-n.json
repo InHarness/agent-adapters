@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-registeradapter-name-factory-makes-a-n",
+  "status": "active",
+  "tags": [
+    "m01"
+  ],
+  "text": "registerAdapter(name, factory) makes a new architecture resolvable by createAdapter without any change to consumer code.",
+  "verifies": []
+}

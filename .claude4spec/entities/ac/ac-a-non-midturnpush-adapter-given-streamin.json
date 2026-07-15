@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-non-midturnpush-adapter-given-streamin",
+  "status": "active",
+  "tags": [
+    "m11",
+    "m11-edge"
+  ],
+  "text": "A non-midTurnPush adapter given streamingInput true behaves as one-shot, and the capability is discoverable so UIs can gate the affordance.",
+  "verifies": []
+}

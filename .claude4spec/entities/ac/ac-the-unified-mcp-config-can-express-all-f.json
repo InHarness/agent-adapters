@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-unified-mcp-config-can-express-all-f",
+  "status": "active",
+  "tags": [
+    "m04"
+  ],
+  "text": "The unified MCP config can express all four transports: stdio, SSE, HTTP, and in-process.",
+  "verifies": []
+}

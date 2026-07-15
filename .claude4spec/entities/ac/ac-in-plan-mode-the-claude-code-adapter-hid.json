@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-in-plan-mode-the-claude-code-adapter-hid",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "text": "In plan mode the claude-code adapter hides mutating built-ins via tools/disallowedTools rather than permissionMode 'plan', so consumer-curated MCP tools still execute.",
+  "verifies": []
+}

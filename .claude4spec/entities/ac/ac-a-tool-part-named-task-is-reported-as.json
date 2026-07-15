@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-a-tool-part-named-task-is-reported-as",
+  "status": "active",
+  "tags": [
+    "a03"
+  ],
+  "text": "A tool part named 'task' is reported as a tool_use named 'Agent' bracketed by subagent_started/subagent_completed, and intervening text/reasoning deltas inherit its subagentTaskId by ordering.",
+  "verifies": []
+}

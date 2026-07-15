@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-allowedpaths-disallowedpaths-are-immutab",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "allowedPaths/disallowedPaths are immutable on resume; findResumeViolations reports any change to either field before a resumed run.",
+  "verifies": []
+}

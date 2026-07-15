@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-opencode-adapter-maps-message-part-u",
+  "status": "active",
+  "tags": [
+    "a03"
+  ],
+  "text": "The opencode adapter maps message.part.updated parts (text to text_delta, reasoning to thinking, tool running/completed/error to tool_use/tool_result) and session frames (todo.updated to todo_list_updated, session.idle to result, session.error to error).",
+  "verifies": []
+}

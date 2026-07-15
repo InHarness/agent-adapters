@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-built-in-provider-presets-minimax-olla",
+  "status": "active",
+  "tags": [
+    "m03"
+  ],
+  "text": "Built-in provider presets (minimax, ollama, openrouter) configure the base URL and auth env for their architecture.",
+  "verifies": []
+}

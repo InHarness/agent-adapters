@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-turn-failed-followed-by-a-codex-exec",
+  "status": "active",
+  "tags": [
+    "a02",
+    "a02-edge"
+  ],
+  "text": "A turn.failed followed by a 'Codex Exec exited with…' throw surfaces exactly one error event (the duplicate envelope is suppressed).",
+  "verifies": []
+}

@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-streaming-input-run-that-yields-multip",
+  "status": "active",
+  "tags": [
+    "m09",
+    "m09-edge"
+  ],
+  "text": "A streaming-input run that yields multiple result events has all of them returned by collectors in order.",
+  "verifies": []
+}

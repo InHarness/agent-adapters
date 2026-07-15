@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-pushmessage-on-a-closed-channel-or-a-non",
+  "status": "active",
+  "tags": [
+    "m11",
+    "m11-edge"
+  ],
+  "text": "pushMessage on a closed channel or a non-streaming adapter returns false and the caller re-dispatches; no message is lost.",
+  "verifies": []
+}

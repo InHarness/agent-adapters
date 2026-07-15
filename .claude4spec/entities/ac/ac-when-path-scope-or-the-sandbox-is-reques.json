@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-when-path-scope-or-the-sandbox-is-reques",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "text": "When path-scope or the sandbox is requested, claude-code narrows options.settingSources to exclude the global ~/.claude tier (disabling ambient global settings and disk-skill discovery), while inline skills delivered via options.plugins still materialize.",
+  "verifies": []
+}

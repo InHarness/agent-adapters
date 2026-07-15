@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-errors-are-delivered-as-type-error",
+  "status": "active",
+  "tags": [
+    "m13"
+  ],
+  "text": "Errors are delivered as { type:'error', error } events and the iterator never throws out of the stream.",
+  "verifies": []
+}

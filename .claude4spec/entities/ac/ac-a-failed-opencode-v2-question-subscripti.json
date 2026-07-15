@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-failed-opencode-v2-question-subscripti",
+  "status": "active",
+  "tags": [
+    "a03",
+    "a03-edge"
+  ],
+  "text": "A failed opencode v2 question subscription emits a warning and the run continues on the authoritative v1 stream with user-input disabled for that session.",
+  "verifies": []
+}

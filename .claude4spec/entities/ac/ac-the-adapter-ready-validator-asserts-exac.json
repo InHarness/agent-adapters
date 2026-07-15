@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-adapter-ready-validator-asserts-exac",
+  "status": "active",
+  "tags": [
+    "m12"
+  ],
+  "text": "The adapter_ready validator asserts exactly one adapter_ready event emitted as the first non-warning event.",
+  "verifies": []
+}

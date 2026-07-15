@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-when-path-scope-or-claude-sandbox-enabl",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "text": "When path-scope (or claude_sandbox.enabled) is requested, the claude-code soft run switches from bypassPermissions to a default-deny mode with allow-rules for cwd ∪ allowedPaths and deny-rules for disallowedPaths; outside path-scope it keeps bypassPermissions unchanged.",
+  "verifies": []
+}

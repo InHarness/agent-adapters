@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-path-scope-precedence-holds-disallowedp",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "Path-scope confines reads and writes to cwd ∪ allowedPaths (the ceiling), with precedence disallowedPaths > allowedPaths > base(cwd) read as narrowing that ceiling — allowedPaths widen the base up to it, disallowedPaths carve out from within it.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-an-accepted-pushmessage-emits-user-messa",
+  "status": "active",
+  "tags": [
+    "m11"
+  ],
+  "text": "An accepted pushMessage emits user_message { text, timestamp } before the model's response to that message.",
+  "verifies": []
+}

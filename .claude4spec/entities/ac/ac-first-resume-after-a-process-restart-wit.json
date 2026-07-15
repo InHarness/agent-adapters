@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-first-resume-after-a-process-restart-wit",
+  "status": "active",
+  "tags": [
+    "a02",
+    "a02-edge"
+  ],
+  "text": "First resume after a process restart with no priorUsage supplied reports the run's usage as the cumulative-as-delta one-shot artifact.",
+  "verifies": []
+}

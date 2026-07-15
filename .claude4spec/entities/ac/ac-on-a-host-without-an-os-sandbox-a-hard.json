@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-on-a-host-without-an-os-sandbox-a-hard",
+  "status": "active",
+  "tags": [
+    "m15",
+    "m15-edge"
+  ],
+  "text": "On a host without an OS sandbox, a hard-capable adapter (claude-code) degrades hard to soft and emits a warning that the gate is model-visible, not OS-enforced.",
+  "verifies": []
+}

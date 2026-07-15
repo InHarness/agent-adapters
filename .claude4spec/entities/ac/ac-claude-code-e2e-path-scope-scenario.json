@@ -1,0 +1,20 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-claude-code-e2e-path-scope-scenario",
+  "status": "active",
+  "tags": [
+    "m15"
+  ],
+  "text": "The claude-code e2e path-scope scenario confines reads and writes to cwd union allowedPaths against a live model, and a path outside scope is blocked.",
+  "verifies": [
+    {
+      "slug": "ac-path-scope-precedence-holds-disallowedp",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-with-scope-declared-a-read-or-write-of",
+      "type": "ac"
+    }
+  ]
+}

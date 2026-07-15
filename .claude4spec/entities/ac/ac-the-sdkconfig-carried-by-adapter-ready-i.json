@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-sdkconfig-carried-by-adapter-ready-i",
+  "status": "active",
+  "tags": [
+    "m14"
+  ],
+  "text": "The sdkConfig carried by adapter_ready is passed through redactSecrets before the event is emitted.",
+  "verifies": []
+}

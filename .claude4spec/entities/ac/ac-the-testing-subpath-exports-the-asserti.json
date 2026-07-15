@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-testing-subpath-exports-the-asserti",
+  "status": "active",
+  "tags": [
+    "m12"
+  ],
+  "text": "The /testing subpath exports the assertion toolkit without pulling in any adapter.",
+  "verifies": []
+}

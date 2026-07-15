@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-startup-warning-events-are-emitted-befor",
+  "status": "active",
+  "tags": [
+    "m14"
+  ],
+  "text": "Startup warning events are emitted before adapter_ready, so the readiness marker delimits the end of startup warnings.",
+  "verifies": []
+}

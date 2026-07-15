@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-usagestats-separates-billing-token-count",
+  "status": "active",
+  "tags": [
+    "m08"
+  ],
+  "text": "UsageStats separates billing token counts from contextSize, which reflects context-window occupancy.",
+  "verifies": []
+}

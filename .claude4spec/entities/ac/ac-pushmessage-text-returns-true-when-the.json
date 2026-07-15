@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-pushmessage-text-returns-true-when-the",
+  "status": "active",
+  "tags": [
+    "m11"
+  ],
+  "text": "pushMessage(text) returns true when the message is accepted onto an open streaming-input channel and false otherwise.",
+  "verifies": []
+}

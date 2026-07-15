@@ -47,4 +47,6 @@ Developers building interactive UIs can inject a follow-up message mid-turn inst
 
 These verify the accept/reject contract of `pushMessage` and that degradation never drops a message.
 
+Real-model proof: the e2e `mid-turn` scenario (a `pushMessage` mid-turn is accepted and reflected as `user_message` in the same run) exercises this against a live model on the one adapter with `midTurnPush=true` — scenario catalog in M12 (<section_ref anchor="xe2ecat1"/>); per-adapter coverage in the adapter files (<section_ref anchor="a01e2ecv"/>).
+
 <tagged_list type="ac" tags="m11"/>

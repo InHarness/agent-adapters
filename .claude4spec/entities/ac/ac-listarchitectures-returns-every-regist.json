@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-listarchitectures-returns-every-regist",
+  "status": "active",
+  "tags": [
+    "m01"
+  ],
+  "text": "listArchitectures() returns every registered architecture id, including those added via registerAdapter.",
+  "verifies": []
+}

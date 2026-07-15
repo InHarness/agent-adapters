@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-unsupported-capability-resolves-to-ex",
+  "status": "active",
+  "tags": [
+    "m01",
+    "m01-edge"
+  ],
+  "text": "An unsupported capability resolves to exactly one of warn, skip, or synthesize — never a silent drop.",
+  "verifies": []
+}

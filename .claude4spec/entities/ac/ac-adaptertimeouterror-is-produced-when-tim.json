@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-adaptertimeouterror-is-produced-when-tim",
+  "status": "active",
+  "tags": [
+    "m13"
+  ],
+  "text": "AdapterTimeoutError is produced when timeoutMs is exceeded and the SDK run is stopped.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-when-an-installed-peer-sdk-version-falls",
+  "status": "active",
+  "tags": [
+    "core"
+  ],
+  "text": "When an installed peer-SDK version falls outside a consumer's declared L7 range (any adapter, or M04 for @modelcontextprotocol/sdk), init emits an error event with phase 'init' (AdapterInitError) naming installed-vs-required — a hard, non-suppressible failure, never a silent difference in behavior.",
+  "verifies": []
+}

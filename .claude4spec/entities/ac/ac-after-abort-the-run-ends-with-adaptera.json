@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-after-abort-the-run-ends-with-adaptera",
+  "status": "active",
+  "tags": [
+    "m13"
+  ],
+  "text": "After abort() the run ends with AdapterAbortError or clean iterator completion and leaves no dangling SDK process.",
+  "verifies": []
+}

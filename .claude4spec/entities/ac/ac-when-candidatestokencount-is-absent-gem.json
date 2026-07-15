@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-when-candidatestokencount-is-absent-gem",
+  "status": "active",
+  "tags": [
+    "a04",
+    "a04-edge"
+  ],
+  "text": "When candidatesTokenCount is absent (Gemini 2.5 implicit thinking), the gemini adapter estimates output tokens from produced text length at roughly 4 chars per token.",
+  "verifies": []
+}

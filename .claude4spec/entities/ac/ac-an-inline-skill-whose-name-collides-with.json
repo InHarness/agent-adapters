@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-an-inline-skill-whose-name-collides-with",
+  "status": "active",
+  "tags": [
+    "m05",
+    "m05-edge"
+  ],
+  "text": "An inline skill whose name collides with a disk skill resolves by documented precedence, with no duplicate injection.",
+  "verifies": []
+}

@@ -1,0 +1,20 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-claude-code-e2e-model-matrix-scenario",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "text": "claude-code runs its core e2e scenarios across the full M02 model catalog via E2E_CLAUDE_MODEL and the test e2e claude scripts.",
+  "verifies": [
+    {
+      "slug": "ac-each-resolved-model-maps-to-a-known-cont",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-resolvemodel-alias-maps-a-friendly-alia",
+      "type": "ac"
+    }
+  ]
+}

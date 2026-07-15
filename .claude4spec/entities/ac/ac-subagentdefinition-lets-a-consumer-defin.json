@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-subagentdefinition-lets-a-consumer-defin",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "text": "SubagentDefinition lets a consumer define a subagent on adapters that support definition.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-architecturecapabilities-opencode-ret",
+  "status": "active",
+  "tags": [
+    "a03"
+  ],
+  "text": "architectureCapabilities('opencode') returns { midTurnPush: false, imageInput: true, subagentDefinition: false }.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-subagent-lifecycle-is-observable-via-sub",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "text": "Subagent lifecycle is observable via subagent_started, subagent_progress, and subagent_completed events.",
+  "verifies": []
+}

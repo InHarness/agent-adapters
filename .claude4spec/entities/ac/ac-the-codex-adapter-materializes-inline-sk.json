@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-codex-adapter-materializes-inline-sk",
+  "status": "active",
+  "tags": [
+    "a02"
+  ],
+  "text": "The codex adapter materializes inline skills mirrored into <cwd>/.agents/skills/ before the thread starts and removes only the mirrored files afterward, and passes images as a local path (base64/url written to a temp file as local_image).",
+  "verifies": []
+}

@@ -1,0 +1,16 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-claude-code-e2e-mcp-elicitation-scenario",
+  "status": "active",
+  "tags": [
+    "m04"
+  ],
+  "text": "The claude-code e2e MCP elicitation scenario drives elicitation_request and onElicitation against a live model and the answer reaches the model.",
+  "verifies": [
+    {
+      "slug": "ac-mcp-elicitation-bridges-elicitation-req",
+      "type": "ac"
+    }
+  ]
+}

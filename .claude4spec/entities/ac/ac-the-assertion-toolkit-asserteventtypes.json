@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-assertion-toolkit-asserteventtypes",
+  "status": "active",
+  "tags": [
+    "m12"
+  ],
+  "text": "The assertion toolkit (assertEventTypes, assertTextDeltas, assertNormalizedMessage, assertContentBlock) accumulates results into a ContractResult.",
+  "verifies": []
+}

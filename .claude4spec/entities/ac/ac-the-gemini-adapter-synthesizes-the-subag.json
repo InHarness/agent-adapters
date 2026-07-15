@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-gemini-adapter-synthesizes-the-subag",
+  "status": "active",
+  "tags": [
+    "a04"
+  ],
+  "text": "The gemini adapter synthesizes the subagent lifecycle (subagent_started/progress/completed) from threadId-bearing tool events, deduplicated through an activeSubagents set.",
+  "verifies": []
+}

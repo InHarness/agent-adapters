@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-observestream-stream-observer-dispatch",
+  "status": "active",
+  "tags": [
+    "m09"
+  ],
+  "text": "observeStream(stream, observer) dispatches each event to its typed callback.",
+  "verifies": []
+}

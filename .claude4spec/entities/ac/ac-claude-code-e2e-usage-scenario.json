@@ -1,0 +1,20 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-claude-code-e2e-usage-scenario",
+  "status": "active",
+  "tags": [
+    "m08"
+  ],
+  "text": "The claude-code e2e usage scenario asserts billing tokens versus contextSize and that cache buckets are legible on the live result.",
+  "verifies": [
+    {
+      "slug": "ac-usagestats-represents-cache-token-fields",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-usagestats-separates-billing-token-count",
+      "type": "ac"
+    }
+  ]
+}

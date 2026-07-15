@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-e2e-suite-is-the-verified-range-evidence",
+  "status": "active",
+  "tags": [
+    "m12"
+  ],
+  "text": "The real-model e2e suite is the verified-range evidence: a peer-SDK bump re-runs the full suite before peerDependencies is narrowed, keeping declared range == verified range.",
+  "verifies": []
+}

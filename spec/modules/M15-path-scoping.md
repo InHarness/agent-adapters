@@ -89,4 +89,6 @@ The two fields and the `pathScope` capability are additive; absent fields preser
 
 These verify the precedence/normalization semantics, the hard vs soft gate strength (including the host-dependent degradation), the allow-only limitation on codex, and backward compatibility when the fields are absent.
 
+Real-model proof: the e2e `path-scope` scenario (reads/writes confined to `cwd ∪ allowedPaths`; a path outside scope blocked) and the related `plan-mode` scenario exercise this against a live model — scenario catalog in M12 (<section_ref anchor="xe2ecat1"/>); per-adapter coverage in the adapter files (<section_ref anchor="a01e2ecv"/>).
+
 <tagged_list type="ac" tags="m15"/>

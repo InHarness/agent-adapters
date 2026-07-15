@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-subagent-events-lacking-subagenttaskid-a",
+  "status": "active",
+  "tags": [
+    "m06",
+    "m06-edge"
+  ],
+  "text": "Subagent events lacking subagentTaskId are attributed to the parent bucket per the documented fallback.",
+  "verifies": []
+}
