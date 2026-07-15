@@ -96,10 +96,12 @@ export function createMcpServer(options: CreateMcpServerOptions): McpServerInsta
   } catch (err) {
     throw new AdapterInitError('mcp', err);
   }
-  const versionIssue = checkPeerSdkVersion('@modelcontextprotocol/sdk', '>=1.0.0 <2.0.0');
-  if (versionIssue) {
-    throw new AdapterInitError('mcp', new Error(versionIssue));
+  const versionCheck = checkPeerSdkVersion('@modelcontextprotocol/sdk');
+  if (versionCheck.status === 'mismatch') {
+    throw new AdapterInitError('mcp', new Error(versionCheck.message));
   }
+  // 'undeterminable' proceeds: createMcpServer has no event stream to surface a warning
+  // through, and the require() above already proved the SDK is installed and loadable.
   const server = new McpServer(
     { name: options.name, version: options.version ?? '1.0.0' },
     { capabilities: { tools: options.tools?.length ? {} : undefined } },

@@ -209,12 +209,19 @@ export class OpencodeAdapter implements RuntimeAdapter {
     try {
       ({ createOpencode } = await import('@opencode-ai/sdk'));
       ({ createOpencodeClient: createOpencodeClientV2 } = await import('@opencode-ai/sdk/v2/client'));
-      const versionIssue = checkPeerSdkVersion('@opencode-ai/sdk', '>=1.4.0 <2.0.0');
-      if (versionIssue) {
+      const versionCheck = checkPeerSdkVersion('@opencode-ai/sdk');
+      if (versionCheck.status === 'mismatch') {
         await mirrored?.cleanupMirror().catch(() => {});
         await materialized?.cleanup().catch(() => {});
-        yield { type: 'error', error: new AdapterInitError('opencode', new Error(versionIssue)), phase: 'init' };
+        yield {
+          type: 'error',
+          error: new AdapterInitError('opencode', new Error(versionCheck.message)),
+          phase: 'init',
+        };
         return;
+      }
+      if (versionCheck.status === 'undeterminable') {
+        yield { type: 'warning', message: versionCheck.message! };
       }
     } catch (err) {
       await mirrored?.cleanupMirror().catch(() => {});

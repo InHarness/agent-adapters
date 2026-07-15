@@ -187,10 +187,13 @@ export class GeminiAdapter implements RuntimeAdapter {
       return;
     }
 
-    const versionIssue = checkPeerSdkVersion('@google/gemini-cli-core', '>=0.38.0 <0.39.0');
-    if (versionIssue) {
-      yield { type: 'error', error: new AdapterInitError('gemini', new Error(versionIssue)), phase: 'init' };
+    const versionCheck = checkPeerSdkVersion('@google/gemini-cli-core');
+    if (versionCheck.status === 'mismatch') {
+      yield { type: 'error', error: new AdapterInitError('gemini', new Error(versionCheck.message)), phase: 'init' };
       return;
+    }
+    if (versionCheck.status === 'undeterminable') {
+      yield { type: 'warning', message: versionCheck.message! };
     }
 
     const GeminiConfig = sdk.Config as

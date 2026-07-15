@@ -191,10 +191,13 @@ export class CodexAdapter implements RuntimeAdapter {
     let codex: InstanceType<typeof Codex>;
     try {
       ({ Codex } = await import('@openai/codex-sdk'));
-      const versionIssue = checkPeerSdkVersion('@openai/codex-sdk', '>=0.120.0 <0.121.0');
-      if (versionIssue) {
-        yield { type: 'error', error: new AdapterInitError('codex', new Error(versionIssue)), phase: 'init' };
+      const versionCheck = checkPeerSdkVersion('@openai/codex-sdk');
+      if (versionCheck.status === 'mismatch') {
+        yield { type: 'error', error: new AdapterInitError('codex', new Error(versionCheck.message)), phase: 'init' };
         return;
+      }
+      if (versionCheck.status === 'undeterminable') {
+        yield { type: 'warning', message: versionCheck.message! };
       }
       codex = new Codex(codexOptions as ConstructorParameters<typeof Codex>[0]);
     } catch (err) {

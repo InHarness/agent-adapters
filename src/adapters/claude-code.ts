@@ -902,14 +902,21 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     let q: Query;
     try {
       const { query } = await import('@anthropic-ai/claude-agent-sdk');
-      const versionIssue = checkPeerSdkVersion('@anthropic-ai/claude-agent-sdk', '>=0.3.0 <0.4.0');
-      if (versionIssue) {
+      const versionCheck = checkPeerSdkVersion('@anthropic-ai/claude-agent-sdk');
+      if (versionCheck.status === 'mismatch') {
         clearTimeout(timeoutId);
         this.pushHandler = null;
         this.closeInputChannel = null;
         await materialized?.cleanup().catch(() => {});
-        yield { type: 'error', error: new AdapterInitError('claude-code', new Error(versionIssue)), phase: 'init' };
+        yield {
+          type: 'error',
+          error: new AdapterInitError('claude-code', new Error(versionCheck.message)),
+          phase: 'init',
+        };
         return;
+      }
+      if (versionCheck.status === 'undeterminable') {
+        yield { type: 'warning', message: versionCheck.message! };
       }
       q = query({
         prompt: inputChannel ? inputChannel.iterable : params.prompt,
