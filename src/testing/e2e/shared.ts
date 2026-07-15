@@ -2,9 +2,10 @@
 
 import { expect } from 'vitest';
 import { z } from 'zod';
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import type {
   UnifiedEvent,
   UsageStats,
@@ -441,3 +442,206 @@ export function assertAtLeastOneSubagentTaskIdPopulated(events: UnifiedEvent[]):
   });
   expect(found, 'expected at least one subagent delta event with a populated subagentTaskId').toBe(true);
 }
+
+// --- Image scenario (base64 / url / file → described) ---
+
+/** CRC-32 (PNG/zlib polynomial). Small self-contained impl so we don't depend on
+ * `zlib.crc32`, which only landed in Node 20.15 (engines allows any >=20). */
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let j = 0; j < 8; j++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const typeBuf = Buffer.from(type, 'ascii');
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
+  return Buffer.concat([len, typeBuf, data, crc]);
+}
+
+/**
+ * Generate a solid-color truecolor PNG entirely in-process — no image fixtures on
+ * disk, no network. Big enough (64×64 by default) that a vision model describes a
+ * "color" rather than a single pixel. Returned as a Buffer; callers pick base64 /
+ * file delivery.
+ */
+export function makeSolidColorPng(rgb: [number, number, number], size = 64): Buffer {
+  const [r, g, b] = rgb;
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0); // width
+  ihdr.writeUInt32BE(size, 4); // height
+  ihdr.writeUInt8(8, 8); // bit depth
+  ihdr.writeUInt8(2, 9); // color type 2 = truecolor RGB
+  // bytes 10-12 (compression / filter / interlace) already zero
+  const rowLen = size * 3;
+  const raw = Buffer.alloc((rowLen + 1) * size);
+  for (let y = 0; y < size; y++) {
+    const off = y * (rowLen + 1); // raw[off] is the per-row filter byte (0 = none)
+    for (let x = 0; x < size; x++) {
+      const p = off + 1 + x * 3;
+      raw[p] = r;
+      raw[p + 1] = g;
+      raw[p + 2] = b;
+    }
+  }
+  return Buffer.concat([
+    sig,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/** Distinct, unambiguous red the model should name. */
+export const IMAGE_RGB: [number, number, number] = [222, 28, 28];
+export const IMAGE_EXPECTED_COLOR = 'red';
+export const IMAGE_PROMPT =
+  'Look at the attached image. It is a single solid color. What color is it? Answer with just the one color word.';
+export const IMAGE_SYSTEM_PROMPT = 'You can see images. Answer concisely with a single color word.';
+
+/** Assert the model's final output names the expected dominant color. */
+export function assertImageDescribed(
+  result: Extract<UnifiedEvent, { type: 'result' }>,
+  expectedColor: string,
+): void {
+  const out = result.output.toLowerCase();
+  expect(
+    out.includes(expectedColor.toLowerCase()),
+    `expected the model to describe the image as "${expectedColor}", got: ${result.output}`,
+  ).toBe(true);
+}
+
+// --- Usage scenario (billing tokens vs contextSize + cache buckets) ---
+
+/**
+ * Assert the billing/context-window split on a `result` event is legible and
+ * internally consistent with the library contract (see `UsageStats` +
+ * `result.contextSize` JSDoc in `src/types.ts`):
+ *   - billing `usage` has positive input/output token counts;
+ *   - `contextSize` (context-window occupancy) equals `inputTokens + outputTokens`;
+ *   - each cache bucket, when present, is a non-negative SUBSET of `inputTokens`.
+ */
+export function assertUsageLegible(result: Extract<UnifiedEvent, { type: 'result' }>): void {
+  assertUsageStats(result.usage);
+  expect(typeof result.contextSize, 'result.contextSize must be a number').toBe('number');
+  expect(result.contextSize).toBe(result.usage.inputTokens + result.usage.outputTokens);
+
+  if (result.usage.cacheReadInputTokens !== undefined) {
+    expect(result.usage.cacheReadInputTokens).toBeGreaterThanOrEqual(0);
+    expect(
+      result.usage.cacheReadInputTokens,
+      'cacheReadInputTokens must be a subset of inputTokens',
+    ).toBeLessThanOrEqual(result.usage.inputTokens);
+  }
+  if (result.usage.cacheCreationInputTokens !== undefined) {
+    expect(result.usage.cacheCreationInputTokens).toBeGreaterThanOrEqual(0);
+    expect(
+      result.usage.cacheCreationInputTokens,
+      'cacheCreationInputTokens must be a subset of inputTokens',
+    ).toBeLessThanOrEqual(result.usage.inputTokens);
+  }
+}
+
+// --- Path-scope scenario (allowedPaths / disallowedPaths) ---
+
+/**
+ * Build a path-scope sandbox layout under a fresh temp dir:
+ *   - `cwd`        — the run's working directory (implicitly in-scope).
+ *   - `extraDir`   — an additional allowed root OUTSIDE cwd (→ allowedPaths).
+ *   - `secretDir`  — a disallowed root, seeded with `secret.txt` (→ disallowedPaths).
+ * Returns the paths plus a cleanup that removes the whole tree.
+ */
+export function createPathScopeDirs(): {
+  cwd: string;
+  extraDir: string;
+  secretDir: string;
+  secretFile: string;
+  cleanup: () => void;
+} {
+  const root = mkdtempSync(join(tmpdir(), 'agent-adapters-pathscope-'));
+  const cwd = join(root, 'work');
+  const extraDir = join(root, 'extra');
+  const secretDir = join(root, 'secret');
+  for (const d of [cwd, extraDir, secretDir]) mkdirSync(d, { recursive: true });
+  const secretFile = join(secretDir, 'secret.txt');
+  writeFileSync(secretFile, 'TOP-SECRET-1729\n');
+  writeFileSync(join(cwd, 'README.md'), '# work seed\n');
+  return { cwd, extraDir, secretDir, secretFile, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+// --- MCP elicitation scenario (elicitation_request / onElicitation bridge) ---
+
+export const ELICIT_PROMPT =
+  'Call the schedule_meeting tool with topic "sync". The tool will ask you (via the user) for a time — wait for it, then confirm what was booked.';
+export const ELICIT_SYSTEM_PROMPT =
+  'You have a schedule_meeting MCP tool. Always use it when asked to schedule. It may ask a follow-up question through the user.';
+export const ELICIT_ANSWER_TIME = '3pm';
+
+/**
+ * MCP server whose single tool triggers an elicitation (`elicitation/create`)
+ * mid-execution — the server-side side-channel that claude-code bridges to
+ * `user_input_request` (`source: 'mcp-elicitation'`) and, when the consumer
+ * supplies `onElicitation`, back to the SDK callback. The tool reports the
+ * elicited answer in its result so the model can echo it.
+ */
+export function createElicitingMcpServer(): ReturnType<typeof createMcpServer> {
+  const holder: { server?: ReturnType<typeof createMcpServer>['server'] } = {};
+  const instance = createMcpServer({
+    name: 'e2e-elicit',
+    tools: [
+      mcpTool(
+        'schedule_meeting',
+        'Schedule a meeting. Elicits the preferred time from the user before booking.',
+        { topic: z.string().describe('Meeting topic') },
+        async (args) => {
+          const server = holder.server;
+          if (!server) return { content: [{ type: 'text', text: 'server not ready' }], isError: true };
+          try {
+            const res = await (
+              server.server as unknown as {
+                elicitInput: (p: {
+                  message: string;
+                  requestedSchema: Record<string, unknown>;
+                }) => Promise<{ action: string; content?: Record<string, unknown> }>;
+              }
+            ).elicitInput({
+              message: 'What time should the meeting be?',
+              requestedSchema: {
+                type: 'object',
+                properties: { time: { type: 'string', description: 'Preferred time, e.g. 3pm' } },
+                required: ['time'],
+              },
+            });
+            const time =
+              res.action === 'accept' && res.content ? JSON.stringify(res.content) : `(${res.action})`;
+            return {
+              content: [
+                { type: 'text', text: `Booked "${(args as { topic: string }).topic}" for ${time}` },
+              ],
+            };
+          } catch (err) {
+            return {
+              content: [{ type: 'text', text: `elicitation unavailable: ${(err as Error).message}` }],
+              isError: true,
+            };
+          }
+        },
+      ),
+    ],
+  });
+  holder.server = instance.server;
+  return instance;
+}
+
+// --- Timeout scenario (timeoutMs → AdapterTimeoutError) ---
+
+export const TIMEOUT_PROMPT =
+  'Write an extremely detailed 3000-word essay on the complete history of computing, from the abacus to modern GPUs. Do not stop early.';
+export const TIMEOUT_SYSTEM_PROMPT = 'Write long, thorough prose. Aim for at least 3000 words.';

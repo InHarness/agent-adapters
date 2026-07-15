@@ -4,13 +4,18 @@
 // Run specific model: E2E_CLAUDE_MODEL=opus-4.7 npm run test:e2e:claude
 
 import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createAdapter } from '../../factory.js';
 import { collectEvents } from '../../utils.js';
 import { resolveModel } from '../../models.js';
 import { assertSimpleText, assertToolUse, assertThinking, assertAdapterReady } from '../contract.js';
-import { AdapterAbortError } from '../../types.js';
+import { AdapterAbortError, AdapterTimeoutError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
 import { architectureCapabilities } from '../../capabilities.js';
+import { probePathScope, detectOsSandbox } from '../../path-scope.js';
+import { PEER_SDK_RANGES, resolvePeerSdkVersion, evaluatePeerSdkVersion } from '../../sdk-version.js';
 import { assertNormalization } from '../normalization.js';
 import {
   requireEnv,
@@ -45,7 +50,26 @@ import {
   runResumeScenario,
   RESUME_EXPECTED_NUMBER,
   assertResumeUsageIndependence,
+  makeSolidColorPng,
+  IMAGE_RGB,
+  IMAGE_EXPECTED_COLOR,
+  IMAGE_PROMPT,
+  IMAGE_SYSTEM_PROMPT,
+  assertImageDescribed,
+  assertUsageLegible,
+  createPathScopeDirs,
+  createElicitingMcpServer,
+  ELICIT_PROMPT,
+  ELICIT_SYSTEM_PROMPT,
+  ELICIT_ANSWER_TIME,
+  TIMEOUT_PROMPT,
+  TIMEOUT_SYSTEM_PROMPT,
 } from './shared.js';
+
+/** Narrow a collected stream to its `result` event (undefined if none). */
+function findResult(events: UnifiedEvent[]): Extract<UnifiedEvent, { type: 'result' }> | undefined {
+  return events.find((e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result');
+}
 
 // Claude Code SDK manages auth internally (OAuth, cached credentials, or ANTHROPIC_API_KEY).
 // We skip only if SKIP_CLAUDE_E2E is explicitly set — otherwise we let the SDK try its auth flow.
@@ -634,5 +658,270 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
 
       assertResumeUsageIndependence(result1, result2);
     });
+  });
+
+  // --- M12 scenario: image (base64 / file → described) ---
+  // `url` delivery is intentionally not exercised here: it would depend on a
+  // stable public image host, coupling a live-model assertion to third-party
+  // network availability. base64 + file cover both materialization paths
+  // (native content block / read-and-inline).
+  describe('image input (base64 / file → described)', () => {
+    it('describes a base64 image', async () => {
+      const png = makeSolidColorPng(IMAGE_RGB);
+      const adapter = createAdapter('claude-code');
+      const events = await collectEvents(
+        adapter.execute({
+          prompt: IMAGE_PROMPT,
+          systemPrompt: IMAGE_SYSTEM_PROMPT,
+          model: MODEL,
+          maxTurns: 1,
+          images: [{ type: 'base64', mediaType: 'image/png', data: png.toString('base64') }],
+        }),
+      );
+      const result = findResult(events);
+      expect(result, 'expected a result event').toBeDefined();
+      assertImageDescribed(result!, IMAGE_EXPECTED_COLOR);
+    }, 120_000);
+
+    it('describes a file image', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'agent-adapters-img-'));
+      const path = join(dir, 'solid.png');
+      writeFileSync(path, makeSolidColorPng(IMAGE_RGB));
+      try {
+        const adapter = createAdapter('claude-code');
+        const events = await collectEvents(
+          adapter.execute({
+            prompt: IMAGE_PROMPT,
+            systemPrompt: IMAGE_SYSTEM_PROMPT,
+            model: MODEL,
+            maxTurns: 1,
+            images: [{ type: 'file', path }],
+          }),
+        );
+        const result = findResult(events);
+        expect(result, 'expected a result event').toBeDefined();
+        assertImageDescribed(result!, IMAGE_EXPECTED_COLOR);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 120_000);
+  });
+
+  // --- M12 scenario: path-scope (allowedPaths / disallowedPaths) ---
+  describe('path scope (allowedPaths / disallowedPaths)', () => {
+    it('resolves scope on adapter_ready with disallowedPaths precedence (soft gate)', async () => {
+      const { cwd, extraDir, secretDir, cleanup } = createPathScopeDirs();
+      try {
+        const adapter = createAdapter('claude-code');
+        // secretDir is in BOTH allow and deny → disallowedPaths must win.
+        const events = await collectEvents(
+          adapter.execute({
+            prompt: 'Reply with the single word: ready.',
+            systemPrompt: 'Answer in one word.',
+            model: MODEL,
+            maxTurns: 1,
+            cwd,
+            allowedPaths: [extraDir, secretDir],
+            disallowedPaths: [secretDir],
+          }),
+        );
+        const ready = events.find(
+          (e): e is Extract<UnifiedEvent, { type: 'adapter_ready' }> => e.type === 'adapter_ready',
+        );
+        expect(ready?.pathScope, 'adapter_ready should carry pathScope when requested').toBeDefined();
+        const ps = ready!.pathScope!;
+        expect(ps.requested).toBe(true);
+        // No claude_sandbox opt-in → soft (model-visible permission rules only).
+        expect(ps.strength).toBe('soft');
+        expect(ps.allowed).toContain(extraDir);
+        expect(ps.disallowed).toContain(secretDir);
+
+        // The pure resolver agrees (deterministic cross-check of precedence).
+        const probed = probePathScope('claude-code', {
+          cwd,
+          allowedPaths: [extraDir, secretDir],
+          disallowedPaths: [secretDir],
+        });
+        expect(probed.strength).toBe('soft');
+        expect(probed.disallowed).toContain(secretDir);
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    it('a file under a disallowedPath cannot be read (soft deny blocks Read)', async () => {
+      const { cwd, secretDir, secretFile, cleanup } = createPathScopeDirs();
+      try {
+        const adapter = createAdapter('claude-code');
+        const events = await collectEvents(
+          adapter.execute({
+            prompt: `Use the Read tool to open ${secretFile} and tell me its exact contents verbatim. If the read is denied, reply with exactly the word BLOCKED.`,
+            systemPrompt: 'You have a Read tool. If a read is denied by permissions, reply with exactly: BLOCKED.',
+            model: MODEL,
+            maxTurns: 3,
+            cwd,
+            disallowedPaths: [secretDir],
+          }),
+        );
+        const result = findResult(events);
+        expect(result, 'expected a result event').toBeDefined();
+        // The soft gate denies Read(secret/**) — the marker must never surface.
+        expect(
+          result!.output.includes('TOP-SECRET-1729'),
+          `disallowedPath leaked: secret content appeared in output: ${result!.output}`,
+        ).toBe(false);
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+  });
+
+  // --- M12 scenario: usage (billing tokens vs contextSize + cache buckets) ---
+  describe('usage (billing tokens vs contextSize + cache buckets)', () => {
+    it('reports legible per-call billing usage and context-window size on result', async () => {
+      const adapter = createAdapter('claude-code');
+      const events = await collectEvents(
+        adapter.execute({
+          prompt: SIMPLE_PROMPT,
+          systemPrompt: SIMPLE_SYSTEM_PROMPT,
+          model: MODEL,
+          maxTurns: 1,
+        }),
+      );
+      const result = findResult(events);
+      expect(result, 'expected a result event').toBeDefined();
+      assertUsageLegible(result!);
+    }, 120_000);
+  });
+
+  // --- M12 scenario: mcp elicitation (elicitation_request / onElicitation bridge) ---
+  // NOTE: exercises the server-side elicitation side-channel end-to-end. Whether
+  // an in-process SDK-MCP server's `elicitation/create` is forwarded to the
+  // adapter's `options.onElicitation` is a claude-agent-sdk behavior; if the SDK
+  // stops forwarding it, this scenario is the canary. timeoutMs bounds the run so
+  // a non-bridged elicitation fails fast instead of hanging.
+  describe('mcp elicitation (elicitation_request / onElicitation bridge)', () => {
+    it('bridges an MCP elicitation to user_input_request and the answer reaches the model', async () => {
+      const { config } = createElicitingMcpServer();
+      const adapter = createAdapter('claude-code');
+      let handlerCalls = 0;
+      const events: UnifiedEvent[] = [];
+      for await (const e of adapter.execute({
+        prompt: ELICIT_PROMPT,
+        systemPrompt: ELICIT_SYSTEM_PROMPT,
+        model: MODEL,
+        maxTurns: 5,
+        mcpServers: { 'e2e-elicit': config },
+        timeoutMs: 90_000,
+        onElicitation: async () => {
+          handlerCalls += 1;
+          return { action: 'accept', content: { time: ELICIT_ANSWER_TIME } };
+        },
+      })) {
+        events.push(e);
+      }
+
+      // The elicitation surfaced through the unified bridge (source mcp-elicitation).
+      const req = assertUserInputRequest(events, 'mcp-elicitation');
+      expect(req.request.source).toBe('mcp-elicitation');
+      expect(handlerCalls, 'onElicitation should fire at least once').toBeGreaterThanOrEqual(1);
+
+      // The deprecated legacy event is still emitted for back-compat.
+      expect(events.some((e) => e.type === 'elicitation_request')).toBe(true);
+
+      // The elicited answer reached the model and shows up in its final output.
+      const result = findResult(events);
+      expect(result?.output.toLowerCase()).toContain(ELICIT_ANSWER_TIME);
+    }, 120_000);
+  });
+
+  // --- M12 scenario: timeout edge (timeoutMs → AdapterTimeoutError) ---
+  describe('timeout (timeoutMs → AdapterTimeoutError)', () => {
+    it('exceeding timeoutMs ends with a runtime AdapterTimeoutError and closes the input channel', async () => {
+      const adapter = createAdapter('claude-code');
+      const events: UnifiedEvent[] = [];
+      for await (const e of adapter.execute({
+        prompt: TIMEOUT_PROMPT,
+        systemPrompt: TIMEOUT_SYSTEM_PROMPT,
+        model: MODEL,
+        streamingInput: true,
+        timeoutMs: 8000,
+      })) {
+        events.push(e);
+      }
+
+      const errorEvents = events.filter(
+        (e): e is Extract<UnifiedEvent, { type: 'error' }> => e.type === 'error',
+      );
+      const timeoutErr = errorEvents.find((e) => e.error instanceof AdapterTimeoutError);
+      expect(timeoutErr, `expected an AdapterTimeoutError, got: ${errorEvents.map((e) => e.error?.name).join(', ')}`).toBeDefined();
+      expect(timeoutErr!.phase).toBe('runtime');
+
+      // After a timed-out run the input channel is closed — a late push is rejected.
+      expect(adapter.pushMessage?.('late message') ?? false).toBe(false);
+    }, 60_000);
+  });
+
+  // --- M12 scenario: os-sandbox-degrade edge (hard→soft where the host lacks a sandbox) ---
+  describe('os sandbox degrade (claude_sandbox on a host with/without bubblewrap/seatbelt)', () => {
+    it('path-scope strength tracks host capability; degrades hard→soft with a warning when no OS sandbox', async () => {
+      const { cwd, extraDir, cleanup } = createPathScopeDirs();
+      try {
+        const adapter = createAdapter('claude-code');
+        const events = await collectEvents(
+          adapter.execute({
+            prompt: 'Reply with the single word: ready.',
+            systemPrompt: 'Answer in one word.',
+            model: MODEL,
+            maxTurns: 1,
+            cwd,
+            allowedPaths: [extraDir],
+            architectureConfig: { claude_sandbox: { enabled: true } },
+          }),
+        );
+        const ready = events.find(
+          (e): e is Extract<UnifiedEvent, { type: 'adapter_ready' }> => e.type === 'adapter_ready',
+        );
+        const hasOsSandbox = detectOsSandbox();
+        expect(ready?.pathScope?.strength).toBe(hasOsSandbox ? 'hard' : 'soft');
+
+        const degradeWarning = events.some(
+          (e) => e.type === 'warning' && /degraded hard→soft/.test(e.message),
+        );
+        if (hasOsSandbox) {
+          expect(degradeWarning, 'no degrade warning expected when an OS sandbox is available').toBe(false);
+        } else {
+          expect(degradeWarning, 'expected a hard→soft degrade warning on a host without an OS sandbox').toBe(true);
+        }
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+  });
+});
+
+// --- M12 scenario: sdk-version-gate (verified-range evidence) ---
+// Deterministic and creds-free, so it runs even when SKIP_CLAUDE_E2E is set: the
+// e2e suite runs against a dev-pinned SDK, and THAT installed version is the
+// evidence for the declared peerDependencies range. If they ever diverge, the
+// declared range is no longer "verified" and this fails. The reject-message shape
+// ("installed X … requires Y") backs the non-suppressible init AdapterInitError
+// asserted at unit level in `src/adapters/claude-code.sdk-version.test.ts`.
+describe('sdk-version-gate — verified-range evidence [@anthropic-ai/claude-agent-sdk]', () => {
+  const PKG = '@anthropic-ai/claude-agent-sdk';
+
+  it('the dev-pinned SDK the e2e suite runs against satisfies the declared peer range', () => {
+    const range = PEER_SDK_RANGES[PKG];
+    const installed = resolvePeerSdkVersion(PKG);
+    expect(installed, 'could not resolve the installed claude-agent-sdk version').toBeTruthy();
+    const check = evaluatePeerSdkVersion(PKG, range, installed);
+    expect(check.status, `installed ${installed} must satisfy declared range ${range}`).toBe('ok');
+  });
+
+  it('an out-of-range install is a mismatch with an "installed X … requires Y" message', () => {
+    const range = PEER_SDK_RANGES[PKG];
+    const check = evaluatePeerSdkVersion(PKG, range, '0.2.0');
+    expect(check.status).toBe('mismatch');
+    expect(check.message).toMatch(/installed .* requires/);
   });
 });
