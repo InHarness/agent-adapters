@@ -475,6 +475,15 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       return;
     }
 
+    // Filesystem path scoping decides this run's permission posture. Under a SOFT
+    // gate (no OS sandbox) we MUST drop `bypassPermissions`: it auto-approves every
+    // visible tool, so `permissions.deny` never fires and confinement is impossible.
+    // Instead switch to a default-deny `dontAsk` mode confined by explicit allow/deny
+    // rules (built in the path-scope block below). Outside path-scope — and under a
+    // HARD OS sandbox, where the kernel enforces — we keep `bypassPermissions`.
+    const pathScope = probePathScope('claude-code', params);
+    const softScope = pathScope.requested && pathScope.strength === 'soft';
+
     const options: Options = {
       abortController: this.abortController,
       model: resolvedModel,
@@ -484,8 +493,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // CLAUDE_CODE_READONLY_BUILTINS above). We deliberately do NOT set
       // permissionMode: 'plan' because it would also block consumer-curated
       // MCP tools, contradicting the RuntimeExecuteParams.planMode contract.
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
+      permissionMode: softScope ? 'dontAsk' : 'bypassPermissions',
+      ...(softScope ? {} : { allowDangerouslySkipPermissions: true }),
       cwd: params.cwd ?? process.cwd(),
       includePartialMessages: true,
     };
@@ -610,20 +619,32 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     }
 
     // Filesystem path scoping (RuntimeExecuteParams.allowedPaths/disallowedPaths).
-    // Soft default: allowedPaths → Options.additionalDirectories; disallowedPaths →
-    // settings.permissions.deny Read/Edit rules. Deny outranks permissionMode in the
-    // SDK precedence chain, so the deny rules survive our `bypassPermissions` default
-    // (this is a model-visible/soft gate — nothing at the OS level stops a subprocess).
-    // Opt-in `claude_sandbox.enabled` + a host with bubblewrap/seatbelt flips to
-    // OS-syscall enforcement; without one, the hard guarantee degrades to soft.
-    const pathScope = probePathScope('claude-code', params);
+    // Soft gate: realise allow-CONFINEMENT bound to `cwd ∪ allowedPaths` (NOT a bare
+    // deny-list) via the default-deny `dontAsk` mode set on `options` above, plus
+    // explicit Read/Edit/Write allow rules for the ceiling and deny rules for
+    // disallowedPaths. A bare deny under `bypassPermissions` was decorative — bypass
+    // auto-approves everything, so the deny never fired and out-of-ceiling reads/writes
+    // (and a Bash-`cat` bypass) leaked. Opt-in `claude_sandbox.enabled` + a host with
+    // bubblewrap/seatbelt flips to OS-syscall enforcement (hard); that branch, below,
+    // is left as-is and keeps `bypassPermissions` since the kernel enforces.
     if (pathScope.requested) {
+      // Config-discovery containment: exclude the global `~/.claude` ('user') tier so
+      // ambient global settings / on-disk skill discovery cannot re-widen the agent's
+      // reach. Inline skills ride on `options.plugins` and are unaffected.
+      options.settingSources = ['project', 'local'];
+
       if (pathScope.allowed.length) {
         options.additionalDirectories = pathScope.allowed;
       }
-      if (pathScope.disallowed.length) {
-        const deny = pathScope.disallowed.flatMap((p) => [`Read(${p}/**)`, `Edit(${p}/**)`]);
-        options.settings = { permissions: { deny } } as Options['settings'];
+
+      // Soft gate only. Under the hard OS sandbox (below) the kernel enforces, so we
+      // leave that path untouched rather than layering model-visible rules onto it.
+      if (softScope) {
+        const fsRules = (p: string) => [`Read(${p}/**)`, `Edit(${p}/**)`, `Write(${p}/**)`];
+        const ceiling = [params.cwd ?? process.cwd(), ...pathScope.allowed];
+        const allow = ceiling.flatMap(fsRules);
+        const deny = pathScope.disallowed.flatMap(fsRules);
+        options.settings = { permissions: { allow, deny } } as Options['settings'];
       }
 
       const sandbox = getClaudeSandboxConfig(config);
