@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-control-channel-hold-is-bounded-a-ta",
+  "status": "active",
+  "tags": [
+    "m17",
+    "m17-edge"
+  ],
+  "text": "The control-channel hold is bounded: a background task that never settles, or a settlement whose continuation turn never begins, ends the run at the adapter's grace window or hard cap rather than hanging it, and the truncation is announced with a warning event naming the bound.",
+  "verifies": []
+}

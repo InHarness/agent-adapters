@@ -8,6 +8,8 @@
 
 Developers can watch and group sub-agent activity uniformly: when an agent spawns a helper, M06 surfaces `subagent_started` / `subagent_progress` / `subagent_completed`, and marks the interleaved `text_delta` / `thinking` / `tool_use` of that helper with `isSubagent` and (where the SDK allows) `subagentTaskId`. It also owns subagent *definition* (`SubagentDefinition`, `validateSubagents`) for adapters that accept declared subagents. Per the one-home rule, M06 owns **the per-adapter subagent support matrix**.
 
+**Scope — real subagents only.** `subagent_*` is reserved for actual spawned helper agents (Claude Code `Task`/`Agent` tool, gemini per-`threadId` threads, synthesized equivalents). Engine-backgrounded side work — backgrounded shell commands, monitors, workflow runs — does **not** share this family: it routes to the decoupled `background_task_*` lifecycle owned by M17. On SDKs that multiplex both kinds onto one native task channel (Claude Code's `task_*`), the adapter splits by the task-kind discriminator (`task_type`): subagent kinds map here, everything else maps to M17.
+
 <!-- anchor: 7tmzge8v -->
 ## Dependencies
 

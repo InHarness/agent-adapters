@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-when-abort-or-timeoutms-fires-with-bac",
+  "status": "active",
+  "tags": [
+    "m17",
+    "m17-edge"
+  ],
+  "text": "When abort() or timeoutMs fires with background work in flight, the run terminates per M13 semantics and no background_task_completed is emitted after termination.",
+  "verifies": []
+}

@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-on-adapters-whose-sdk-never-backgrounds",
+  "status": "active",
+  "tags": [
+    "m17"
+  ],
+  "text": "On adapters whose SDK never backgrounds work, no background_task_* event is ever emitted and result never carries a backgroundTasks signal — an absence, not an error or warning.",
+  "verifies": []
+}

@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-with-claude-disallowbackgroundbash-true",
+  "status": "active",
+  "tags": [
+    "a01",
+    "m17"
+  ],
+  "text": "With claude_disallowBackgroundBash: true, a Bash call requesting run_in_background is denied by the synthesized PreToolUse hook and the command runs synchronously inside the turn — no background_task_* events are emitted and result carries no in-flight signal.",
+  "verifies": []
+}

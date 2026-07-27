@@ -23,6 +23,7 @@ Developers building interactive UIs can inject a follow-up message mid-turn inst
 
 - With `streamingInput: true`, the adapter opens an input channel and the stream may yield **multiple** `result` events (one per delivered turn), staying alive until the channel drains or `abort()`.
 - `pushMessage(text)` returns `true` if accepted onto the open channel, `false` if the channel is closed/closing or the adapter isn't in streaming-input mode. An accepted push emits `user_message { text, timestamp }` **before** the model's response, so consumers persist it in transcript order.
+- **`streamingInput` gates pushes, not the channel.** An adapter may drive its SDK through an input channel on *every* run — a one-shot run is then a channel seeded with the prompt and closed at the turn's `result`, which is observationally identical to a string prompt (exactly one `result`, generator ends). Adapters do this when the SDK's one-shot path is degraded: Claude Code's SDK marks a string prompt as a single-turn query and closes the CLI's stdin at the first `result`, taking the control transport down with it (M17 — <section_ref anchor="01or0cpk"/>). What `streamingInput: false` guarantees is the *consumer-facing* contract — `pushMessage()` returns `false`, and the stream yields one `result` — never a particular wire shape.
 
 <!-- anchor: j2gwlt0q -->
 ## Capability & Degradation (L2)
