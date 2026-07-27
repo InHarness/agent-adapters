@@ -24,6 +24,7 @@ Adapter authors can verify their adapter against L1 with a shared assertion tool
 Read in *how-mode* — what adapter authors rely on:
 
 - **Assertion toolkit** (`testing/contract.ts`, `testing/e2e/shared.ts`) — `assertEventTypes`, `assertTextDeltas`, `assertNormalizedMessage`, `assertContentBlock`, plus an `adapter_ready` validator (exactly one, first non-warning event). Each returns/accumulates into a **`ContractResult`** listing passed/failed assertions with messages.
+- **Side-band events are exempt from ordering assertions.** `flush` and `warning` report on a run rather than advancing it, so the toolkit's terminality check reads the last **non-`flush`, non-`warning`** event — per M01's definition, which it asserts and does not restate. A toolkit demanding a literal trailing `result` would fail conforming adapters, since a `warning` can legitimately follow it (M17's hold bounds raise one from a timer callback). Same exemption the `adapter_ready` check already makes at the other end of the stream.
 - **`/testing` export** — the toolkit ships under a dedicated subpath so consumers and third-party adapter authors import assertions without pulling in adapters.
 - **e2e conventions** — one `*.e2e.test.ts` per adapter; every test guards on `requireEnv()` and **skips** (not fails) when the SDK's credentials are absent. New invariants are added to `shared.ts` so all adapters inherit them.
 

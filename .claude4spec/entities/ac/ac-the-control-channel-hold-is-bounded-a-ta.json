@@ -7,6 +7,6 @@
     "m17",
     "m17-edge"
   ],
-  "text": "The control-channel hold is bounded: a background task that never settles, or a settlement whose continuation turn never begins, ends the run at the adapter's grace window or hard cap rather than hanging it, and the truncation is announced with a warning event naming the bound.",
+  "text": "The control-channel hold is bounded: a background task that never settles, with the engine silent past the adapter's hard cap, ends the run rather than hanging it, and the truncation is announced with a warning event naming the bound.",
   "verifies": []
 }

@@ -23,6 +23,7 @@ Developers can read consistent usage across engines: billed input/output tokens,
 
 - `UsageStats` separates **billing** tokens (input/output, plus cache read/write) from **`contextSize`** (tokens occupying the window). The two diverge with caching and compaction.
 - Usage appears on the terminal `result`, on `subagent_completed` (per-subagent), and optionally on `NormalizedMessage`.
+- **`result.usage` is always that turn's own cost, never a running total.** Adapters whose SDK reports cumulative session usage subtract to a delta before emitting (M08's `priorUsage` mechanism, codex). This is what makes a run total *summable*: several `result`s in one `execute()` is normal, not exceptional — a mid-turn `pushMessage` runs as another turn (M11), and a background-work wake-up produces a further `result` (M17) — so the run's billing is the **sum** of them and `contextSize` is the **last** one, never a sum.
 
 <!-- anchor: zqm60jzu -->
 ## Public API & Packaging (L4)
