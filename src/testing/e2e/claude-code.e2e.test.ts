@@ -642,7 +642,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     // inside the turn, so the session was never held open and there was no post-`result`
     // control request to lose. Those runs are skipped, not counted either way.
     //
-    // See PLAN-tests-stream-e2e.md / PLAN-streamingn-input-fix.md.
+    // See spec/modules/M17-background-tasks.md and spec/adapters/A01-claude-code.md.
     const WAKE_UP_CONFIGS = [
       {
         shape: 'backgrounded bash',

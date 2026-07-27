@@ -141,6 +141,34 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
       'Forbid backgrounded shell commands (Bash run_in_background), forcing them to run synchronously inside the turn. ' +
       'Use when a turn must not outlive its result — strict per-turn billing or a hard wall-clock budget.',
   },
+  {
+    key: 'claude_backgroundGraceMs',
+    label: 'Background wake-up grace (ms)',
+    type: 'number',
+    scope: 'architecture',
+    default: 15000,
+    min: 1000,
+    max: 120000,
+    step: 1000,
+    description:
+      'How long the session stays open after background work settles, waiting for the engine to wake the model (M17). ' +
+      'Paid as dead time at the end of any run that started a task — the consumer already has its result, only the ' +
+      'stream stays open. Lower it to shorten that tail; below ~5s risks cutting off a wake-up that was really coming.',
+  },
+  {
+    key: 'claude_backgroundHoldCapMs',
+    label: 'Background hold cap (ms)',
+    type: 'number',
+    scope: 'architecture',
+    default: 90000,
+    min: 5000,
+    max: 600000,
+    step: 5000,
+    description:
+      'Hard cap on holding the session for background work that never settles (a backgrounded `sleep 3600`). Measured ' +
+      'from the engine going silent, so it cannot fire under a live engine; expiry ends the run with a warning. Keep ' +
+      'it below the timeout your consumer applies to the stream, or the run is rejected before the warning is emitted.',
+  },
 ];
 
 export const CODEX_OPTIONS: ArchOption[] = [

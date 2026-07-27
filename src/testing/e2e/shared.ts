@@ -310,7 +310,7 @@ export const USER_QUESTION_PROMPT =
 export const USER_QUESTION_SYSTEM_PROMPT =
   'When you need a decision from the user and you have a native ask-user / AskUserQuestion / question tool available, you MUST use it instead of guessing. Always prefer the ask-user tool over Bash or other tools for user input.';
 
-// --- Background-task session hold + user input (see PLAN-tests-stream-e2e.md) ---
+// --- Background-task session hold + user input (M17) ---
 
 // The bug needs a very specific shape, and every clause below buys one part of it:
 //

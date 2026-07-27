@@ -3,12 +3,24 @@
 import type { UnifiedEvent } from './types.js';
 
 /**
+ * How long {@link collectEvents} waits by default.
+ *
+ * Named rather than inlined because claude-code's background-task hold has to stay
+ * strictly under it: the two clocks race, and this one starts EARLIER (when the run
+ * starts, not when the hold arms at a held `result`). A hold cap at or above this
+ * value could never emit its truncation warning — the helper would already have
+ * rejected the run, losing the only signal that background work was abandoned. See
+ * `MAX_BACKGROUND_HOLD_MS` in `adapters/claude-code.background-hold.ts`.
+ */
+export const COLLECT_EVENTS_DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
  * Collect all events from a stream into an array.
  * Throws if the stream doesn't complete within timeoutMs.
  */
 export async function collectEvents(
   stream: AsyncIterable<UnifiedEvent>,
-  timeoutMs = 120_000,
+  timeoutMs = COLLECT_EVENTS_DEFAULT_TIMEOUT_MS,
 ): Promise<UnifiedEvent[]> {
   const events: UnifiedEvent[] = [];
   const timeout = new Promise<never>((_, reject) =>

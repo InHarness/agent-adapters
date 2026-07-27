@@ -25,7 +25,8 @@
 // on every work shape and both prompt paths) is owned by the live e2e scenario in
 // src/testing/e2e/claude-code.e2e.test.ts.
 //
-// See PLAN-tests-stream-e2e.md (these tests) and PLAN-streamingn-input-fix.md (the fix).
+// See spec/modules/M17-background-tasks.md (the invariants) and spec/adapters/A01-claude-code.md
+// (the measurements the bounds are sized from).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -205,7 +206,7 @@ describe('claude-code streaming input — background-task session hold', () => {
   // iterable and `done` means `stdin.end()` on the CLI process — which also ends
   // the control protocol multiplexed onto that stdin, so the woken model's
   // AskUserQuestion is denied inside the CLI with nothing but a `Stream closed`
-  // tool result to show for it. Live evidence in PLAN-tests-stream-e2e.md.
+  // tool result to show for it. Live evidence recorded in spec/adapters/A01-claude-code.md.
   it('keeps the input channel open at `result` while background work is in flight', async () => {
     const { inputDoneAfterResult } = await runScenario({
       backgroundTasks: BACKGROUND_TASK_RUNNING,
@@ -416,6 +417,37 @@ async function drainWithClock(
   }
 }
 
+/**
+ * `drainWithClock` plus the one thing the bound-configuration tests need: HOW MUCH
+ * virtual time the run actually consumed. Without it "the tail got shorter" can only
+ * be tested by letting the run hang past a tight ceiling, which fails as a timeout
+ * rather than as an assertion.
+ */
+async function drainMeasuringClock(
+  stream: AsyncIterable<UnifiedEvent>,
+): Promise<{ events: UnifiedEvent[]; advancedMs: number }> {
+  const STEP_MS = 500;
+  const CEILING_MS = MAX_BACKGROUND_HOLD_MS + BACKGROUND_WAKEUP_GRACE_MS + 5_000;
+  const iterator = stream[Symbol.asyncIterator]();
+  const events: UnifiedEvent[] = [];
+  let advancedMs = 0;
+
+  for (;;) {
+    let settled = false;
+    const pull = iterator.next().then((r) => {
+      settled = true;
+      return r;
+    });
+    for (let waited = 0; !settled && waited <= CEILING_MS; waited += STEP_MS) {
+      await vi.advanceTimersByTimeAsync(STEP_MS);
+      if (!settled) advancedMs += STEP_MS;
+    }
+    const next = await pull;
+    if (next.done) return { events, advancedMs };
+    events.push(next.value);
+  }
+}
+
 describe('claude-code — the background-task hold is bounded', () => {
   beforeEach(() => {
     // Only timers: the harness leans on real setImmediate for its macrotask
@@ -603,6 +635,59 @@ describe('claude-code — the background-task hold is bounded', () => {
 
     expect(events.some((e) => e.type === 'error' && e.error instanceof AdapterAbortError)).toBe(true);
     expect(events.some((e) => e.type === 'warning' && /in flight after/.test(e.message))).toBe(false);
+  });
+
+  // The bounds are sized off measurements of ONE engine (see A01), and the grace is
+  // paid as dead time at the end of EVERY task-touching run — including one whose
+  // subagents all finished in-turn. A consumer on a tighter wall-clock budget has to
+  // be able to buy that tail back, so both bounds are `architectureConfig` levers.
+  it('claude_backgroundGraceMs shortens the tail a task-touching run pays', async () => {
+    script = holdThenGoQuietScript({ settle: true });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const { events, advancedMs } = await drainMeasuringClock(
+      adapter.execute(
+        createTestParams({ streamingInput: true, architectureConfig: { claude_backgroundGraceMs: 1_000 } }),
+      ),
+    );
+
+    expect(events.some((e) => e.type === 'result')).toBe(true);
+    expect(advancedMs, 'the run must end on the configured window, not the 15s default').toBeLessThan(
+      BACKGROUND_WAKEUP_GRACE_MS,
+    );
+  });
+
+  it('falls back to the measured default when the lever is given a nonsense value', async () => {
+    // A `0` or a negative would disarm a bound whose whole job is keeping the control
+    // channel open, so a bad value must degrade to the default, never to "no bound".
+    script = holdThenGoQuietScript({ settle: true });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const { events, advancedMs } = await drainMeasuringClock(
+      adapter.execute(
+        createTestParams({ streamingInput: true, architectureConfig: { claude_backgroundGraceMs: 0 } }),
+      ),
+    );
+
+    expect(events.some((e) => e.type === 'result')).toBe(true);
+    expect(advancedMs).toBeGreaterThanOrEqual(BACKGROUND_WAKEUP_GRACE_MS);
+  });
+
+  it('claude_backgroundHoldCapMs bounds work that never settles', async () => {
+    script = holdThenGoQuietScript({ settle: false });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const { events, advancedMs } = await drainMeasuringClock(
+      adapter.execute(
+        createTestParams({ streamingInput: true, architectureConfig: { claude_backgroundHoldCapMs: 6_000 } }),
+      ),
+    );
+
+    expect(events.find((e) => e.type === 'warning' && /still in flight after 6000ms/.test(e.message))).toBeDefined();
+    expect(advancedMs).toBeLessThan(MAX_BACKGROUND_HOLD_MS);
   });
 });
 

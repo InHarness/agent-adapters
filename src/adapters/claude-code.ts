@@ -25,8 +25,6 @@ import type {
   ElicitationRequest,
   ElicitationResponse,
   ImageInput,
-  BackgroundTaskType,
-  BackgroundTaskRef,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
@@ -37,6 +35,13 @@ import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } fr
 import { ensureUsableStdin } from '../stdin-guard.js';
 import { validateSubagents } from '../subagents.js';
 import { probePathScope, getClaudeSandboxConfig } from '../path-scope.js';
+import {
+  createTaskRegistry,
+  createBackgroundHold,
+  projectBackgroundTasks,
+  BACKGROUND_WAKEUP_GRACE_MS,
+  MAX_BACKGROUND_HOLD_MS,
+} from './claude-code.background-hold.js';
 
 // Re-export generic MCP builder from the library
 export { createMcpServer, mcpTool } from '../mcp.js';
@@ -476,84 +481,32 @@ function createInputChannel(seed: SDKUserMessage): InputChannel {
   };
 }
 
+/**
+ * Read a millisecond knob off `architectureConfig`, falling back to the built-in
+ * default. Only a finite number above zero is honoured — a `0`, a negative, or a
+ * string would disarm or corrupt a bound whose whole job is to keep the control
+ * channel open, so a bad value degrades to the measured default rather than to
+ * "no protection".
+ */
+function positiveMsOption(raw: unknown, fallback: number): number {
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+
 // --- Background tasks (M17) ---
-
-/**
- * SDK `task_type` values that mean *engine-backgrounded side work* rather than a
- * spawned helper agent, mapped onto the unified {@link BackgroundTaskType}.
- * Anything absent from this table — including an absent `task_type` — keeps the
- * `subagent_*` path, so an SDK that stops sending the discriminator degrades to
- * the pre-M17 shape instead of misrouting real subagents.
- */
-const BACKGROUND_TASK_TYPES: Record<string, BackgroundTaskType> = {
-  bash: 'shell',
-  shell: 'shell',
-  monitor: 'monitor',
-  workflow: 'workflow',
-};
-
-/**
- * Observed live on 0.3.153: a `run_in_background` Bash command reports
- * `task_type: 'local_bash'` — the SDK prefixes locally-executed kinds with
- * `local_` (`local_workflow` is documented alongside `workflow_name`). The
- * prefix is stripped before lookup so both spellings land on the same unified
- * kind.
- */
-function classifyTaskType(raw: unknown): { taskType: BackgroundTaskType; isBackground: boolean } {
-  const key = typeof raw === 'string' ? raw : '';
-  const mapped = BACKGROUND_TASK_TYPES[key] ?? BACKGROUND_TASK_TYPES[key.replace(/^local_/, '')];
-  if (mapped) return { taskType: mapped, isBackground: true };
-  return { taskType: key || 'subagent', isBackground: false };
-}
-
-/**
- * Is this message the MAIN model producing again? Used while the session is held
- * open: it is the difference between "the engine took the wake-up and a turn is
- * running" and "still parked". Subagent traffic (`parent_tool_use_id` set) does not
- * count — a helper agent talking after its parent's turn has ended is what the held
- * state looks like, not a resumption of it. `result` is excluded deliberately: it
- * ends a turn rather than showing one in progress, and has its own handling.
- */
-function isMainModelActivity(event: SDKMessage): boolean {
-  if (
-    event.type !== 'assistant' &&
-    event.type !== 'stream_event' &&
-    event.type !== 'user' &&
-    event.type !== 'tool_use_summary'
-  ) {
-    return false;
-  }
-  return ((event as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null) === null;
-}
-
-/**
- * How long the adapter keeps the input/control channel open once everything it
- * tracks has settled, waiting for the engine to resume the model.
- *
- * SIZED FROM MEASUREMENT, not from taste. What it has to cover is the wall-clock
- * gap between the last task settling and the first frame of the continuation turn —
- * the engine has to post the whole conversation and wait for the model's first
- * token. Measured (A01): 3.5s and 3.7s on 0.3.210 with `includePartialMessages`,
- * 5.0s on 0.3.153 without. The previous 5s therefore had no margin at all: expiry
- * mid-wake-up closes the control transport, which is the exact defect this module
- * exists to prevent. 15s is ~4× the worst observed.
- *
- * The cost is bounded dead time at the END of a run that touched a task — paid
- * after the consumer already has its `result`, and only until the generator
- * reaches `done`. Expiry is silent: it is where a run whose work is finished ends,
- * not a truncation.
- */
-export const BACKGROUND_WAKEUP_GRACE_MS = 15_000;
-
-/**
- * Hard cap on the hold, measured from the engine's last sign of life. Bounds the
- * case the grace window cannot see: work that never settles at all (a backgrounded
- * `sleep 3600`). Without it, holding the channel would hand this run's lifetime to
- * the engine indefinitely. Because it measures SILENCE it cannot fire under a live
- * engine; on expiry the run ends exactly as it did before the hold existed — plus a
- * `warning`, so a genuine truncation is visible rather than silent.
- */
-export const MAX_BACKGROUND_HOLD_MS = 120_000;
+//
+// The task registry, the `result.backgroundTasks` projection and the bounded
+// control-channel hold live in `./claude-code.background-hold.js` — a self-contained
+// state machine rather than a step of the run. Re-exported here because this module
+// is the adapter's public face and the two bounds are part of its documented surface.
+export {
+  BACKGROUND_WAKEUP_GRACE_MS,
+  MAX_BACKGROUND_HOLD_MS,
+  classifyTaskType,
+  createTaskRegistry,
+  createBackgroundHold,
+  projectBackgroundTasks,
+} from './claude-code.background-hold.js';
+export type { TaskKind, TaskRegistry, BackgroundHold } from './claude-code.background-hold.js';
 
 // --- Adapter ---
 
@@ -854,6 +807,18 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     const pendingUserInputs: PendingUserInput[] = [];
     let userInputWaker: (() => void) | null = null;
 
+    /**
+     * Settle a pending request without an answer. `'cancel'` and `'decline'` are the
+     * two shapes both response types share, so one call site covers both variants —
+     * TypeScript will not narrow the union's `resolveResponse` down to a common
+     * signature on its own, and writing the branch out inline meant three copies of
+     * an if/else whose arms were character-for-character identical.
+     */
+    const settleUnanswered = (p: PendingUserInput, action: 'cancel' | 'decline'): void => {
+      if (p.kind === 'model-tool') p.resolveResponse({ action });
+      else p.resolveResponse({ action });
+    };
+
     // Settles when this run is aborted (explicitly or by `timeoutMs`). Raced
     // against everything the loop can park on — the SDK's next message and the
     // consumer's user-input handler — so abort() is enforceable even when the
@@ -997,24 +962,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // (`task_type`) — `task_progress` / `task_notification` carry just the id.
     // So the kind is captured once here and every later message for that id is
     // routed through it: subagent kinds → `subagent_*` (M06), shell/monitor/
-    // workflow → `background_task_*` (M17). Entries are never deleted; a
-    // notification arriving after settlement must still route correctly.
-    const taskKindById = new Map<string, { taskType: BackgroundTaskType; isBackground: boolean; description: string }>();
-    // Ids started but not yet settled by their `task_notification`. Non-empty at a
-    // turn's `result` means the engine is holding the session for work still in
-    // flight — see the end-of-turn policy in `case 'result'`.
-    //
-    // Settlement is the NOTIFICATION, never the task's `tool_result`: the Agent and
-    // backgrounded-Bash tools both return their tool_result at dispatch, while the
-    // work runs on (observed live — three Agent tool_results land within a second,
-    // their notifications 7–19 seconds later, each one waking the model for another
-    // turn).
-    const inFlightTaskIds = new Set<string>();
-    // Ids the engine has reported as finished via `task_updated` but not yet
-    // notified. This is the difference between "still working" and "done, wake-up
-    // pending": with every in-flight task already finished, at most a wake-up is
-    // owed, so the short grace window applies instead of the long hard cap.
-    const finishedTaskIds = new Set<string>();
+    // workflow → `background_task_*` (M17). See ./claude-code.background-hold.ts
+    // for the settlement invariant this registry enforces.
+    const tasks = createTaskRegistry();
     // Track task-tracking tool_use IDs (TodoWrite or the TaskCreate/TaskGet/
     // TaskUpdate/TaskList family) so we can suppress their matching tool_result
     // (both the UnifiedEvent and the ContentBlock in rawMessages). That
@@ -1153,16 +1103,18 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // the subagent shape.
     //
     // HOW LONG to hold is ours to bound either way, because neither source says
-    // whether the engine will ever come back. Two bounds, and neither may fire while
-    // the model is actually producing: a short grace once everything has settled
-    // (re-armed by every frame, so it measures silence — an engine that is still
-    // talking is not a stuck one), and an absolute cap on the parked stretch,
-    // released the instant a continuation turn starts.
-    let holdingForBackgroundWork = false;
-    let wakeGraceTimer: ReturnType<typeof setTimeout> | undefined;
-    let holdCapTimer: ReturnType<typeof setTimeout> | undefined;
-    /** Warnings raised off the loop (timer callbacks) — drained at the loop top. */
-    const pendingWarnings: string[] = [];
+    // whether the engine will ever come back — the two bounds and the rules that
+    // decide between them live in ./claude-code.background-hold.ts.
+    const hold = createBackgroundHold({
+      registry: tasks,
+      closeChannel: () => inputChannel.close(),
+      wake: () => {
+        userInputWaker?.();
+        userInputWaker = null;
+      },
+      graceMs: positiveMsOption(config.claude_backgroundGraceMs, BACKGROUND_WAKEUP_GRACE_MS),
+      capMs: positiveMsOption(config.claude_backgroundHoldCapMs, MAX_BACKGROUND_HOLD_MS),
+    });
 
     /**
      * The most recent `Stop`-hook report, consumed and cleared by the next `result`.
@@ -1198,105 +1150,6 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         ],
       } as Options['hooks'];
     }
-
-    const clearHoldTimers = () => {
-      if (wakeGraceTimer) clearTimeout(wakeGraceTimer);
-      if (holdCapTimer) clearTimeout(holdCapTimer);
-      wakeGraceTimer = undefined;
-      holdCapTimer = undefined;
-    };
-
-    /**
-     * A bound expired: close the channel and wake the loop. `message` is passed only
-     * by the hard cap. Grace expiry is SILENT — settled work plus a quiet engine is
-     * the normal end of a task-touching run, not a truncation; it closes the channel
-     * exactly where the pre-hold code closed it, at `result`. Warning there told
-     * every healthy run that its work "did not run".
-     */
-    const expireHold = (message?: string) => {
-      clearHoldTimers();
-      if (!holdingForBackgroundWork) return;
-      holdingForBackgroundWork = false;
-      if (message) pendingWarnings.push(message);
-      inputChannel.close();
-      userInputWaker?.();
-      userInputWaker = null;
-    };
-
-    /**
-     * True when nothing tracked is still executing: every in-flight task has already
-     * reported itself finished (via `task_updated`), so the only thing that can still
-     * arrive is a wake-up. That is the grace window's job; the long cap is for work
-     * that is genuinely still running.
-     */
-    const noWorkLeftRunning = () => [...inFlightTaskIds].every((id) => finishedTaskIds.has(id));
-
-    /**
-     * Re-decide the SHORT bound for the parked state. Armed only once everything has
-     * settled, because then the sole outstanding thing is a wake-up; while work is
-     * still running the wake-up may be minutes away and the cap alone bounds it.
-     *
-     * Re-armed from every frame that arrives while parked, so it measures SILENCE
-     * rather than elapsed time — the previous version disarmed on any SDK message and
-     * let only `task_*` events re-arm, so one stray frame (`system/status`,
-     * `system/background_tasks_changed` — both real) killed the short bound outright.
-     */
-    const parkHold = () => {
-      if (!holdingForBackgroundWork) return;
-      if (wakeGraceTimer) clearTimeout(wakeGraceTimer);
-      wakeGraceTimer = noWorkLeftRunning()
-        ? setTimeout(() => expireHold(), BACKGROUND_WAKEUP_GRACE_MS)
-        : undefined;
-    };
-
-    const beginHold = () => {
-      holdingForBackgroundWork = true;
-      // The outer bound on this parked stretch. Absolute rather than inactivity-based,
-      // because the engine does emit periodic frames while it babysits a long task, and
-      // an inactivity cap would let a backgrounded `sleep 3600` hand this run's whole
-      // lifetime to the engine. It is safe to make it absolute only because endHold()
-      // releases it the moment the model is producing again (see touchHold) — the
-      // previous version never released it, and cut live resumed runs off mid-turn.
-      if (holdCapTimer) clearTimeout(holdCapTimer);
-      holdCapTimer = setTimeout(
-        () =>
-          expireHold(
-            `claude-code: background work still in flight after ${MAX_BACKGROUND_HOLD_MS}ms — ` +
-              'closing the session. Any remaining background task is abandoned and its ' +
-              'completion will not be reported.',
-          ),
-        MAX_BACKGROUND_HOLD_MS,
-      );
-      parkHold();
-    };
-
-    const endHold = () => {
-      clearHoldTimers();
-      holdingForBackgroundWork = false;
-    };
-
-    /**
-     * A message arrived while the hold was on. Which of the two cases it is decides
-     * whether a bound may run at all:
-     *
-     *  - the MAIN model is producing again → the engine took the wake-up and a
-     *    continuation turn now owns the channel. Drop the hold and let that turn's
-     *    `result` decide afresh. No bound may tick here: a turn is legitimately
-     *    silent for as long as its slowest tool call, and a timer firing mid-turn
-     *    would close the control transport — the original defect, re-created.
-     *    (An engine that then never finishes the turn hangs the run, exactly as it
-     *    would for any ordinary turn; `timeoutMs`/`abort()` are the lever — M13.)
-     *  - anything else — task lifecycle frames, subagent chatter (`parent_tool_use_id`
-     *    set: a helper talking after its parent turn ended is the held state, not a
-     *    resumption of it) → still parked, so re-arm. This is what makes the bounds
-     *    measure silence; previously any stray frame disarmed the grace with nothing
-     *    left to restore it.
-     */
-    const touchHold = (event: SDKMessage) => {
-      if (!holdingForBackgroundWork) return;
-      if (isMainModelActivity(event)) endHold();
-      else parkHold();
-    };
 
     let q: Query;
     try {
@@ -1355,11 +1208,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           }
           if (!effectiveUserInputHandler) {
             // Defensive: bridges are only registered when a handler exists.
-            if (pending.kind === 'mcp-elicitation') {
-              pending.resolveResponse({ action: 'decline' });
-            } else {
-              pending.resolveResponse({ action: 'decline' });
-            }
+            settleUnanswered(pending, 'decline');
             continue;
           }
           try {
@@ -1374,12 +1223,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             ]);
             if (outcome.kind === 'abort') {
               // Settle the SDK-side promise so the callback doesn't leak, and
-              // decline everything still queued behind it. (The two branches are
-              // identical in payload but not in type — same shape as the catch
-              // block below.)
+              // cancel everything still queued behind it.
               for (const stale of [pending, ...pendingUserInputs.splice(0)]) {
-                if (stale.kind === 'model-tool') stale.resolveResponse({ action: 'cancel' });
-                else stale.resolveResponse({ action: 'cancel' });
+                settleUnanswered(stale, 'cancel');
               }
               yield {
                 type: 'error',
@@ -1404,11 +1250,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               });
             }
           } catch (err) {
-            if (pending.kind === 'model-tool') {
-              pending.resolveResponse({ action: 'cancel' });
-            } else {
-              pending.resolveResponse({ action: 'cancel' });
-            }
+            settleUnanswered(pending, 'cancel');
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           }
         }
@@ -1427,8 +1269,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         }
 
         // Drain warnings raised off-loop (hold-bound expiry).
-        while (pendingWarnings.length > 0) {
-          yield { type: 'warning', message: pendingWarnings.shift()! };
+        for (const message of hold.drainWarnings()) {
+          yield { type: 'warning', message };
         }
 
         if (!pendingNext) pendingNext = sdkIterator.next();
@@ -1467,8 +1309,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         const event = winner.value.value;
         // Session is demonstrably alive — re-decide which bound applies, if any.
         // Runs BEFORE the switch, so state this message is about to change (a task
-        // settling, say) is re-evaluated by that branch's own touchHold() call.
-        touchHold(event);
+        // settling, say) is re-evaluated by that branch's own hold.touch() call.
+        hold.touch(event);
 
         if (this.abortController.signal.aborted) {
           if (timedOut) {
@@ -1685,12 +1527,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const taskId = e.task_id as string;
               const toolUseId = (e.tool_use_id as string) ?? '';
               const description = (e.description as string) ?? '';
-              const kind = classifyTaskType(e.task_type);
-              taskKindById.set(taskId, { ...kind, description });
-              // Both kinds can hold the session past the turn's `result` — three
-              // subagents settling one by one, each waking the model, is exactly
-              // the shape the consumer reported — so both are tracked.
-              inFlightTaskIds.add(taskId);
+              const kind = tasks.start(taskId, e.task_type, description);
               if (kind.isBackground) {
                 yield {
                   type: 'background_task_started',
@@ -1705,7 +1542,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             } else if (subtype === 'task_progress') {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
-              const kind = taskKindById.get(taskId);
+              const kind = tasks.kind(taskId);
               if (kind?.isBackground) {
                 yield {
                   type: 'background_task_progress',
@@ -1726,9 +1563,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             } else if (subtype === 'task_notification') {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
-              const kind = taskKindById.get(taskId);
-              inFlightTaskIds.delete(taskId);
-              finishedTaskIds.delete(taskId);
+              const kind = tasks.kind(taskId);
+              tasks.settle(taskId);
               if (kind?.isBackground) {
                 yield {
                   type: 'background_task_completed',
@@ -1751,7 +1587,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               }
               // The in-flight set just shrank, so the bound may have changed from the
               // long cap to the short grace — re-park on whichever now applies.
-              touchHold(event);
+              hold.touch(event);
             } else if (subtype === 'task_updated') {
               // The engine's own "this task finished" patch, which arrives BEFORE
               // the corresponding notification (observed live). No event of its own
@@ -1762,8 +1598,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const taskId = e.task_id as string;
               const status = (e.patch as Record<string, unknown> | undefined)?.status;
               if (typeof status === 'string' && /^(completed|failed|stopped|cancell?ed)$/.test(status)) {
-                finishedTaskIds.add(taskId);
-                touchHold(event);
+                tasks.markFinished(taskId);
+                hold.touch(event);
               }
             } else if (subtype === 'compact_boundary') {
               yield { type: 'flush' };
@@ -1779,53 +1615,17 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             const stopHookReported = stopHookTasks;
             stopHookTasks = undefined;
 
-            // What `backgroundTasks` carries is BACKGROUND work — never a subagent.
-            // `types.ts` and M17 are explicit ("Never a subagent": real spawned helper
-            // agents keep the `subagent_*` family), and the field's documented meaning
-            // is "this result is not end-of-run". Subagents still hold the session —
-            // that is the hold's job above — but they are not this signal's content,
-            // so every source is filtered through `classifyTaskType()`.
-            const trackedInFlight: BackgroundTaskRef[] = [...inFlightTaskIds]
-              .filter((id) => taskKindById.get(id)?.isBackground === true)
-              .map((id) => {
-                const kind = taskKindById.get(id)!;
-                return {
-                  taskId: id,
-                  taskType: kind.taskType,
-                  ...(kind.description ? { description: kind.description } : {}),
-                };
-              });
-
             // The engine's own list, from whichever place this SDK publishes it: the
             // Stop hook today, `result.background_tasks` if a future SDK adds it there.
-            // Its `type` is a FRIENDLY LABEL, not the `task_type` discriminant — it is
-            // literally `'subagent'` for helper agents (sdk.d.ts BackgroundTaskSummary,
-            // measured on 0.3.210) — so it goes through the same classifier rather than
-            // being trusted as a `BackgroundTaskType`.
-            const engineReported = [
+            // The union of that and our own tracking, filtered to background work only,
+            // is `projectBackgroundTasks()` — see its JSDoc for why a subagent must
+            // never appear here even though it does hold the session.
+            const backgroundTasks = projectBackgroundTasks(tasks, [
               ...(Array.isArray(resultEvent.background_tasks)
                 ? (resultEvent.background_tasks as Record<string, unknown>[])
                 : []),
               ...(stopHookReported ?? []),
-            ] as Record<string, unknown>[];
-            const seenIds = new Set(trackedInFlight.map((t) => t.taskId));
-            const sdkReported: BackgroundTaskRef[] = [];
-            for (const t of engineReported) {
-              if (typeof t?.id !== 'string' || seenIds.has(t.id)) continue;
-              const kind = classifyTaskType(
-                // Prefer the tracked discriminant when we have one; the label is a
-                // fallback for work that never produced a `task_started` we saw.
-                taskKindById.get(t.id)?.taskType ?? (typeof t.type === 'string' ? t.type : undefined),
-              );
-              if (!kind.isBackground) continue;
-              seenIds.add(t.id);
-              sdkReported.push({
-                taskId: t.id,
-                taskType: kind.taskType,
-                ...(typeof t.description === 'string' ? { description: t.description } : {}),
-              });
-            }
-            const backgroundTasks = [...trackedInFlight, ...sdkReported];
+            ]);
 
             if (resultEvent.subtype === 'success') {
               const claudeUsage = normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 };
@@ -1901,18 +1701,18 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             //    transport when the channel closed at that first result.
             //
             // Settled work then gets the short grace window and work still running
-            // gets the long cap; both live in parkHold().
+            // gets the long cap; both live in the hold.
             const engineHoldsSession = (stopHookReported?.length ?? 0) > 0;
             if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
               // keep open: SDK consumes the next queued message as a new turn
-              endHold();
+              hold.end();
             } else if (
               resultEvent.subtype === 'success' &&
-              (engineHoldsSession || taskKindById.size > 0)
+              (engineHoldsSession || tasks.touchedATask())
             ) {
-              beginHold();
+              hold.begin();
             } else {
-              endHold();
+              hold.end();
               inputChannel.close();
             }
             break;
@@ -1921,6 +1721,15 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           default:
             break;
         }
+      }
+
+      // The loop exits the instant the SDK iterator reports `done`, which is exactly
+      // what an expiring bound provokes — it closes the channel, the SDK ends, and
+      // the race can resolve `done` before control returns to the drain at the loop
+      // top. Draining once more here is what keeps the cap's truncation warning from
+      // being swallowed by the very shutdown it caused.
+      for (const message of hold.drainWarnings()) {
+        yield { type: 'warning', message };
       }
     } catch (err) {
       if (this.abortController.signal.aborted) {
@@ -1939,7 +1748,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // left awaiting input.
       this.pushHandler = null;
       this.closeInputChannel = null;
-      clearHoldTimers();
+      hold.dispose();
       inputChannel.close();
       await materialized?.cleanup().catch((err) =>
         console.warn('[agent-adapters] claude-code skill cleanup failed', err),
