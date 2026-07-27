@@ -63,14 +63,21 @@ async function importAdapter() {
 }
 
 describe('claude-code streaming-input mode', () => {
-  it('one-shot regression: string prompt, single result, no channel', async () => {
+  // The one-shot CONTRACT is one result + no pushes, not a particular wire
+  // shape. Every run now rides the input channel — a string prompt would make
+  // the SDK close the CLI's stdin at the first result, taking the control
+  // transport with it (see the background-task hold in claude-code.ts). What
+  // `streamingInput: false` still guarantees is asserted here.
+  it('one-shot regression: single result, no pushes, terminates', async () => {
     const ClaudeCodeAdapter = await importAdapter();
     const adapter = new ClaudeCodeAdapter();
     const events = await collectEvents(
       adapter.execute(createTestParams({ model: 'sonnet-4.6' })),
     );
 
-    expect(typeof capturedPrompt).toBe('string');
+    // Channel path, but seeded-and-closed-at-result: the fake SDK's for-await
+    // ends after exactly one turn, proving the adapter closed it.
+    expect(typeof capturedPrompt).toBe('object');
     const results = events.filter((e) => e.type === 'result');
     expect(results).toHaveLength(1);
     expect(events.some((e) => e.type === 'user_message')).toBe(false);

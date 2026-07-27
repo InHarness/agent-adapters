@@ -375,9 +375,13 @@ export function assertNoStreamClosed(events: UnifiedEvent[]): void {
     if (e.type === 'error') return /stream closed/i.test(e.error.message);
     return false;
   });
+  // The event ORDER is the diagnosis, not a nicety: this failure is about when the
+  // control transport died relative to the run's `result`(s) and its task settlements,
+  // and that cannot be recovered from the offending tool_results alone.
   expect(
     offenders,
-    `expected no "Stream closed" control-transport failure, got ${JSON.stringify(offenders)}`,
+    `expected no "Stream closed" control-transport failure, got ${JSON.stringify(offenders)}\n` +
+      `sequence: ${events.map((e) => e.type).join(' → ')}`,
   ).toHaveLength(0);
 }
 

@@ -1,8 +1,27 @@
 # PLAN — streaming-input: stdin closes while the session is still live
 
-**Status:** tests first. Phase 1 (this plan's deliverable) writes tests that *demonstrate* the bug
-on `main`. Phase 2 fixes it and flips the same tests green. No `src/adapters/` change lands in
-Phase 1.
+> **STATUS: DONE — shipped in 0.10.0 on this branch.** What actually shipped, and how it differs
+> from every earlier draft below:
+>
+> 1. **Every run rides the input channel**, not just `streamingInput` ones — a string prompt makes
+>    the SDK close the CLI's stdin itself at the first `result` (`isSingleUserTurn`), which the
+>    adapter cannot prevent from the outside. `streamingInput` now gates `pushMessage()` alone.
+> 2. **The channel outlives a `result` in any run that touched a task**, bounded by a 5s grace
+>    window (everything tracked has settled) and a 120s hard cap (work still running), each ending
+>    the run with a `warning`. The condition is *not* "work in flight": on 0.3.210 three subagents
+>    completed inside the turn and the engine still resumed the model three more times.
+> 3. **`abort()` races the consumer's `onUserInput`**, so a parked run can be reclaimed.
+> 4. **M17 shipped with it**: `background_task_*` routed by `task_type` (`local_bash`, not `shell`),
+>    `result.backgroundTasks`, and the `claude_disallowBackgroundBash` lever.
+>
+> Two claims in the older text below are wrong and were corrected by live evidence: settling a task
+> on its `tool_result` (the Agent tool returns at dispatch, not completion), and reading
+> `background_tasks` off `SDKResultMessage` (the SDK puts it on the Stop hook input only). Results
+> and the probe evidence are in `PLAN-tests-stream-e2e.md` → RESULTS ROUND 3.
+
+**Status (historical):** tests first. Phase 1 (this plan's deliverable) writes tests that
+*demonstrate* the bug on `main`. Phase 2 fixes it and flips the same tests green. No `src/adapters/`
+change lands in Phase 1.
 
 > **UPDATE (live evidence) — the root cause stated below is WRONG. Read this first.**
 >

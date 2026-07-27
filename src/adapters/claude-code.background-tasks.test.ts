@@ -13,24 +13,24 @@
 // is non-empty the CLI holds the session open, pauses, and wakes the model on
 // `task_notification` — which then goes on to call tools, `AskUserQuestion` included.
 //
-// The adapter closes the channel on the first `result` unless a `pushMessage()` is
-// pending (src/adapters/claude-code.ts, `case 'result'`), and never looks at
-// `background_tasks` at all — so the wake-up runs against a dead control channel.
+// The adapter used to close the channel on the first `result` unless a
+// `pushMessage()` was pending (src/adapters/claude-code.ts, `case 'result'`). It now
+// also holds it while it tracks unsettled `task_*` ids — bounded by a post-settlement
+// grace window and a hard cap, both pinned below.
 //
 // Scope note — read before trusting this file. A mocked `query()` has no real stdin, so
 // nothing here can reproduce a closed transport: `canUseTool` is invoked directly and
 // always resolves. What this file pins is the adapter's channel LIFECYCLE. The
-// user-visible symptom is owned by the live e2e scenario in
-// src/testing/e2e/claude-code.e2e.test.ts, and live evidence there narrowed the actual
-// regression to the SDK's own `isSingleUserTurn` stdin close on the string-prompt path
-// (0.3.210 loses the post-`result` wake-up; 0.3.153 does not) — NOT to the early close
-// characterized below, which the streaming path survives on both versions.
+// user-visible symptom (`Tool permission request failed: … Stream closed`, reproduced
+// on every work shape and both prompt paths) is owned by the live e2e scenario in
+// src/testing/e2e/claude-code.e2e.test.ts.
 //
 // See PLAN-tests-stream-e2e.md (these tests) and PLAN-streamingn-input-fix.md (the fix).
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { collectEvents } from '../utils.js';
+import { BACKGROUND_WAKEUP_GRACE_MS, MAX_BACKGROUND_HOLD_MS } from './claude-code.js';
 import { createTestParams } from '../testing/helpers.js';
 import { AdapterAbortError } from '../types.js';
 import type { UnifiedEvent, UserInputRequest } from '../types.js';
@@ -100,6 +100,13 @@ interface ScenarioResult {
 async function runScenario(opts: {
   backgroundTasks: unknown[];
   wakeAndAsk: boolean;
+  /**
+   * Emit the `task_started` that registers `bg-1` as in flight. This — not the
+   * `background_tasks` list on `result`, which the pinned SDK does not send — is
+   * what the adapter tracks; the list is carried alongside so a future SDK that
+   * does send it stays covered.
+   */
+  startTask?: boolean;
 }): Promise<ScenarioResult> {
   let inputDoneAfterResult: boolean | null = null;
   let pendingPull: Promise<IteratorResult<unknown>> | null = null;
@@ -108,6 +115,16 @@ async function runScenario(opts: {
   script = async function* ({ prompt, options }) {
     const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
     await input.next(); // the seeded prompt message
+
+    if (opts.startTask) {
+      yield {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'bg-1',
+        task_type: 'shell',
+        description: 'sleep 12',
+      } as unknown as SDKMessage;
+    }
 
     yield resultMessage({ background_tasks: opts.backgroundTasks });
 
@@ -184,30 +201,23 @@ async function runScenario(opts: {
 }
 
 describe('claude-code streaming input — background-task session hold', () => {
-  // CHARACTERIZATION, not a defect assertion. This documents what the adapter does
-  // today: it closes the channel at `result` even when the engine reports work still
-  // in flight, and never reads `background_tasks`.
-  //
-  // Deliberately NOT written as "must stay open". Live e2e evidence (see the scenario
-  // in src/testing/e2e/claude-code.e2e.test.ts) shows the streaming path survives this
-  // early close on both @anthropic-ai/claude-agent-sdk 0.3.153 and 0.3.210 — the model
-  // is still woken and can still ask. So the early close is a latent hazard, not a
-  // proven cause of the reported `AbortError: Stream closed`, and asserting an
-  // invariant the evidence does not support would be dishonest.
-  //
-  // If the fix in PLAN-streamingn-input-fix.md makes the keep-open condition read
-  // `background_tasks`, this expectation flips to `false` and the comment goes with it.
-  it('currently closes the input channel at `result` even with background work in flight', async () => {
+  // THE invariant (M17). In production this pull is the SDK's own read of our
+  // iterable and `done` means `stdin.end()` on the CLI process — which also ends
+  // the control protocol multiplexed onto that stdin, so the woken model's
+  // AskUserQuestion is denied inside the CLI with nothing but a `Stream closed`
+  // tool result to show for it. Live evidence in PLAN-tests-stream-e2e.md.
+  it('keeps the input channel open at `result` while background work is in flight', async () => {
     const { inputDoneAfterResult } = await runScenario({
       backgroundTasks: BACKGROUND_TASK_RUNNING,
       wakeAndAsk: true,
+      startTask: true,
     });
 
     expect(
       inputDoneAfterResult,
-      'adapter behaviour changed: the channel is no longer closed at `result` while ' +
-        '`background_tasks` is non-empty — update this characterization test',
-    ).toBe(true);
+      'the channel must outlive a `result` that still has background work in flight — ' +
+        'closing it kills the engine\'s control transport while the session is alive',
+    ).toBe(false);
   });
 
   it('closes the input channel when no background work is in flight and no push is pending', async () => {
@@ -231,6 +241,7 @@ describe('claude-code streaming input — background-task session hold', () => {
     const { events, askRequests } = await runScenario({
       backgroundTasks: BACKGROUND_TASK_RUNNING,
       wakeAndAsk: true,
+      startTask: true,
     });
 
     const requests = events.filter((e) => e.type === 'user_input_request');
@@ -239,9 +250,242 @@ describe('claude-code streaming input — background-task session hold', () => {
     expect(askRequests[0].source).toBe('model-tool');
     expect(askRequests[0].questions[0].question).toBe('A or B?');
 
-    // The wake-up itself is surfaced (today as subagent_completed — task_type is
-    // dropped, tracked separately as a known gap in spec/adapters/A01-claude-code.md).
+    // The wake-up is surfaced on the background-task family, not as a subagent
+    // (routed by `task_type` — M17).
+    expect(events.some((e) => e.type === 'background_task_completed')).toBe(true);
+    expect(events.some((e) => e.type === 'subagent_completed')).toBe(false);
+  });
+});
+
+// --- Subagents settle on their tool_result, background work on its notification ---
+
+/**
+ * A Task subagent, optionally reporting back inside the turn. Both shapes are real:
+ * a subagent that finishes in-turn returns through its `tool_result` and never emits
+ * `task_notification`, while one that outlives the turn settles the other way. The
+ * adapter has to hold for the second without holding forever on the first.
+ */
+function subagentScript(opts: { finishBeforeResult: boolean }): Script {
+  return async function* ({ prompt }) {
+    const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+    await input.next();
+
+    yield {
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'sub-1',
+      task_type: 'local_agent',
+      tool_use_id: 'toolu_task',
+      description: 'review the diff',
+    } as unknown as SDKMessage;
+
+    // The Agent tool's own tool_result lands at DISPATCH, not at completion — the
+    // subagent runs on afterwards. Included because it must NOT be read as a settle.
+    yield {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_task', content: 'launched' }],
+      },
+    } as unknown as SDKMessage;
+
+    if (opts.finishBeforeResult) {
+      yield {
+        type: 'system',
+        subtype: 'task_updated',
+        task_id: 'sub-1',
+        patch: { status: 'completed', end_time: 1 },
+      } as unknown as SDKMessage;
+    }
+
+    yield resultMessage();
+
+    const pull = input.next();
+    if (!opts.finishBeforeResult) {
+      // Settles late, then wakes the model — the shape the bug report showed.
+      yield {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'sub-1',
+        status: 'completed',
+      } as unknown as SDKMessage;
+      yield resultMessage();
+    }
+    await pull;
+  };
+}
+
+describe('claude-code — subagent tasks and the hold', () => {
+  it('a subagent still outstanding at `result` holds the channel until it settles', async () => {
+    script = subagentScript({ finishBeforeResult: false });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const events = await collectEvents(
+      new ClaudeCodeAdapter().execute(createTestParams({ streamingInput: true })),
+      10_000,
+    );
+
+    const first = events.find((e) => e.type === 'result');
+    expect(
+      first && 'backgroundTasks' in first ? first.backgroundTasks : undefined,
+      'the dispatch-time tool_result must not be mistaken for the subagent finishing',
+    ).toEqual([{ taskId: 'sub-1', taskType: 'local_agent', description: 'review the diff' }]);
+    // The continuation turn ran, which is only possible if the channel stayed open.
+    expect(events.filter((e) => e.type === 'result')).toHaveLength(2);
     expect(events.some((e) => e.type === 'subagent_completed')).toBe(true);
+  });
+});
+
+// --- The hold is bounded ---
+
+/**
+ * Hold the channel for one backgrounded task, then go quiet: either the task
+ * settles and the engine never wakes the model (`settle: true` → the grace
+ * window decides), or it never settles at all (`settle: false` → the hard cap
+ * decides). Both are the shapes that would otherwise turn the hold into a hang.
+ */
+function holdThenGoQuietScript(opts: { settle: boolean }): Script {
+  return async function* ({ prompt }) {
+    const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+    await input.next();
+
+    yield {
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'bg-1',
+      task_type: 'shell',
+      description: 'sleep 3600',
+    } as unknown as SDKMessage;
+    yield resultMessage();
+
+    // The SDK's read of our iterable. Stays pending while the adapter holds the
+    // channel; resolves `done` the moment a bound expires and it closes — which
+    // is `stdin.end()` in production, and ends this generator exactly as the real
+    // SDK's `for await` would.
+    const pull = input.next();
+
+    if (opts.settle) {
+      yield {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'bg-1',
+        status: 'completed',
+      } as unknown as SDKMessage;
+    }
+
+    await pull;
+  };
+}
+
+/**
+ * Drain under fake timers. Two reasons this is hand-rolled: `collectEvents` arms
+ * its own `setTimeout`, which the fake clock would trip; and the clock may only
+ * be advanced once the run is actually parked on a hold timer — advancing it up
+ * front (before `execute()` has even imported the SDK) fires nothing and the run
+ * then waits forever on a timer armed after the advance. So: pull, let the run
+ * progress on its own, and only push the clock while the pull is still pending.
+ */
+async function drainWithClock(stream: AsyncIterable<UnifiedEvent>): Promise<UnifiedEvent[]> {
+  const STEP_MS = 1_000;
+  const CEILING_MS = MAX_BACKGROUND_HOLD_MS + BACKGROUND_WAKEUP_GRACE_MS + 5_000;
+  const iterator = stream[Symbol.asyncIterator]();
+  const events: UnifiedEvent[] = [];
+
+  for (;;) {
+    let settled = false;
+    const pull = iterator.next().then((r) => {
+      settled = true;
+      return r;
+    });
+    for (let waited = 0; !settled && waited <= CEILING_MS; waited += STEP_MS) {
+      await vi.advanceTimersByTimeAsync(STEP_MS);
+    }
+    const next = await pull;
+    if (next.done) return events;
+    events.push(next.value);
+  }
+}
+
+describe('claude-code — the background-task hold is bounded', () => {
+  beforeEach(() => {
+    // Only timers: the harness leans on real setImmediate for its macrotask
+    // deferrals, and faking those would deadlock the mock rather than test it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('closes the hold when the settled task never wakes the model', async () => {
+    script = holdThenGoQuietScript({ settle: true });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const events = await drainWithClock(adapter.execute(createTestParams({ streamingInput: true })));
+
+    const warning = events.find((e) => e.type === 'warning' && /did not resume the model/.test(e.message));
+    expect(warning, 'the truncation must be announced, not silent').toBeDefined();
+    expect(events.some((e) => e.type === 'background_task_completed')).toBe(true);
+  });
+
+  it('closes the hold at the hard cap when the task never settles', async () => {
+    script = holdThenGoQuietScript({ settle: false });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    // Nothing settles, so the grace window never arms — only the cap can end this.
+    const events = await drainWithClock(adapter.execute(createTestParams({ streamingInput: true })));
+
+    expect(
+      events.find((e) => e.type === 'warning' && /still in flight after/.test(e.message)),
+      'a task that never settles must hit the cap and say so',
+    ).toBeDefined();
+  });
+
+  it('reports in-flight work on the held result so consumers know it is not terminal', async () => {
+    script = holdThenGoQuietScript({ settle: false });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const events = await drainWithClock(adapter.execute(createTestParams({ streamingInput: true })));
+
+    const result = events.find((e) => e.type === 'result');
+    expect(result && 'backgroundTasks' in result ? result.backgroundTasks : undefined).toEqual([
+      { taskId: 'bg-1', taskType: 'shell', description: 'sleep 3600' },
+    ]);
+  });
+
+  it('a subagent that finished before the result ends on the short window, not the cap', async () => {
+    // The common subagent shape: the helpers report themselves done (`task_updated`)
+    // before the turn's result, and the engine then either wakes the model at once or
+    // never. Waiting out the two-minute cap for that is dead time on every such run —
+    // which is exactly what a first cut of this fix did.
+    script = subagentScript({ finishBeforeResult: true });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const events = await drainWithClock(adapter.execute(createTestParams({ streamingInput: true })));
+
+    expect(
+      events.find((e) => e.type === 'warning' && /did not resume the model/.test(e.message)),
+      'ending here is the grace window, not the hard cap',
+    ).toBeDefined();
+    expect(events.some((e) => e.type === 'warning' && /still in flight after/.test(e.message))).toBe(false);
+  });
+
+  it('abort() releases a held run without waiting for the bounds', async () => {
+    script = holdThenGoQuietScript({ settle: false });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const stream = adapter.execute(createTestParams({ streamingInput: true }));
+    const events: UnifiedEvent[] = [];
+    for await (const e of stream) {
+      events.push(e);
+      if (e.type === 'result') adapter.abort();
+    }
+
+    expect(events.some((e) => e.type === 'error' && e.error instanceof AdapterAbortError)).toBe(true);
+    expect(events.some((e) => e.type === 'warning' && /in flight after/.test(e.message))).toBe(false);
   });
 });
 
@@ -321,19 +565,15 @@ async function pumpUntilDone(
 }
 
 describe('claude-code — abort while a user-input request is outstanding', () => {
-  // KNOWN FAILING (`it.fails`) if the adapter cannot break out of a pending handler.
-  //
-  // The loop yields `user_input_request` and then does
-  // `await effectiveUserInputHandler(pending.req)`. Nothing in that await watches
-  // `abortController.signal`, and `abort()` only aborts the controller and closes the
-  // input channel — neither settles the host's promise. A host whose handler resolves
-  // on a human reply (the normal shape) therefore has no way to reclaim the session:
-  // it stays parked forever, holding its adapter and its SDK subprocess.
-  //
-  // This is also the only hypothesis so far that explains "restarting the app fixed
-  // it" — library logic does not heal on restart, but an in-memory session parked on
-  // an unresolved promise does.
-  it.fails('abort() terminates a run parked on an unanswered question', async () => {
+  // Was `it.fails` while the loop awaited the consumer's handler bare: nothing in
+  // that await watched `abortController.signal`, and `abort()` only aborts the
+  // controller and closes the input channel — neither settles the host's promise.
+  // A host whose handler resolves on a human reply (the normal shape) had no way
+  // to reclaim the session; it stayed parked forever, holding its adapter and its
+  // SDK subprocess. That is also the one hypothesis that explains a symptom
+  // healing on app restart. The handler is now raced against the abort signal
+  // (M13), so this is a plain assertion.
+  it('abort() terminates a run parked on an unanswered question', async () => {
     script = askOnceScript();
     const { ClaudeCodeAdapter } = await import('./claude-code.js');
     const adapter = new ClaudeCodeAdapter();

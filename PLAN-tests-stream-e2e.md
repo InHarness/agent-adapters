@@ -8,6 +8,39 @@ Run on a **worktree**, finished with a **draft PR — never merged**.
 
 ---
 
+## RESULTS ROUND 3 — fixed (release 0.10.0)
+
+The fix landed on this branch; the tests that proved the defect are now the tests that guard it.
+
+| work shape | prompt path | 0.3.153 (pin) | 0.3.210 |
+|---|---|---|---|
+| backgrounded bash | one-shot | pass ×3 runs | pass |
+| backgrounded bash | streaming | pass ×3 runs | pass |
+| subagents | one-shot | pass ×1, inconclusive ×2 | pass |
+| subagents | streaming | inconclusive ×3 | pass |
+
+Two things the fix had to learn from live probes, neither guessable from the type declarations:
+
+1. **A task's `tool_result` is not its completion.** The Agent tool and a `run_in_background` Bash
+   call both return their `tool_result` at *dispatch*: three Agent tool_results landed within a
+   second while their `task_notification`s arrived 7–19s later, each waking the model for another
+   turn. A first cut settled tasks on `tool_result` and put the reported failure straight back.
+2. **"Nothing in flight" ≠ "nothing coming".** On 0.3.210 three subagents reported completion
+   *inside* the turn and the engine still resumed the model for three further turns, asking a
+   question at the end. So the channel is held for a short grace window after **any** result in a run
+   that touched a task, not only while work is unsettled.
+
+Also observed and now relied on: backgrounded bash reports `task_type: 'local_bash'` (not `shell`);
+`task_updated` carries `patch.status: 'completed'` *before* the notification, which is what separates
+"still running" (long cap) from "done, wake-up pending" (short window); and `result.background_tasks`
+is always absent, so the in-flight set has to be adapter-side.
+
+**Pre-existing failure, not caused by this branch:** the `todo list` e2e scenario fails with
+`Reached maximum number of turns (3)` — the model burns a turn on `ToolSearch` discovery before
+`TodoWrite`. Verified by stashing the fix and re-running against `HEAD`: identical failure.
+
+---
+
 ## RESULTS ROUND 2 — the reported symptom IS reproducible
 
 `Tool permission request failed: Error: Stream closed` now reproduces locally, on the repo's own

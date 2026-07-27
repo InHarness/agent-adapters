@@ -25,6 +25,8 @@ import type {
   ElicitationRequest,
   ElicitationResponse,
   ImageInput,
+  BackgroundTaskType,
+  BackgroundTaskRef,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
@@ -425,6 +427,55 @@ function createInputChannel(seed: SDKUserMessage): InputChannel {
   };
 }
 
+// --- Background tasks (M17) ---
+
+/**
+ * SDK `task_type` values that mean *engine-backgrounded side work* rather than a
+ * spawned helper agent, mapped onto the unified {@link BackgroundTaskType}.
+ * Anything absent from this table — including an absent `task_type` — keeps the
+ * `subagent_*` path, so an SDK that stops sending the discriminator degrades to
+ * the pre-M17 shape instead of misrouting real subagents.
+ */
+const BACKGROUND_TASK_TYPES: Record<string, BackgroundTaskType> = {
+  bash: 'shell',
+  shell: 'shell',
+  monitor: 'monitor',
+  workflow: 'workflow',
+};
+
+/**
+ * Observed live on 0.3.153: a `run_in_background` Bash command reports
+ * `task_type: 'local_bash'` — the SDK prefixes locally-executed kinds with
+ * `local_` (`local_workflow` is documented alongside `workflow_name`). The
+ * prefix is stripped before lookup so both spellings land on the same unified
+ * kind.
+ */
+function classifyTaskType(raw: unknown): { taskType: BackgroundTaskType; isBackground: boolean } {
+  const key = typeof raw === 'string' ? raw : '';
+  const mapped = BACKGROUND_TASK_TYPES[key] ?? BACKGROUND_TASK_TYPES[key.replace(/^local_/, '')];
+  if (mapped) return { taskType: mapped, isBackground: true };
+  return { taskType: key || 'subagent', isBackground: false };
+}
+
+/**
+ * How long the adapter keeps the input/control channel open once everything it
+ * tracks has settled, waiting for the engine to resume the model. Measured
+ * live, a resumption lands in the same second as the `result` that preceded it,
+ * so this is generous; the cost of the window is paid at the END of any run
+ * that touched a task, which is why it is seconds and not tens of seconds.
+ */
+export const BACKGROUND_WAKEUP_GRACE_MS = 5_000;
+
+/**
+ * Hard cap on the whole hold, measured from the first `result` held open. Bounds
+ * the case the grace window cannot see: work that never settles at all (a
+ * backgrounded `sleep 3600`). Without it, holding the channel would hand this
+ * run's lifetime to the engine indefinitely. On expiry the run ends exactly as
+ * it did before the hold existed — plus a `warning`, so the truncation is
+ * visible rather than silent.
+ */
+export const MAX_BACKGROUND_HOLD_MS = 120_000;
+
 // --- Adapter ---
 
 export class ClaudeCodeAdapter implements RuntimeAdapter {
@@ -671,6 +722,39 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       }
     }
 
+    // Background-task disable lever (M17, L3). The SDK exposes no option to
+    // forbid backgrounding, so the lever is a PreToolUse hook denying any Bash
+    // call that asks for it. The deny reason tells the model what to do instead,
+    // so the command runs synchronously inside the turn rather than failing.
+    if (config.claude_disallowBackgroundBash === true) {
+      const existingHooks = (options.hooks ?? {}) as Record<string, unknown[]>;
+      options.hooks = {
+        ...existingHooks,
+        PreToolUse: [
+          ...(existingHooks.PreToolUse ?? []),
+          {
+            matcher: 'Bash',
+            hooks: [
+              async (input: unknown) => {
+                const toolInput = (input as { tool_input?: Record<string, unknown> }).tool_input;
+                if (toolInput?.run_in_background !== true) return { continue: true };
+                return {
+                  continue: true,
+                  hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'deny',
+                    permissionDecisionReason:
+                      'Background execution is disabled for this run (claude_disallowBackgroundBash). ' +
+                      'Re-run the command without run_in_background and wait for it to finish.',
+                  },
+                };
+              },
+            ],
+          },
+        ],
+      } as Options['hooks'];
+    }
+
     // User input — unified bridge covering two SDK-side channels:
     //  (a) AskUserQuestion tool (first-class model tool) via canUseTool
     //  (b) MCP elicitation (server-side side-channel) via options.onElicitation
@@ -690,6 +774,16 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         };
     const pendingUserInputs: PendingUserInput[] = [];
     let userInputWaker: (() => void) | null = null;
+
+    // Settles when this run is aborted (explicitly or by `timeoutMs`). Raced
+    // against everything the loop can park on — the SDK's next message and the
+    // consumer's user-input handler — so abort() is enforceable even when the
+    // other side never responds. Never rejects.
+    const abortSignal = this.abortController.signal;
+    const abortPromise = new Promise<'abort'>((resolve) => {
+      if (abortSignal.aborted) resolve('abort');
+      else abortSignal.addEventListener('abort', () => resolve('abort'), { once: true });
+    });
 
     // Streaming-input mode: messages accepted via pushMessage() that still need
     // a `user_message` event emitted into the loop. The push channel itself is
@@ -819,6 +913,29 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // parent_tool_use_id → task_id lookup. Populated on `system` subtype
     // `task_started`; read on every delta/tool event to resolve subagentTaskId.
     const subagentTaskIdByParentToolUseId = new Map<string, string>();
+    // The SDK multiplexes real subagents and engine-backgrounded side work onto
+    // ONE `task_*` channel, and only `task_started` carries the discriminator
+    // (`task_type`) — `task_progress` / `task_notification` carry just the id.
+    // So the kind is captured once here and every later message for that id is
+    // routed through it: subagent kinds → `subagent_*` (M06), shell/monitor/
+    // workflow → `background_task_*` (M17). Entries are never deleted; a
+    // notification arriving after settlement must still route correctly.
+    const taskKindById = new Map<string, { taskType: BackgroundTaskType; isBackground: boolean; description: string }>();
+    // Ids started but not yet settled by their `task_notification`. Non-empty at a
+    // turn's `result` means the engine is holding the session for work still in
+    // flight — see the end-of-turn policy in `case 'result'`.
+    //
+    // Settlement is the NOTIFICATION, never the task's `tool_result`: the Agent and
+    // backgrounded-Bash tools both return their tool_result at dispatch, while the
+    // work runs on (observed live — three Agent tool_results land within a second,
+    // their notifications 7–19 seconds later, each one waking the model for another
+    // turn).
+    const inFlightTaskIds = new Set<string>();
+    // Ids the engine has reported as finished via `task_updated` but not yet
+    // notified. This is the difference between "still working" and "done, wake-up
+    // pending": with every in-flight task already finished, at most a wake-up is
+    // owed, so the short grace window applies instead of the long hard cap.
+    const finishedTaskIds = new Set<string>();
     // Track task-tracking tool_use IDs (TodoWrite or the TaskCreate/TaskGet/
     // TaskUpdate/TaskList family) so we can suppress their matching tool_result
     // (both the UnifiedEvent and the ContentBlock in rawMessages). That
@@ -871,8 +988,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
     // Resolve attached images into Anthropic content blocks. query() accepts a
     // plain string or AsyncIterable<SDKUserMessage> — a string can't carry image
-    // blocks and a lone SDKUserMessage isn't accepted, so any images force the
-    // channel path (seeded then, when not streaming, closed immediately).
+    // blocks, which is one of the reasons every run rides the channel path
+    // (see the channel construction below).
     let imageBlocks: unknown[] | null = null;
     if (params.images?.length) {
       try {
@@ -888,16 +1005,25 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       ? [{ type: 'text', text: params.prompt }, ...imageBlocks]
       : params.prompt;
 
-    // Streaming-input mode: feed the SDK an open channel seeded with the prompt
-    // so pushMessage() can inject further user messages mid-conversation. When
-    // off (default), the prompt is a one-shot string — identical to before,
-    // unless images are present, which require the single-message channel.
-    let inputChannel: InputChannel | null = null;
+    // EVERY run is driven through the input channel — not only streaming-input
+    // ones. A plain string prompt makes the SDK mark the query single-turn and
+    // call `transport.endInput()` at the first `result` ("First result received
+    // for single-turn query, closing stdin"), which closes the CLI's stdin. The
+    // CLI is spawned with `--permission-prompt-tool stdio`, so its control
+    // protocol rides that same stdin: once closed, a permission/user-input
+    // request raised after the result — exactly what happens when the engine
+    // holds the session for background work and then wakes the model — is
+    // denied inside the CLI with no host round-trip ("Tool permission request
+    // failed: Stream closed"). Feeding an iterable keeps that decision ours, so
+    // the end-of-turn policy below (which honours in-flight background work)
+    // actually governs. `streamingInput` still gates pushMessage() alone; a
+    // one-shot run closes the channel at its result and terminates exactly as
+    // it did with a string prompt. See M11/M17.
+    const inputChannel: InputChannel = createInputChannel(buildUserMessage(seedContent));
+    this.closeInputChannel = () => inputChannel.close();
     if (params.streamingInput) {
-      inputChannel = createInputChannel(buildUserMessage(seedContent));
-      this.closeInputChannel = () => inputChannel!.close();
       this.pushHandler = (text: string, images?: ImageInput[]) => {
-        if (inputChannel!.closed) return false;
+        if (inputChannel.closed) return false;
         // Build image blocks BEFORE enqueueing: a bad image throws here, leaving
         // nothing half-delivered. base64/url need no I/O; `file` is read sync so
         // enqueue stays atomic w.r.t. the end-of-turn close check (see below).
@@ -905,20 +1031,105 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         const content: string | unknown[] = blocks
           ? [{ type: 'text', text }, ...blocks]
           : text;
-        inputChannel!.enqueue(buildUserMessage(content));
+        inputChannel.enqueue(buildUserMessage(content));
         pendingPushEmits.push({ text, images, timestamp: Date.now() });
         // Wake the main loop so the user_message event is emitted promptly.
         userInputWaker?.();
         userInputWaker = null;
         return true;
       };
-    } else if (imageBlocks) {
-      // One-shot with images: seed a channel with the single image-bearing
-      // message and close it immediately. The SDK pulls the seed then sees
-      // `done` — exactly one result, one-shot contract preserved. No pushHandler.
-      inputChannel = createInputChannel(buildUserMessage(seedContent));
-      inputChannel.close();
     }
+
+    // --- Background-task session hold (M17) ---
+    // The engine keeps the session alive past a turn's `result` while background
+    // work is in flight, then wakes the model. The adapter must keep ITS side of
+    // the transport open for that whole window: the CLI's control protocol
+    // (permission prompts, AskUserQuestion) is multiplexed onto the same stdin
+    // the input channel feeds, so closing the channel at `result` leaves the
+    // woken model unable to ask anything — the request is denied inside the CLI
+    // with no host round-trip and nothing on the stream but a `Stream closed`
+    // tool result.
+    //
+    // Holding hands this run's lifetime to the engine, so it is bounded twice:
+    // a grace window after the last task settles (the continuation turn must
+    // start within it) and a hard cap from the first held `result` (for work
+    // that never settles at all). Either expiry ends the run exactly as it would
+    // have ended without the hold, plus a `warning`.
+    let holdingForBackgroundWork = false;
+    let wakeGraceTimer: ReturnType<typeof setTimeout> | undefined;
+    let holdCapTimer: ReturnType<typeof setTimeout> | undefined;
+    /** Warnings raised off the loop (timer callbacks) — drained at the loop top. */
+    const pendingWarnings: string[] = [];
+
+    const clearHoldTimers = () => {
+      if (wakeGraceTimer) clearTimeout(wakeGraceTimer);
+      if (holdCapTimer) clearTimeout(holdCapTimer);
+      wakeGraceTimer = undefined;
+      holdCapTimer = undefined;
+    };
+
+    /** A bound expired: close the channel, surface why, and wake the loop. */
+    const expireHold = (message: string) => {
+      clearHoldTimers();
+      if (!holdingForBackgroundWork) return;
+      holdingForBackgroundWork = false;
+      pendingWarnings.push(message);
+      inputChannel.close();
+      userInputWaker?.();
+      userInputWaker = null;
+    };
+
+    const beginHold = () => {
+      holdingForBackgroundWork = true;
+      // Everything already finished and only wake-ups are outstanding → the short
+      // window decides, not the two-minute cap. This is the common subagent shape:
+      // the helpers report done before the turn's result, and the engine either
+      // wakes the model right away or never.
+      if (noWorkLeftRunning()) armWakeGrace();
+      if (!holdCapTimer) {
+        holdCapTimer = setTimeout(
+          () =>
+            expireHold(
+              `claude-code: background work still in flight after ${MAX_BACKGROUND_HOLD_MS}ms — ` +
+                'closing the session. Any remaining background task is abandoned and its ' +
+                'completion will not be reported.',
+            ),
+          MAX_BACKGROUND_HOLD_MS,
+        );
+      }
+    };
+
+    const endHold = () => {
+      clearHoldTimers();
+      holdingForBackgroundWork = false;
+    };
+
+    const armWakeGrace = () => {
+      if (wakeGraceTimer) clearTimeout(wakeGraceTimer);
+      wakeGraceTimer = setTimeout(
+        () =>
+          expireHold(
+            `claude-code: background work settled but the engine did not resume the model ` +
+              `within ${BACKGROUND_WAKEUP_GRACE_MS}ms — closing the session. Anything the model ` +
+              'was told to do after the task did not run.',
+          ),
+        BACKGROUND_WAKEUP_GRACE_MS,
+      );
+    };
+
+    /**
+     * True when nothing tracked is still executing: every in-flight task has already
+     * reported itself finished (via `task_updated`), so the only thing that can still
+     * arrive is a wake-up. That is the grace window's job; the long cap is for work
+     * that is genuinely still running.
+     */
+    const noWorkLeftRunning = () => [...inFlightTaskIds].every((id) => finishedTaskIds.has(id));
+
+    /** Any SDK message means the session is alive — the grace window resets. */
+    const clearWakeGrace = () => {
+      if (wakeGraceTimer) clearTimeout(wakeGraceTimer);
+      wakeGraceTimer = undefined;
+    };
 
     let q: Query;
     try {
@@ -940,7 +1151,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         yield { type: 'warning', message: versionCheck.message! };
       }
       q = query({
-        prompt: inputChannel ? inputChannel.iterable : params.prompt,
+        prompt: inputChannel.iterable,
         options,
       });
     } catch (err) {
@@ -985,7 +1196,34 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             continue;
           }
           try {
-            const res = await effectiveUserInputHandler(pending.req);
+            // Race the consumer's handler against abort. A host that answers
+            // from a UI resolves this promise only when a human replies — which
+            // may be never — so awaiting it bare makes abort()/timeoutMs
+            // unenforceable and parks the run (and its SDK subprocess) forever.
+            // See M13.
+            const outcome = await Promise.race([
+              effectiveUserInputHandler(pending.req).then((res) => ({ kind: 'answer' as const, res })),
+              abortPromise.then(() => ({ kind: 'abort' as const })),
+            ]);
+            if (outcome.kind === 'abort') {
+              // Settle the SDK-side promise so the callback doesn't leak, and
+              // decline everything still queued behind it. (The two branches are
+              // identical in payload but not in type — same shape as the catch
+              // block below.)
+              for (const stale of [pending, ...pendingUserInputs.splice(0)]) {
+                if (stale.kind === 'model-tool') stale.resolveResponse({ action: 'cancel' });
+                else stale.resolveResponse({ action: 'cancel' });
+              }
+              yield {
+                type: 'error',
+                error: timedOut
+                  ? new AdapterTimeoutError('claude-code', params.timeoutMs!)
+                  : new AdapterAbortError('claude-code'),
+                phase: 'runtime',
+              };
+              return;
+            }
+            const res = outcome.res;
             if (pending.kind === 'model-tool') {
               pending.resolveResponse(res);
             } else {
@@ -1021,15 +1259,23 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           };
         }
 
+        // Drain warnings raised off-loop (hold-bound expiry).
+        while (pendingWarnings.length > 0) {
+          yield { type: 'warning', message: pendingWarnings.shift()! };
+        }
+
         if (!pendingNext) pendingNext = sdkIterator.next();
 
-        // Race SDK's next message vs. a wake-up from the user-input bridge.
+        // Race SDK's next message vs. a wake-up from the user-input bridge vs.
+        // abort — the last one matters when the SDK has gone quiet (a held
+        // session waiting on background work that will never settle).
         const wake = new Promise<'wake'>((resolve) => {
           userInputWaker = () => resolve('wake');
         });
         const winner = await Promise.race([
           pendingNext.then((r) => ({ kind: 'sdk' as const, value: r })),
           wake.then(() => ({ kind: 'wake' as const })),
+          abortPromise.then(() => ({ kind: 'abort' as const })),
         ]);
         userInputWaker = null;
 
@@ -1038,9 +1284,22 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           continue;
         }
 
+        if (winner.kind === 'abort') {
+          yield {
+            type: 'error',
+            error: timedOut
+              ? new AdapterTimeoutError('claude-code', params.timeoutMs!)
+              : new AdapterAbortError('claude-code'),
+            phase: 'runtime',
+          };
+          return;
+        }
+
         pendingNext = null;
         if (winner.value.done) break loop;
         const event = winner.value.value;
+        // Session is demonstrably alive — reset the post-settlement grace window.
+        clearWakeGrace();
 
         if (this.abortController.signal.aborted) {
           if (timedOut) {
@@ -1205,31 +1464,87 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
               const toolUseId = (e.tool_use_id as string) ?? '';
-              if (toolUseId) subagentTaskIdByParentToolUseId.set(toolUseId, taskId);
-              yield {
-                type: 'subagent_started',
-                taskId,
-                description: e.description as string,
-                toolUseId,
-              };
+              const description = (e.description as string) ?? '';
+              const kind = classifyTaskType(e.task_type);
+              taskKindById.set(taskId, { ...kind, description });
+              // Both kinds can hold the session past the turn's `result` — three
+              // subagents settling one by one, each waking the model, is exactly
+              // the shape the consumer reported — so both are tracked.
+              inFlightTaskIds.add(taskId);
+              if (kind.isBackground) {
+                yield {
+                  type: 'background_task_started',
+                  taskId,
+                  taskType: kind.taskType,
+                  description,
+                };
+              } else {
+                if (toolUseId) subagentTaskIdByParentToolUseId.set(toolUseId, taskId);
+                yield { type: 'subagent_started', taskId, description, toolUseId };
+              }
             } else if (subtype === 'task_progress') {
               const e = event as Record<string, unknown>;
-              yield {
-                type: 'subagent_progress',
-                taskId: e.task_id as string,
-                description: e.description as string,
-                lastToolName: e.last_tool_name as string | undefined,
-              };
+              const taskId = e.task_id as string;
+              const kind = taskKindById.get(taskId);
+              if (kind?.isBackground) {
+                yield {
+                  type: 'background_task_progress',
+                  taskId,
+                  taskType: kind.taskType,
+                  description: e.description as string | undefined,
+                  ...(e.status ? { status: e.status as string } : {}),
+                  ...(e.output_file ? { outputFile: e.output_file as string } : {}),
+                };
+              } else {
+                yield {
+                  type: 'subagent_progress',
+                  taskId,
+                  description: e.description as string,
+                  lastToolName: e.last_tool_name as string | undefined,
+                };
+              }
             } else if (subtype === 'task_notification') {
               const e = event as Record<string, unknown>;
-              yield {
-                type: 'subagent_completed',
-                taskId: e.task_id as string,
-                status: e.status as string,
-                summary: e.summary as string | undefined,
-                // Per-subagent total (sum across the subagent's turns).
-                usage: normalizeClaudeUsage(e.usage),
-              };
+              const taskId = e.task_id as string;
+              const kind = taskKindById.get(taskId);
+              inFlightTaskIds.delete(taskId);
+              finishedTaskIds.delete(taskId);
+              if (kind?.isBackground) {
+                yield {
+                  type: 'background_task_completed',
+                  taskId,
+                  taskType: kind.taskType,
+                  status: e.status as string,
+                  ...(e.output_file ? { outputFile: e.output_file as string } : {}),
+                  summary: e.summary as string | undefined,
+                  usage: normalizeClaudeUsage(e.usage),
+                };
+              } else {
+                yield {
+                  type: 'subagent_completed',
+                  taskId,
+                  status: e.status as string,
+                  summary: e.summary as string | undefined,
+                  // Per-subagent total (sum across the subagent's turns).
+                  usage: normalizeClaudeUsage(e.usage),
+                };
+              }
+              // Nothing left to wait for beyond a possible further wake-up: give
+              // the engine a bounded window to take it — see armWakeGrace().
+              if (holdingForBackgroundWork && noWorkLeftRunning()) armWakeGrace();
+            } else if (subtype === 'task_updated') {
+              // The engine's own "this task finished" patch, which arrives BEFORE
+              // the corresponding notification (observed live). No event of its own
+              // — the lifecycle families already cover start/progress/completion —
+              // but it is what distinguishes "still working" from "done, wake-up
+              // pending", and so which of the two hold bounds applies.
+              const e = event as Record<string, unknown>;
+              const taskId = e.task_id as string;
+              const status = (e.patch as Record<string, unknown> | undefined)?.status;
+              if (typeof status === 'string' && /^(completed|failed|stopped|cancell?ed)$/.test(status)) {
+                finishedTaskIds.add(taskId);
+                if (holdingForBackgroundWork && noWorkLeftRunning()) armWakeGrace();
+              }
             } else if (subtype === 'compact_boundary') {
               yield { type: 'flush' };
             }
@@ -1238,6 +1553,30 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
           case 'result': {
             const resultEvent = event as Record<string, unknown>;
+            // In-flight background work, from the adapter's own tracking:
+            // `SDKResultMessage` carries no such list (the SDK exposes
+            // `background_tasks[]` on the Stop hook input, not on `result`), so
+            // a future SDK field is read as a union with the tracked set rather
+            // than as a replacement.
+            const trackedInFlight: BackgroundTaskRef[] = [...inFlightTaskIds].map((id) => {
+              const kind = taskKindById.get(id);
+              return {
+                taskId: id,
+                taskType: kind?.taskType ?? 'subagent',
+                ...(kind?.description ? { description: kind.description } : {}),
+              };
+            });
+            const sdkReported = Array.isArray(resultEvent.background_tasks)
+              ? (resultEvent.background_tasks as Record<string, unknown>[])
+                  .filter((t) => typeof t?.id === 'string' && !inFlightTaskIds.has(t.id as string))
+                  .map((t) => ({
+                    taskId: t.id as string,
+                    taskType: (t.type as BackgroundTaskType) ?? 'shell',
+                    ...(typeof t.description === 'string' ? { description: t.description } : {}),
+                  }))
+              : [];
+            const backgroundTasks = [...trackedInFlight, ...sdkReported];
+
             if (resultEvent.subtype === 'success') {
               const claudeUsage = normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 };
               const contextSize = claudeUsage.inputTokens + claudeUsage.outputTokens;
@@ -1270,6 +1609,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 contextSize,
                 sessionId,
                 ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),
+                ...(backgroundTasks.length ? { backgroundTasks } : {}),
               };
             } else {
               yield { type: 'error', error: new Error((resultEvent.result as string) ?? 'Unknown error'), phase: 'runtime' };
@@ -1284,12 +1624,27 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             // close returns false and the consumer re-dispatches after-turn.
             // No await runs between the result yield and this check, so the
             // decision is atomic w.r.t. consumer pushes — no lost-message window.
-            if (inputChannel) {
-              if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
-                // keep open: SDK consumes the next queued message as a new turn
-              } else {
-                inputChannel.close();
-              }
+            //
+            // Task activity is the second keep-open reason (M17): the engine holds
+            // the session past this result and wakes the model, which then needs the
+            // control channel this transport carries.
+            //
+            // The condition is "this run started ANY task", not "work is in flight
+            // right now". Nothing-in-flight is not the same as nothing-coming:
+            // observed on 0.3.210, three subagents all reported completion INSIDE the
+            // turn, and the engine still resumed the model for three further turns and
+            // asked a question at the end — which landed on a dead transport when the
+            // channel closed at that first result. Settled work therefore still gets
+            // the short grace window; only work still running gets the long cap.
+            // Both bounds live in beginHold()/armWakeGrace().
+            if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
+              // keep open: SDK consumes the next queued message as a new turn
+              endHold();
+            } else if (resultEvent.subtype === 'success' && taskKindById.size > 0) {
+              beginHold();
+            } else {
+              endHold();
+              inputChannel.close();
             }
             break;
           }
@@ -1315,7 +1670,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // left awaiting input.
       this.pushHandler = null;
       this.closeInputChannel = null;
-      inputChannel?.close();
+      clearHoldTimers();
+      inputChannel.close();
       await materialized?.cleanup().catch((err) =>
         console.warn('[agent-adapters] claude-code skill cleanup failed', err),
       );

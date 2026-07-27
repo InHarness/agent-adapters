@@ -69,11 +69,15 @@ const PNG_1PX_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 describe('claude-code image input', () => {
-  it('no images → plain string prompt (unchanged one-shot path)', async () => {
+  it('no images → text-only seed message, exactly one result', async () => {
     const ClaudeCodeAdapter = await importAdapter();
     const adapter = new ClaudeCodeAdapter();
     const events = await collectEvents(adapter.execute(createTestParams({ model: 'sonnet-4.6' })));
-    expect(typeof capturedPrompt).toBe('string');
+    // Images or not, the prompt now rides the input channel (see the
+    // background-task hold in claude-code.ts); what an image-free run must NOT
+    // do is wrap the prompt in content blocks.
+    expect(typeof capturedPrompt).toBe('object');
+    expect(typeof messageContent(capturedFirstMessage!)).toBe('string');
     expect(events.filter((e) => e.type === 'result')).toHaveLength(1);
   });
 

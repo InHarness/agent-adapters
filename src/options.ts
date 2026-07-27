@@ -131,6 +131,16 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     default: true,
     description: 'Use the built-in claude_code system-prompt preset (System prompt field is appended).',
   },
+  {
+    key: 'claude_disallowBackgroundBash',
+    label: 'Disallow background Bash',
+    type: 'boolean',
+    scope: 'architecture',
+    default: false,
+    description:
+      'Forbid backgrounded shell commands (Bash run_in_background), forcing them to run synchronously inside the turn. ' +
+      'Use when a turn must not outlive its result — strict per-turn billing or a hard wall-clock budget.',
+  },
 ];
 
 export const CODEX_OPTIONS: ArchOption[] = [

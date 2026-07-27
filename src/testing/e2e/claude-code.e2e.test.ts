@@ -601,33 +601,11 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       expect(events.some((e) => e.type === 'result' || e.type === 'error')).toBe(true);
     });
 
-    // PEER-SDK REGRESSION GUARD — green on the dev-pinned @anthropic-ai/claude-agent-sdk
-    // 0.3.153, RED on 0.3.210. Both satisfy the declared peer range `>=0.3.0 <0.4.0`, so
-    // that range spans a behavioural break and this test is what catches it on a bump.
+    // ACCEPTANCE for the background-task control-channel hold (M17) and the peer-SDK
+    // wake-up break. This matrix is what reproduced both defects before the fix; it is
+    // now the guard that they stay fixed.
     //
-    // What breaks on 0.3.210: the model backgrounds a shell task and ends its turn, the
-    // task settles and `subagent_completed` is emitted — and then the run simply ENDS.
-    // The model is never woken, so everything it was told to do afterwards (here, ask a
-    // question) silently never happens. Measured: 0.3.210 → 13s and `handlerCalls === 0`;
-    // 0.3.153 → 35s and a delivered answer.
-    //
-    // Why the default one-shot prompt and not `streamingInput: true`: the divergence is
-    // the SDK's own single-turn shutdown. `query()` sets `isSingleUserTurn` when the
-    // prompt is a plain string, and `readMessages` then does
-    //   "First result received for single-turn query, closing stdin" → transport.endInput()
-    // The same scenario with `streamingInput: true` (prompt is an AsyncIterable, so
-    // `isSingleUserTurn` is false) passes on BOTH versions — verified live. So this
-    // configuration is the reproducing one, and it is also the adapter's default.
-    //
-    // NOT covered by this test: the consumer-reported
-    // `Tool permission request failed: AbortError: Stream closed`. In that report the
-    // model WAS woken and DID attempt the ask; here it is never woken at all. Same area,
-    // plausibly the same root cause, but do not claim this test reproduces it.
-    //
-    // REPRODUCES the reported failure. Run as a matrix over the two axes that plausibly
-    // matter, so the outcome is a filled-in table rather than one pass/fail.
-    //
-    // Measured on sonnet-4.6 (`bash` = a `run_in_background` Bash task):
+    // Before the fix, measured on sonnet-4.6 (`bash` = a `run_in_background` Bash task):
     //
     //   work shape        | prompt path | 0.3.153                  | 0.3.210
     //   backgrounded bash | one-shot    | FLAKY — Stream closed    | FAIL — wake-up lost
@@ -637,14 +615,6 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     //   subagents         | one-shot    | FLAKY — Stream closed    | not run
     //                     |             |   on 1 run, 1 inconclusive |
     //   subagents         | streaming   | inconclusive (1 run)     | not run
-    //
-    // Every shape and both prompt paths have now produced it. It is not specific to
-    // backgrounded shell work, not specific to the string-prompt path, and not specific
-    // to 0.3.210 — the 0.3.210 wake-up loss is a SEPARATE, deterministic defect.
-    //
-    // "Inconclusive" means the model dispatched the work but the engine completed it
-    // inside the turn, so the session was never held open and there was no post-`result`
-    // control request to lose. Those runs are skipped, not counted either way.
     //
     // The failing shape, verbatim, three times per run — the reported symptom:
     //
@@ -658,16 +628,19 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     // followed by `AskUserQuestion tool permission denied`, with no host round-trip.
     // The model then retries twice more and falls back to prose.
     //
-    // It is TIMING-DEPENDENT, which is why these are plain `it` and not `it.fails`: a
-    // `.fails` test would itself fail on the runs that happen to succeed. They are red on
-    // a reproducing run, and that is the deliverable of this branch. It also explains why
-    // the consumer saw it appear and then vanish after a restart.
+    // Two closers reached the same `transport.endInput()`, which is why every cell above
+    // could reproduce: the adapter closed the channel at `result` (streaming path), and
+    // the SDK closed stdin itself on a string prompt (`isSingleUserTurn`, one-shot path
+    // — "First result received for single-turn query, closing stdin"). The fix removes
+    // both: every run rides the input channel, and the channel outlives a `result` that
+    // still has tracked work in flight.
     //
-    // Both prompt paths reproduce it, so the earlier hypothesis that only the SDK's
-    // single-turn stdin close (`isSingleUserTurn`, string prompts only) was to blame is
-    // FALSIFIED — `streamingInput: true` dies the same way. What both paths share is
-    // that the adapter closes its side of the transport at the turn's `result`, while
-    // the engine keeps the session alive for in-flight background work.
+    // BECAUSE THE BUG WAS TIMING-DEPENDENT (~1 run in 2–3), a single green run is weak
+    // evidence. Re-run each cell several times when validating a change here.
+    //
+    // "Inconclusive" means the model dispatched the work but the engine completed it
+    // inside the turn, so the session was never held open and there was no post-`result`
+    // control request to lose. Those runs are skipped, not counted either way.
     //
     // See PLAN-tests-stream-e2e.md / PLAN-streamingn-input-fix.md.
     const WAKE_UP_CONFIGS = [
@@ -701,7 +674,11 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       },
     ] as const;
 
-    it.each(WAKE_UP_CONFIGS)(
+    // `it.for`, not `it.each`: only `for` passes the TestContext as the second
+    // argument, and this matrix needs `ctx.skip()` to report an inconclusive run as
+    // skipped rather than silently green. Under `each` the context is undefined and
+    // the skip path throws.
+    it.for(WAKE_UP_CONFIGS)(
       'AskUserQuestion reaches the handler after $shape settle [$promptPath]',
       async (cfg, ctx) => {
         const adapter = createAdapter('claude-code');
@@ -735,18 +712,18 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
 
         // Precondition 2 — what actually makes a run meaningful: the engine held the
         // session open past the turn's `result` and woke the model when the work settled.
-        // The wake-up surfaces as the task_notification projection (today
-        // `subagent_completed` for both shapes; `task_type` is dropped — known gap in
-        // spec/adapters/A01-claude-code.md). No wake-up ⇒ no post-`result` control
-        // request ⇒ the run proves nothing either way, so report it as INCONCLUSIVE
-        // rather than as a pass or a failure.
+        // The wake-up surfaces as the task_notification projection, now split by
+        // `task_type`: `background_task_completed` for backgrounded shell work,
+        // `subagent_completed` for real subagents (M17/M06). No wake-up ⇒ no
+        // post-`result` control request ⇒ the run proves nothing either way, so report it
+        // as INCONCLUSIVE rather than as a pass or a failure.
         //
         // This is what the two `subagents` rows do in practice: the model dispatches
         // three subagents, but they complete inside the turn, so the session is never
         // held open. Reproducing the reported shape (three subagents settling AFTER the
         // turn ends) would need the engine to background them, which these prompts do
         // not achieve on sonnet-4.6.
-        if (!events.some((e) => e.type === 'subagent_completed')) {
+        if (!events.some((e) => e.type === 'subagent_completed' || e.type === 'background_task_completed')) {
           console.warn(
             `[INCONCLUSIVE] ${cfg.shape} / ${cfg.promptPath}: no task notification — the ` +
               `session was never held open past \`result\`. Sequence: ${sequence}`,
@@ -757,6 +734,17 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
 
         // The actual regression: the control transport must still be alive.
         assertNoStreamClosed(events);
+
+        // M17 routing: backgrounded shell work is not a subagent. This is the half of
+        // the module that removes the "[sub …] ✓ stopped" mislabelling consumers saw
+        // for plain `sleep` commands.
+        if (cfg.shape === 'backgrounded bash') {
+          expect(
+            events.some((e) => e.type === 'background_task_completed'),
+            `a backgrounded shell task must settle on background_task_* (M17), not subagent_*. ` +
+              `Sequence: ${sequence}`,
+          ).toBe(true);
+        }
         expect(
           handlerCalls,
           `onUserInput should fire after ${cfg.shape} settle. Sequence: ${sequence}`,

@@ -8,6 +8,8 @@ export type {
   UsageStats,
   TodoItem,
   UnifiedEvent,
+  BackgroundTaskType,
+  BackgroundTaskRef,
   BuiltinArchitecture,
   Architecture,
   McpServerConfig,
