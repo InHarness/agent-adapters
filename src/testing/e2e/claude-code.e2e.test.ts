@@ -1033,6 +1033,19 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       // letting the server elicit produced a `model-tool` request and turned this
       // same non-bridging outcome into a red test.
       if (!events.some((e) => e.type === 'user_input_request' && e.request.source === 'mcp-elicitation')) {
+        // Say WHY it skipped. The eliciting tool reports its own failure as
+        // `elicitation unavailable: …` (see createElicitingMcpServer), which
+        // distinguishes "the SDK refused the elicitation" from "the model never
+        // called the tool" — a silent skip hides which one is true, and only the
+        // second is fixable from here.
+        const reasons = events
+          .filter((e) => e.type === 'tool_result' && /elicitation/i.test(e.summary))
+          .map((e) => (e as Extract<UnifiedEvent, { type: 'tool_result' }>).summary);
+        console.warn(
+          `[SKIP] mcp elicitation did not bridge. ${
+            reasons.length ? `Tool reported: ${reasons.join(' | ')}` : 'The eliciting tool was never called.'
+          } Sequence: ${events.map((e) => e.type).join(' → ')}`,
+        );
         ctx.skip();
         return;
       }
