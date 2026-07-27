@@ -17,10 +17,14 @@
 // pending (src/adapters/claude-code.ts, `case 'result'`), and never looks at
 // `background_tasks` at all — so the wake-up runs against a dead control channel.
 //
-// Scope note: this file proves the INVARIANT (the channel closes too early). It cannot
-// reproduce the user-visible SYMPTOM, because a mocked `query()` has no real stdin —
-// here `canUseTool` is invoked directly and therefore still resolves. The symptom is
-// covered by the live e2e scenario in src/testing/e2e/claude-code.e2e.test.ts.
+// Scope note — read before trusting this file. A mocked `query()` has no real stdin, so
+// nothing here can reproduce a closed transport: `canUseTool` is invoked directly and
+// always resolves. What this file pins is the adapter's channel LIFECYCLE. The
+// user-visible symptom is owned by the live e2e scenario in
+// src/testing/e2e/claude-code.e2e.test.ts, and live evidence there narrowed the actual
+// regression to the SDK's own `isSingleUserTurn` stdin close on the string-prompt path
+// (0.3.210 loses the post-`result` wake-up; 0.3.153 does not) — NOT to the early close
+// characterized below, which the streaming path survives on both versions.
 //
 // See PLAN-tests-stream-e2e.md (these tests) and PLAN-streamingn-input-fix.md (the fix).
 
@@ -179,25 +183,31 @@ async function runScenario(opts: {
 }
 
 describe('claude-code streaming input — background-task session hold', () => {
-  // KNOWN FAILING on main — `it.fails` passes while the defect is present and turns
-  // red the moment it is fixed, at which point flip this to plain `it`.
-  // Fix: PLAN-streamingn-input-fix.md.
-  it.fails(
-    'keeps the input channel open while background work is still in flight',
-    async () => {
-      const { inputDoneAfterResult } = await runScenario({
-        backgroundTasks: BACKGROUND_TASK_RUNNING,
-        wakeAndAsk: true,
-      });
+  // CHARACTERIZATION, not a defect assertion. This documents what the adapter does
+  // today: it closes the channel at `result` even when the engine reports work still
+  // in flight, and never reads `background_tasks`.
+  //
+  // Deliberately NOT written as "must stay open". Live e2e evidence (see the scenario
+  // in src/testing/e2e/claude-code.e2e.test.ts) shows the streaming path survives this
+  // early close on both @anthropic-ai/claude-agent-sdk 0.3.153 and 0.3.210 — the model
+  // is still woken and can still ask. So the early close is a latent hazard, not a
+  // proven cause of the reported `AbortError: Stream closed`, and asserting an
+  // invariant the evidence does not support would be dishonest.
+  //
+  // If the fix in PLAN-streamingn-input-fix.md makes the keep-open condition read
+  // `background_tasks`, this expectation flips to `false` and the comment goes with it.
+  it('currently closes the input channel at `result` even with background work in flight', async () => {
+    const { inputDoneAfterResult } = await runScenario({
+      backgroundTasks: BACKGROUND_TASK_RUNNING,
+      wakeAndAsk: true,
+    });
 
-      expect(
-        inputDoneAfterResult,
-        'the input channel must stay open while `result.background_tasks` is non-empty — ' +
-          'closing it ends the CLI stdin that carries the control protocol, so the ' +
-          'post-wake-up AskUserQuestion dies with "AbortError: Stream closed"',
-      ).toBe(false);
-    },
-  );
+    expect(
+      inputDoneAfterResult,
+      'adapter behaviour changed: the channel is no longer closed at `result` while ' +
+        '`background_tasks` is non-empty — update this characterization test',
+    ).toBe(true);
+  });
 
   it('closes the input channel when no background work is in flight and no push is pending', async () => {
     const { inputDoneAfterResult, pendingPull, events } = await runScenario({

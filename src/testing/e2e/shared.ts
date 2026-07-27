@@ -310,6 +310,58 @@ export const USER_QUESTION_PROMPT =
 export const USER_QUESTION_SYSTEM_PROMPT =
   'When you need a decision from the user and you have a native ask-user / AskUserQuestion / question tool available, you MUST use it instead of guessing. Always prefer the ask-user tool over Bash or other tools for user input.';
 
+// --- Background-task session hold + user input (see PLAN-tests-stream-e2e.md) ---
+
+// The bug needs a very specific shape, and every clause below buys one part of it:
+//
+//   - the shell command must be BACKGROUNDED, and
+//   - the model must END ITS TURN while the task is still running (no waiting, no
+//     BashOutput polling) — that is what makes the turn's `result` carry a non-empty
+//     `background_tasks` so the engine pauses instead of finishing, and
+//   - the question must come only on the WAKE-UP that `task_notification` triggers,
+//     which is where a prematurely closed input channel has already killed the
+//     control transport.
+//
+// Instructing the model to "wait for the task to finish" is the trap: it then polls
+// inside the same turn, the first `result` arrives with no in-flight work, the session
+// is never held open, and the scenario passes while proving nothing.
+export const BACKGROUND_THEN_QUESTION_PROMPT =
+  'Follow these steps exactly. Step 1: use the Bash tool to run `sleep 25` with the ' +
+  'run_in_background parameter set to true. Step 2: immediately end your turn with a single ' +
+  'short sentence saying you started it. Do NOT wait for it, do NOT call BashOutput, and do NOT ' +
+  'poll it — stop your turn while it is still running. Step 3: later, when you are notified that ' +
+  'the background task has completed, you MUST then use your ask-user question tool to ask the ' +
+  'user to pick exactly one fruit from this list: apple, banana, cherry. Do not guess. After the ' +
+  'user answers, reply with exactly one word — the chosen fruit.';
+export const BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT =
+  'You start long shell commands in the background with the Bash tool (run_in_background: true) ' +
+  'and you end your turn immediately instead of blocking or polling — you will be notified when ' +
+  'the task completes and can continue then. When you need a decision from the user and you have ' +
+  'a native ask-user / AskUserQuestion / question tool available, you MUST use it instead of ' +
+  'guessing.';
+
+/**
+ * Fail if any event carries the engine's closed-control-transport error.
+ *
+ * When the adapter ends its input iterable the SDK closes the CLI's stdin, which also
+ * carries the control protocol (`can_use_tool`, hooks, elicitation). A control request
+ * issued afterwards cannot be answered and the engine reports it as
+ * `Tool permission request failed: AbortError: Stream closed` — surfaced to us as a
+ * failed `tool_result` (or an `error`) rather than as a missing event, so it needs its
+ * own assertion instead of only checking that the question arrived.
+ */
+export function assertNoStreamClosed(events: UnifiedEvent[]): void {
+  const offenders = events.filter((e) => {
+    if (e.type === 'tool_result') return /stream closed/i.test(e.summary);
+    if (e.type === 'error') return /stream closed/i.test(e.error.message);
+    return false;
+  });
+  expect(
+    offenders,
+    `expected no "Stream closed" control-transport failure, got ${JSON.stringify(offenders)}`,
+  ).toHaveLength(0);
+}
+
 /**
  * Run a user-question scenario and collect events + the handler invocations.
  * The test helper builds the handler, tallies invocations, and returns everything

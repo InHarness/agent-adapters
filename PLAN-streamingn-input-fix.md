@@ -4,6 +4,36 @@
 on `main`. Phase 2 fixes it and flips the same tests green. No `src/adapters/` change lands in
 Phase 1.
 
+> **UPDATE (live evidence) — the root cause stated below is WRONG. Read this first.**
+>
+> The Phase 1 tests were written and run against a live model. What they found:
+>
+> | config | SDK 0.3.153 | SDK 0.3.210 |
+> |---|---|---|
+> | default one-shot string prompt | ✅ wake-up + ask delivered (35s) | ❌ run ends after the notification, `handlerCalls === 0` (13s) |
+> | `streamingInput: true` | ✅ | ✅ |
+>
+> So the adapter's close-on-`result` (§1 below) is **not** the cause — the streaming path
+> closes the channel too and survives on both versions. The reproducing variable is the
+> **SDK's own single-turn shutdown**: `query()` sets `isSingleUserTurn` when the prompt is a
+> plain string, and `readMessages` then logs *"First result received for single-turn query,
+> closing stdin"* and calls `transport.endInput()`. On 0.3.210 that kills the post-`result`
+> background-task wake-up entirely — the model is never resumed, so everything it was told to
+> do after the task (asking included) silently never happens. On 0.3.153 the same close is
+> survivable.
+>
+> Both versions satisfy the declared peer range `>=0.3.0 <0.4.0`, so **that range spans a
+> behavioural break** — which is its own finding, independent of the fix.
+>
+> Fix direction changes accordingly: stop handing the SDK a bare string when a run may hold
+> background work (always drive the input-channel path, so `isSingleUserTurn` is false),
+> rather than reworking the keep-open condition. Reading `background_tasks` stays defensible
+> as hardening, not as the fix.
+>
+> Still unexplained: the consumer's `AbortError: Stream closed`. There the model *was* woken
+> and *did* attempt the ask; in the reproduction it is never woken at all. Same area,
+> plausibly the same root cause, not yet demonstrated.
+
 ---
 
 ## Context — what is broken

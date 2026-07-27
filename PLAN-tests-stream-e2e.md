@@ -8,6 +8,34 @@ Run on a **worktree**, finished with a **draft PR — never merged**.
 
 ---
 
+## RESULTS — what the tests actually found
+
+The hypothesis in §1 below was only partly right; the live runs corrected it.
+
+| config | SDK 0.3.153 (repo pin) | SDK 0.3.210 (consumer) |
+|---|---|---|
+| default one-shot string prompt | ✅ wake-up + ask delivered (35s) | ❌ run ends after the notification, `handlerCalls === 0` (13s) |
+| `streamingInput: true` | ✅ | ✅ |
+
+- **The adapter's close-on-`result` is not the cause.** The streaming path closes the channel too
+  and survives on both SDK versions. The deterministic test was therefore rewritten from an
+  `it.fails` defect assertion into a **characterization** test — asserting an invariant the evidence
+  does not support would have been dishonest.
+- **The reproducing variable is the SDK's single-turn shutdown.** `query()` sets `isSingleUserTurn`
+  when the prompt is a plain string; `readMessages` then logs *"First result received for
+  single-turn query, closing stdin"* and calls `transport.endInput()`. On 0.3.210 that kills the
+  post-`result` background-task wake-up outright: the task settles, `subagent_completed` fires, and
+  the run ends without the model ever being resumed.
+- **The declared peer range `>=0.3.0 <0.4.0` spans a behavioural break.** A finding in its own
+  right — the live e2e is the guard that catches it on an SDK bump.
+- **`CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` is real but a red herring here.** 0.3.210 emits it on every
+  run (`bypassPermissions` shadows `canUseTool`), yet both pre-existing AskUserQuestion e2e
+  scenarios still pass on 0.3.210 — AskUserQuestion is evidently exempt from the shadowing.
+- **Not reproduced:** the consumer's `AbortError: Stream closed`. In that report the model *was*
+  woken and *did* attempt the ask; in every reproduction here it is never woken at all.
+
+---
+
 ## 1. What we are proving
 
 `agent-chat` loses every `AskUserQuestion` right after background work settles:

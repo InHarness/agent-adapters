@@ -42,6 +42,9 @@ import {
   PLAN_READ_SYSTEM_PROMPT,
   USER_QUESTION_PROMPT,
   USER_QUESTION_SYSTEM_PROMPT,
+  BACKGROUND_THEN_QUESTION_PROMPT,
+  BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
+  assertNoStreamClosed,
   runUserQuestionScenario,
   assertUserInputRequest,
   TODO_PROMPT,
@@ -595,6 +598,78 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       // No crash — completion event must still be present.
       expect(events.some((e) => e.type === 'result' || e.type === 'error')).toBe(true);
     });
+
+    // PEER-SDK REGRESSION GUARD — green on the dev-pinned @anthropic-ai/claude-agent-sdk
+    // 0.3.153, RED on 0.3.210. Both satisfy the declared peer range `>=0.3.0 <0.4.0`, so
+    // that range spans a behavioural break and this test is what catches it on a bump.
+    //
+    // What breaks on 0.3.210: the model backgrounds a shell task and ends its turn, the
+    // task settles and `subagent_completed` is emitted — and then the run simply ENDS.
+    // The model is never woken, so everything it was told to do afterwards (here, ask a
+    // question) silently never happens. Measured: 0.3.210 → 13s and `handlerCalls === 0`;
+    // 0.3.153 → 35s and a delivered answer.
+    //
+    // Why the default one-shot prompt and not `streamingInput: true`: the divergence is
+    // the SDK's own single-turn shutdown. `query()` sets `isSingleUserTurn` when the
+    // prompt is a plain string, and `readMessages` then does
+    //   "First result received for single-turn query, closing stdin" → transport.endInput()
+    // The same scenario with `streamingInput: true` (prompt is an AsyncIterable, so
+    // `isSingleUserTurn` is false) passes on BOTH versions — verified live. So this
+    // configuration is the reproducing one, and it is also the adapter's default.
+    //
+    // NOT covered by this test: the consumer-reported
+    // `Tool permission request failed: AbortError: Stream closed`. In that report the
+    // model WAS woken and DID attempt the ask; here it is never woken at all. Same area,
+    // plausibly the same root cause, but do not claim this test reproduces it.
+    //
+    // See PLAN-tests-stream-e2e.md / PLAN-streamingn-input-fix.md.
+    it(
+      'AskUserQuestion still reaches the handler after a backgrounded task settles',
+      async () => {
+        const adapter = createAdapter('claude-code');
+        const { events, handlerCalls } = await runUserQuestionScenario(adapter, {
+          prompt: BACKGROUND_THEN_QUESTION_PROMPT,
+          systemPrompt: BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
+          model: MODEL,
+          maxTurns: 10,
+          mockAnswer: 'banana',
+        });
+
+        const sequence = events.map((e) => e.type).join(' → ');
+
+        // Precondition 1: the model really did background the shell work.
+        const backgroundedBash = events.some(
+          (e) =>
+            e.type === 'tool_use' &&
+            e.toolName === 'Bash' &&
+            /"run_in_background"\s*:\s*true/.test(JSON.stringify(e.input)),
+        );
+        expect(
+          backgroundedBash,
+          `model did not background the shell command — precondition unmet. Sequence: ${sequence}`,
+        ).toBe(true);
+
+        // Precondition 2 — the one that actually makes this scenario meaningful: the
+        // engine held the session open past the turn's `result` and woke the model when
+        // the task settled. The wake-up surfaces as the task_notification projection
+        // (today `subagent_completed`; `task_type` is dropped — known gap in
+        // spec/adapters/A01-claude-code.md). Without a wake-up there is no post-result
+        // control request, so a green run here would prove nothing.
+        expect(
+          events.some((e) => e.type === 'subagent_completed'),
+          'no background-task notification arrived — the session was never held open ' +
+            `past \`result\`, so this run does not exercise the bug. Sequence: ${sequence}`,
+        ).toBe(true);
+
+        // The actual regression: the control transport must still be alive.
+        assertNoStreamClosed(events);
+        expect(handlerCalls, 'onUserInput should fire after the background task settles')
+          .toBeGreaterThanOrEqual(1);
+        assertUserInputRequest(events, 'model-tool');
+        expect(events.some((e) => e.type === 'result')).toBe(true);
+      },
+      240_000,
+    );
   });
 
   describe('todo list (TodoWrite → todoList projection)', () => {
