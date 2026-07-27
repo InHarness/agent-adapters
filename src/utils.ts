@@ -47,17 +47,23 @@ export async function* filterByType<T extends UnifiedEvent['type']>(
 }
 
 /**
- * Yield events until a `result` or `error` event is encountered (inclusive).
+ * Yield events until the run's TERMINAL `result` (or an `error`), inclusive.
  * Useful for consuming exactly one run's worth of events.
+ *
+ * A `result` carrying a non-empty `backgroundTasks` is not terminal: the engine is
+ * holding the session open, will wake the model when that work settles, and the
+ * stream still owes a `background_task_completed`, a continuation turn, and a
+ * further `result` (M17). Stopping there is the exact bug `UnifiedEvent`'s `result`
+ * variant warns consumers about — so this helper, which is what many of them use
+ * instead of hand-rolling the loop, must not commit it either.
  */
 export async function* takeUntilResult(
   stream: AsyncIterable<UnifiedEvent>,
 ): AsyncIterable<UnifiedEvent> {
   for await (const event of stream) {
     yield event;
-    if (event.type === 'result' || event.type === 'error') {
-      return;
-    }
+    if (event.type === 'error') return;
+    if (event.type === 'result' && !event.backgroundTasks?.length) return;
   }
 }
 

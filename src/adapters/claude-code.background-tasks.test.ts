@@ -316,19 +316,27 @@ function subagentScript(opts: { finishBeforeResult: boolean }): Script {
 }
 
 describe('claude-code — subagent tasks and the hold', () => {
+  // Fake timers: the run ends on the wake-up grace, and burning that in real time
+  // would put BACKGROUND_WAKEUP_GRACE_MS of dead wall-clock into every CI run.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('a subagent still outstanding at `result` holds the channel until it settles', async () => {
     script = subagentScript({ finishBeforeResult: false });
     const { ClaudeCodeAdapter } = await import('./claude-code.js');
-    const events = await collectEvents(
+    const events = await drainWithClock(
       new ClaudeCodeAdapter().execute(createTestParams({ streamingInput: true })),
-      10_000,
     );
 
+    // A subagent is not background work: it holds the session (that is the hold's
+    // job) but never appears on this signal, whose documented meaning is
+    // "engine-backgrounded side work, never a subagent" (M17, types.ts).
     const first = events.find((e) => e.type === 'result');
-    expect(
-      first && 'backgroundTasks' in first ? first.backgroundTasks : undefined,
-      'the dispatch-time tool_result must not be mistaken for the subagent finishing',
-    ).toEqual([{ taskId: 'sub-1', taskType: 'local_agent', description: 'review the diff' }]);
+    expect(first && 'backgroundTasks' in first ? first.backgroundTasks : undefined).toBeUndefined();
     // The continuation turn ran, which is only possible if the channel stayed open.
     expect(events.filter((e) => e.type === 'result')).toHaveLength(2);
     expect(events.some((e) => e.type === 'subagent_completed')).toBe(true);
@@ -384,9 +392,12 @@ function holdThenGoQuietScript(opts: { settle: boolean }): Script {
  * then waits forever on a timer armed after the advance. So: pull, let the run
  * progress on its own, and only push the clock while the pull is still pending.
  */
-async function drainWithClock(stream: AsyncIterable<UnifiedEvent>): Promise<UnifiedEvent[]> {
+async function drainWithClock(
+  stream: AsyncIterable<UnifiedEvent>,
+  ceilingMs = MAX_BACKGROUND_HOLD_MS + BACKGROUND_WAKEUP_GRACE_MS + 5_000,
+): Promise<UnifiedEvent[]> {
   const STEP_MS = 1_000;
-  const CEILING_MS = MAX_BACKGROUND_HOLD_MS + BACKGROUND_WAKEUP_GRACE_MS + 5_000;
+  const CEILING_MS = ceilingMs;
   const iterator = stream[Symbol.asyncIterator]();
   const events: UnifiedEvent[] = [];
 
@@ -415,16 +426,23 @@ describe('claude-code — the background-task hold is bounded', () => {
     vi.useRealTimers();
   });
 
-  it('closes the hold when the settled task never wakes the model', async () => {
+  // THE F1 REGRESSION. Settled work plus a quiet engine is how a healthy
+  // task-touching run ENDS — it is where the pre-hold code closed the channel, at
+  // `result`. Warning there told every such run that its work "did not run", which
+  // is both false and alarming: a data-loss banner on the happy path.
+  it('ends silently when the settled task never wakes the model', async () => {
     script = holdThenGoQuietScript({ settle: true });
     const { ClaudeCodeAdapter } = await import('./claude-code.js');
     const adapter = new ClaudeCodeAdapter();
 
     const events = await drainWithClock(adapter.execute(createTestParams({ streamingInput: true })));
 
-    const warning = events.find((e) => e.type === 'warning' && /did not resume the model/.test(e.message));
-    expect(warning, 'the truncation must be announced, not silent').toBeDefined();
+    expect(
+      events.filter((e) => e.type === 'warning'),
+      'settled work + a quiet engine is the normal end of the run, not a truncation',
+    ).toEqual([]);
     expect(events.some((e) => e.type === 'background_task_completed')).toBe(true);
+    expect(events.some((e) => e.type === 'result')).toBe(true);
   });
 
   it('closes the hold at the hard cap when the task never settles', async () => {
@@ -454,22 +472,121 @@ describe('claude-code — the background-task hold is bounded', () => {
     ]);
   });
 
-  it('a subagent that finished before the result ends on the short window, not the cap', async () => {
+  it('a subagent that finished before the result ends on the short window, silently', async () => {
     // The common subagent shape: the helpers report themselves done (`task_updated`)
     // before the turn's result, and the engine then either wakes the model at once or
     // never. Waiting out the two-minute cap for that is dead time on every such run —
-    // which is exactly what a first cut of this fix did.
+    // which is exactly what a first cut of this fix did. Ending on the short window is
+    // the whole point, and no warning belongs on a run where nothing went wrong.
     script = subagentScript({ finishBeforeResult: true });
     const { ClaudeCodeAdapter } = await import('./claude-code.js');
     const adapter = new ClaudeCodeAdapter();
 
     const events = await drainWithClock(adapter.execute(createTestParams({ streamingInput: true })));
 
+    // The cap is the only bound that speaks; silence therefore proves the short one won.
+    expect(events.filter((e) => e.type === 'warning')).toEqual([]);
+    expect(events.some((e) => e.type === 'result')).toBe(true);
+  });
+
+  // THE F2 REGRESSION. The cap used to be armed once at the first held `result` and
+  // never released, so an engine that DID take the wake-up got cut off two minutes
+  // later mid-turn — closing the CLI's stdin, and with it the control protocol
+  // multiplexed onto it. That is the `Stream closed` defect this release exists to
+  // fix, re-created by its own safety net.
+  it('never truncates a resumed run that stays busy past the hard cap', async () => {
+    const BEAT_MS = 20_000;
+    const BEATS = 8; // 160s of continuation turn — well past MAX_BACKGROUND_HOLD_MS
+    script = async function* ({ prompt }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+
+      yield {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'bg-1',
+        task_type: 'shell',
+        description: 'sleep 200',
+      } as unknown as SDKMessage;
+      yield resultMessage();
+
+      const pull = input.next();
+      // The engine takes the wake-up and works, unhurriedly. Each beat is a real
+      // `setTimeout` under the fake clock, so this is 160 simulated seconds of a
+      // live turn — the exact stretch the old cap fired in the middle of.
+      for (let i = 0; i < BEATS; i += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, BEAT_MS));
+        yield {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: `beat ${i}` }] },
+        } as unknown as SDKMessage;
+      }
+
+      yield {
+        type: 'system',
+        subtype: 'task_updated',
+        task_id: 'bg-1',
+        patch: { status: 'completed', end_time: 1 },
+      } as unknown as SDKMessage;
+      yield resultMessage({ result: 'done' });
+      await pull;
+    };
+
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const events = await drainWithClock(
+      new ClaudeCodeAdapter().execute(createTestParams({ streamingInput: true })),
+      BEAT_MS * BEATS + MAX_BACKGROUND_HOLD_MS + BACKGROUND_WAKEUP_GRACE_MS + 5_000,
+    );
+
     expect(
-      events.find((e) => e.type === 'warning' && /did not resume the model/.test(e.message)),
-      'ending here is the grace window, not the hard cap',
-    ).toBeDefined();
-    expect(events.some((e) => e.type === 'warning' && /still in flight after/.test(e.message))).toBe(false);
+      events.filter((e) => e.type === 'assistant_message'),
+      'every beat of the continuation turn must survive — a bound firing mid-turn ' +
+        'closes the control transport, which is the defect this release fixes',
+    ).toHaveLength(BEATS);
+    expect(events.filter((e) => e.type === 'result')).toHaveLength(2);
+    expect(events.filter((e) => e.type === 'warning')).toEqual([]);
+  });
+
+  // F4. Every SDK message used to DISARM the grace while only `task_*` events re-armed
+  // it, so a single unrelated frame left the short bound gone and the run waiting out
+  // the two-minute cap instead. Both frames below are real: the engine emits
+  // `system/status` and `system/background_tasks_changed` while it babysits work.
+  it('a stray non-task frame during a settled hold still ends on the short window', async () => {
+    script = async function* ({ prompt }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+
+      yield {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'bg-1',
+        task_type: 'shell',
+        description: 'sleep 3',
+      } as unknown as SDKMessage;
+      yield {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'bg-1',
+        status: 'completed',
+      } as unknown as SDKMessage;
+      yield resultMessage();
+
+      const pull = input.next();
+      await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+      yield { type: 'system', subtype: 'background_tasks_changed' } as unknown as SDKMessage;
+      await pull;
+    };
+
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const events = await drainWithClock(
+      new ClaudeCodeAdapter().execute(createTestParams({ streamingInput: true })),
+    );
+
+    // Silence proves it: the cap is the only bound that emits a warning.
+    expect(
+      events.filter((e) => e.type === 'warning'),
+      'a stray frame must RE-ARM the short bound, not disarm it and fall through to the cap',
+    ).toEqual([]);
   });
 
   it('abort() releases a held run without waiting for the bounds', async () => {

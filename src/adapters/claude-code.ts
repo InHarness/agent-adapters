@@ -295,6 +295,49 @@ export function mergeTaskToolInputIntoSnapshot(
   return next;
 }
 
+/**
+ * @internal Exported for unit tests.
+ * Recover the id the engine assigned to a freshly created task from its `TaskCreate`
+ * tool_result. Every later `TaskUpdate` keys on that id, so losing it makes the
+ * update append a second, blank-titled item while the real one never changes status
+ * (M16).
+ *
+ * This reads ENGLISH PROSE out of an unstructured payload, which is a poor contract:
+ * a reworded CLI string reinstates the bug silently. It is mitigated two ways —
+ * several phrasings are accepted rather than one, and the caller has a positional
+ * fallback for when none match — but the right fix is upstream, in a structured
+ * tool_result. Recorded as such in M16.
+ *
+ * A JSON payload is preferred when present, since that needs no guessing at all.
+ */
+export function extractAssignedTaskId(content: string): string | undefined {
+  const structured = safeParseJson(content);
+  for (const key of ['taskId', 'task_id', 'id']) {
+    const v = structured?.[key];
+    if (typeof v === 'string' && v.length > 0) return v;
+    if (typeof v === 'number') return String(v);
+  }
+
+  const patterns = [
+    // "Task #1 created successfully: <subject>" — verbatim on 0.3.153 and 0.3.210.
+    /task\s*#\s*([\w.-]+)\s+created/i,
+    // "Created task 1: <subject>" / "Created task #1"
+    /created\s+task\s*#?\s*([\w.-]+)/i,
+    // "Task 1 created" — the same sentence without the hash.
+    /task\s+([\w.-]+)\s+created/i,
+    // "task_id: 1" / "taskId=1" anywhere in the blob.
+    /task[_\s]?id["'\s]*[:=]["'\s]*([\w.-]+)/i,
+  ];
+  for (const re of patterns) {
+    const candidate = re.exec(content)?.[1];
+    // Guard against capturing a word out of the surrounding sentence — "task was
+    // created" would otherwise yield "was". Real ids are numeric ("1") or long
+    // opaque handles; an English word is neither.
+    if (candidate && (/\d/.test(candidate) || candidate.length >= 8)) return candidate;
+  }
+  return undefined;
+}
+
 function safeParseJson(s: string): Record<string, unknown> | undefined {
   try {
     const parsed = JSON.parse(s);
@@ -464,21 +507,51 @@ function classifyTaskType(raw: unknown): { taskType: BackgroundTaskType; isBackg
 }
 
 /**
- * How long the adapter keeps the input/control channel open once everything it
- * tracks has settled, waiting for the engine to resume the model. Measured
- * live, a resumption lands in the same second as the `result` that preceded it,
- * so this is generous; the cost of the window is paid at the END of any run
- * that touched a task, which is why it is seconds and not tens of seconds.
+ * Is this message the MAIN model producing again? Used while the session is held
+ * open: it is the difference between "the engine took the wake-up and a turn is
+ * running" and "still parked". Subagent traffic (`parent_tool_use_id` set) does not
+ * count — a helper agent talking after its parent's turn has ended is what the held
+ * state looks like, not a resumption of it. `result` is excluded deliberately: it
+ * ends a turn rather than showing one in progress, and has its own handling.
  */
-export const BACKGROUND_WAKEUP_GRACE_MS = 5_000;
+function isMainModelActivity(event: SDKMessage): boolean {
+  if (
+    event.type !== 'assistant' &&
+    event.type !== 'stream_event' &&
+    event.type !== 'user' &&
+    event.type !== 'tool_use_summary'
+  ) {
+    return false;
+  }
+  return ((event as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null) === null;
+}
 
 /**
- * Hard cap on the whole hold, measured from the first `result` held open. Bounds
- * the case the grace window cannot see: work that never settles at all (a
- * backgrounded `sleep 3600`). Without it, holding the channel would hand this
- * run's lifetime to the engine indefinitely. On expiry the run ends exactly as
- * it did before the hold existed — plus a `warning`, so the truncation is
- * visible rather than silent.
+ * How long the adapter keeps the input/control channel open once everything it
+ * tracks has settled, waiting for the engine to resume the model.
+ *
+ * SIZED FROM MEASUREMENT, not from taste. What it has to cover is the wall-clock
+ * gap between the last task settling and the first frame of the continuation turn —
+ * the engine has to post the whole conversation and wait for the model's first
+ * token. Measured (A01): 3.5s and 3.7s on 0.3.210 with `includePartialMessages`,
+ * 5.0s on 0.3.153 without. The previous 5s therefore had no margin at all: expiry
+ * mid-wake-up closes the control transport, which is the exact defect this module
+ * exists to prevent. 15s is ~4× the worst observed.
+ *
+ * The cost is bounded dead time at the END of a run that touched a task — paid
+ * after the consumer already has its `result`, and only until the generator
+ * reaches `done`. Expiry is silent: it is where a run whose work is finished ends,
+ * not a truncation.
+ */
+export const BACKGROUND_WAKEUP_GRACE_MS = 15_000;
+
+/**
+ * Hard cap on the hold, measured from the engine's last sign of life. Bounds the
+ * case the grace window cannot see: work that never settles at all (a backgrounded
+ * `sleep 3600`). Without it, holding the channel would hand this run's lifetime to
+ * the engine indefinitely. Because it measures SILENCE it cannot fire under a live
+ * engine; on expiry the run ends exactly as it did before the hold existed — plus a
+ * `warning`, so a genuine truncation is visible rather than silent.
  */
 export const MAX_BACKGROUND_HOLD_MS = 120_000;
 
@@ -953,6 +1026,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // (assigned id → the toolUseId the snapshot keys that item by).
     const taskCreateToolUseIds = new Set<string>();
     const serverTaskIdToToolUseId = new Map<string, string>();
+    // TaskCreates whose tool_result did not name an assigned id, oldest first. The
+    // last-resort reconciliation: with exactly one outstanding and a TaskUpdate
+    // arriving for an id we have never seen, the two must be the same task, so the
+    // alias can be recovered without the engine having said so in prose. Ambiguous
+    // cases (two or more outstanding) are left alone rather than guessed.
+    const unresolvedTaskCreateToolUseIds: string[] = [];
     // Scoped to this execute() call, so a resumed session starts with an
     // empty snapshot. TodoWrite is immune (the model always resends the full
     // list), but a TaskUpdate referencing a taskId created in a prior turn/
@@ -1061,16 +1140,64 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // with no host round-trip and nothing on the stream but a `Stream closed`
     // tool result.
     //
-    // Holding hands this run's lifetime to the engine, so it is bounded twice:
-    // a grace window after the last task settles (the continuation turn must
-    // start within it) and a hard cap from the first held `result` (for work
-    // that never settles at all). Either expiry ends the run exactly as it would
-    // have ended without the hold, plus a `warning`.
+    // WHETHER to hold: the engine offers a signal, but only half of one. The `Stop`
+    // hook fires at every turn boundary carrying `background_tasks`, documented as
+    // "lets hooks distinguish 'session is done' from 'session is paused waiting for
+    // background work to wake it'". Measured on 0.3.153 (see A01), it lands ~3ms
+    // BEFORE the `result` it belongs to and is exact when it says something IS
+    // running — but NOT when it says nothing is: on the three-subagent shape it
+    // reported `[]`, and the engine then held the session, woke the model 2ms after
+    // that `result`, and ran another full turn. Subagent wake-ups are invisible to
+    // the field. So it is read as a positive hold reason only, never as permission
+    // to close; the adapter's own task tracking remains the fallback that catches
+    // the subagent shape.
+    //
+    // HOW LONG to hold is ours to bound either way, because neither source says
+    // whether the engine will ever come back. Two bounds, and neither may fire while
+    // the model is actually producing: a short grace once everything has settled
+    // (re-armed by every frame, so it measures silence — an engine that is still
+    // talking is not a stuck one), and an absolute cap on the parked stretch,
+    // released the instant a continuation turn starts.
     let holdingForBackgroundWork = false;
     let wakeGraceTimer: ReturnType<typeof setTimeout> | undefined;
     let holdCapTimer: ReturnType<typeof setTimeout> | undefined;
     /** Warnings raised off the loop (timer callbacks) — drained at the loop top. */
     const pendingWarnings: string[] = [];
+
+    /**
+     * The most recent `Stop`-hook report, consumed and cleared by the next `result`.
+     * `undefined` means "no report for this turn" — the hook has not fired, or the SDK
+     * omits the field. A stale report is never reused: a turn that ends without the
+     * hook firing must not inherit the previous turn's answer.
+     */
+    let stopHookTasks: { id: string; type?: string; description?: string }[] | undefined;
+
+    // Additive w.r.t. anything already registered (the `claude_disallowBackgroundBash`
+    // PreToolUse lever above, and project hooks the CLI merges in from settingSources).
+    // The callback only observes — it returns `{continue: true}`, the no-op decision.
+    {
+      const existingHooks = (options.hooks ?? {}) as Record<string, unknown[]>;
+      options.hooks = {
+        ...existingHooks,
+        Stop: [
+          ...(existingHooks.Stop ?? []),
+          {
+            hooks: [
+              async (input: unknown) => {
+                const reported = (input as { background_tasks?: unknown }).background_tasks;
+                // An absent field is an SDK that does not report this at all; an empty
+                // one is a report that carries no weight (see above). Either way the
+                // fallback decides, so only a non-empty list is worth keeping.
+                if (Array.isArray(reported) && reported.length > 0) {
+                  stopHookTasks = reported as typeof stopHookTasks;
+                }
+                return { continue: true };
+              },
+            ],
+          },
+        ],
+      } as Options['hooks'];
+    }
 
     const clearHoldTimers = () => {
       if (wakeGraceTimer) clearTimeout(wakeGraceTimer);
@@ -1079,53 +1206,21 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       holdCapTimer = undefined;
     };
 
-    /** A bound expired: close the channel, surface why, and wake the loop. */
-    const expireHold = (message: string) => {
+    /**
+     * A bound expired: close the channel and wake the loop. `message` is passed only
+     * by the hard cap. Grace expiry is SILENT — settled work plus a quiet engine is
+     * the normal end of a task-touching run, not a truncation; it closes the channel
+     * exactly where the pre-hold code closed it, at `result`. Warning there told
+     * every healthy run that its work "did not run".
+     */
+    const expireHold = (message?: string) => {
       clearHoldTimers();
       if (!holdingForBackgroundWork) return;
       holdingForBackgroundWork = false;
-      pendingWarnings.push(message);
+      if (message) pendingWarnings.push(message);
       inputChannel.close();
       userInputWaker?.();
       userInputWaker = null;
-    };
-
-    const beginHold = () => {
-      holdingForBackgroundWork = true;
-      // Everything already finished and only wake-ups are outstanding → the short
-      // window decides, not the two-minute cap. This is the common subagent shape:
-      // the helpers report done before the turn's result, and the engine either
-      // wakes the model right away or never.
-      if (noWorkLeftRunning()) armWakeGrace();
-      if (!holdCapTimer) {
-        holdCapTimer = setTimeout(
-          () =>
-            expireHold(
-              `claude-code: background work still in flight after ${MAX_BACKGROUND_HOLD_MS}ms — ` +
-                'closing the session. Any remaining background task is abandoned and its ' +
-                'completion will not be reported.',
-            ),
-          MAX_BACKGROUND_HOLD_MS,
-        );
-      }
-    };
-
-    const endHold = () => {
-      clearHoldTimers();
-      holdingForBackgroundWork = false;
-    };
-
-    const armWakeGrace = () => {
-      if (wakeGraceTimer) clearTimeout(wakeGraceTimer);
-      wakeGraceTimer = setTimeout(
-        () =>
-          expireHold(
-            `claude-code: background work settled but the engine did not resume the model ` +
-              `within ${BACKGROUND_WAKEUP_GRACE_MS}ms — closing the session. Anything the model ` +
-              'was told to do after the task did not run.',
-          ),
-        BACKGROUND_WAKEUP_GRACE_MS,
-      );
     };
 
     /**
@@ -1136,10 +1231,71 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
      */
     const noWorkLeftRunning = () => [...inFlightTaskIds].every((id) => finishedTaskIds.has(id));
 
-    /** Any SDK message means the session is alive — the grace window resets. */
-    const clearWakeGrace = () => {
+    /**
+     * Re-decide the SHORT bound for the parked state. Armed only once everything has
+     * settled, because then the sole outstanding thing is a wake-up; while work is
+     * still running the wake-up may be minutes away and the cap alone bounds it.
+     *
+     * Re-armed from every frame that arrives while parked, so it measures SILENCE
+     * rather than elapsed time — the previous version disarmed on any SDK message and
+     * let only `task_*` events re-arm, so one stray frame (`system/status`,
+     * `system/background_tasks_changed` — both real) killed the short bound outright.
+     */
+    const parkHold = () => {
+      if (!holdingForBackgroundWork) return;
       if (wakeGraceTimer) clearTimeout(wakeGraceTimer);
-      wakeGraceTimer = undefined;
+      wakeGraceTimer = noWorkLeftRunning()
+        ? setTimeout(() => expireHold(), BACKGROUND_WAKEUP_GRACE_MS)
+        : undefined;
+    };
+
+    const beginHold = () => {
+      holdingForBackgroundWork = true;
+      // The outer bound on this parked stretch. Absolute rather than inactivity-based,
+      // because the engine does emit periodic frames while it babysits a long task, and
+      // an inactivity cap would let a backgrounded `sleep 3600` hand this run's whole
+      // lifetime to the engine. It is safe to make it absolute only because endHold()
+      // releases it the moment the model is producing again (see touchHold) — the
+      // previous version never released it, and cut live resumed runs off mid-turn.
+      if (holdCapTimer) clearTimeout(holdCapTimer);
+      holdCapTimer = setTimeout(
+        () =>
+          expireHold(
+            `claude-code: background work still in flight after ${MAX_BACKGROUND_HOLD_MS}ms — ` +
+              'closing the session. Any remaining background task is abandoned and its ' +
+              'completion will not be reported.',
+          ),
+        MAX_BACKGROUND_HOLD_MS,
+      );
+      parkHold();
+    };
+
+    const endHold = () => {
+      clearHoldTimers();
+      holdingForBackgroundWork = false;
+    };
+
+    /**
+     * A message arrived while the hold was on. Which of the two cases it is decides
+     * whether a bound may run at all:
+     *
+     *  - the MAIN model is producing again → the engine took the wake-up and a
+     *    continuation turn now owns the channel. Drop the hold and let that turn's
+     *    `result` decide afresh. No bound may tick here: a turn is legitimately
+     *    silent for as long as its slowest tool call, and a timer firing mid-turn
+     *    would close the control transport — the original defect, re-created.
+     *    (An engine that then never finishes the turn hangs the run, exactly as it
+     *    would for any ordinary turn; `timeoutMs`/`abort()` are the lever — M13.)
+     *  - anything else — task lifecycle frames, subagent chatter (`parent_tool_use_id`
+     *    set: a helper talking after its parent turn ended is the held state, not a
+     *    resumption of it) → still parked, so re-arm. This is what makes the bounds
+     *    measure silence; previously any stray frame disarmed the grace with nothing
+     *    left to restore it.
+     */
+    const touchHold = (event: SDKMessage) => {
+      if (!holdingForBackgroundWork) return;
+      if (isMainModelActivity(event)) endHold();
+      else parkHold();
     };
 
     let q: Query;
@@ -1309,8 +1465,10 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         pendingNext = null;
         if (winner.value.done) break loop;
         const event = winner.value.value;
-        // Session is demonstrably alive — reset the post-settlement grace window.
-        clearWakeGrace();
+        // Session is demonstrably alive — re-decide which bound applies, if any.
+        // Runs BEFORE the switch, so state this message is about to change (a task
+        // settling, say) is re-evaluated by that branch's own touchHold() call.
+        touchHold(event);
 
         if (this.abortController.signal.aborted) {
           if (timedOut) {
@@ -1368,6 +1526,26 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               if (block.toolName === 'TodoWrite') {
                 items = todoItemsFromTodoWriteInput(block.input);
               } else if (CLAUDE_CODE_TASK_TRACKING_TOOLS.includes(block.toolName)) {
+                // Last-resort reconciliation (M16): an update naming an id we never
+                // saw assigned, with exactly one create still unaccounted for, can
+                // only be that create. Recovers the alias when the tool_result prose
+                // did not yield one. Two or more outstanding is ambiguous, so it is
+                // left alone rather than guessed — a wrong alias corrupts a real item,
+                // where no alias merely appends a stray one.
+                const updateId =
+                  typeof block.input.taskId === 'string'
+                    ? block.input.taskId
+                    : typeof block.input.id === 'string'
+                      ? block.input.id
+                      : undefined;
+                if (
+                  updateId !== undefined &&
+                  !serverTaskIdToToolUseId.has(updateId) &&
+                  unresolvedTaskCreateToolUseIds.length === 1 &&
+                  !(lastTodoSnapshot ?? []).some((item) => item.id === updateId)
+                ) {
+                  serverTaskIdToToolUseId.set(updateId, unresolvedTaskCreateToolUseIds.shift()!);
+                }
                 items = mergeTaskToolInputIntoSnapshot(
                   lastTodoSnapshot ?? [],
                   block.toolUseId,
@@ -1435,8 +1613,22 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   // without this the update would append a second, blank-titled
                   // item and the real one would never change status (M16).
                   if (taskCreateToolUseIds.delete(block.toolUseId)) {
-                    const assigned = /task\s*#\s*(\S+?)\s+created/i.exec(String(block.content ?? ''));
-                    if (assigned) serverTaskIdToToolUseId.set(assigned[1], block.toolUseId);
+                    const assigned = extractAssignedTaskId(String(block.content ?? ''));
+                    if (assigned) {
+                      serverTaskIdToToolUseId.set(assigned, block.toolUseId);
+                    } else {
+                      // Nothing matched the prose. Remember which TaskCreate is
+                      // outstanding so the next unknown TaskUpdate id can still be
+                      // reconciled positionally — see unresolvedTaskCreateToolUseIds.
+                      unresolvedTaskCreateToolUseIds.push(block.toolUseId);
+                      if (debugUsage()) {
+                        console.error(
+                          '[agent-adapters claude-code] TaskCreate tool_result did not name an ' +
+                            'assigned id; falling back to positional aliasing (M16)',
+                          { toolUseId: block.toolUseId, content: block.content },
+                        );
+                      }
+                    }
                   }
                   pendingTodoToolUseIds.delete(block.toolUseId);
                   return false;
@@ -1557,9 +1749,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   usage: normalizeClaudeUsage(e.usage),
                 };
               }
-              // Nothing left to wait for beyond a possible further wake-up: give
-              // the engine a bounded window to take it — see armWakeGrace().
-              if (holdingForBackgroundWork && noWorkLeftRunning()) armWakeGrace();
+              // The in-flight set just shrank, so the bound may have changed from the
+              // long cap to the short grace — re-park on whichever now applies.
+              touchHold(event);
             } else if (subtype === 'task_updated') {
               // The engine's own "this task finished" patch, which arrives BEFORE
               // the corresponding notification (observed live). No event of its own
@@ -1571,7 +1763,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const status = (e.patch as Record<string, unknown> | undefined)?.status;
               if (typeof status === 'string' && /^(completed|failed|stopped|cancell?ed)$/.test(status)) {
                 finishedTaskIds.add(taskId);
-                if (holdingForBackgroundWork && noWorkLeftRunning()) armWakeGrace();
+                touchHold(event);
               }
             } else if (subtype === 'compact_boundary') {
               yield { type: 'flush' };
@@ -1581,28 +1773,58 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
           case 'result': {
             const resultEvent = event as Record<string, unknown>;
-            // In-flight background work, from the adapter's own tracking:
-            // `SDKResultMessage` carries no such list (the SDK exposes
-            // `background_tasks[]` on the Stop hook input, not on `result`), so
-            // a future SDK field is read as a union with the tracked set rather
-            // than as a replacement.
-            const trackedInFlight: BackgroundTaskRef[] = [...inFlightTaskIds].map((id) => {
-              const kind = taskKindById.get(id);
-              return {
-                taskId: id,
-                taskType: kind?.taskType ?? 'subagent',
-                ...(kind?.description ? { description: kind.description } : {}),
-              };
-            });
-            const sdkReported = Array.isArray(resultEvent.background_tasks)
-              ? (resultEvent.background_tasks as Record<string, unknown>[])
-                  .filter((t) => typeof t?.id === 'string' && !inFlightTaskIds.has(t.id as string))
-                  .map((t) => ({
-                    taskId: t.id as string,
-                    taskType: (t.type as BackgroundTaskType) ?? 'shell',
-                    ...(typeof t.description === 'string' ? { description: t.description } : {}),
-                  }))
-              : [];
+            // Consume the engine's own in-flight report for this turn exactly once:
+            // it feeds both the `backgroundTasks` projection below and the keep-open
+            // decision at the bottom, and must not leak into a later turn.
+            const stopHookReported = stopHookTasks;
+            stopHookTasks = undefined;
+
+            // What `backgroundTasks` carries is BACKGROUND work — never a subagent.
+            // `types.ts` and M17 are explicit ("Never a subagent": real spawned helper
+            // agents keep the `subagent_*` family), and the field's documented meaning
+            // is "this result is not end-of-run". Subagents still hold the session —
+            // that is the hold's job above — but they are not this signal's content,
+            // so every source is filtered through `classifyTaskType()`.
+            const trackedInFlight: BackgroundTaskRef[] = [...inFlightTaskIds]
+              .filter((id) => taskKindById.get(id)?.isBackground === true)
+              .map((id) => {
+                const kind = taskKindById.get(id)!;
+                return {
+                  taskId: id,
+                  taskType: kind.taskType,
+                  ...(kind.description ? { description: kind.description } : {}),
+                };
+              });
+
+            // The engine's own list, from whichever place this SDK publishes it: the
+            // Stop hook today, `result.background_tasks` if a future SDK adds it there.
+            // Its `type` is a FRIENDLY LABEL, not the `task_type` discriminant — it is
+            // literally `'subagent'` for helper agents (sdk.d.ts BackgroundTaskSummary,
+            // measured on 0.3.210) — so it goes through the same classifier rather than
+            // being trusted as a `BackgroundTaskType`.
+            const engineReported = [
+              ...(Array.isArray(resultEvent.background_tasks)
+                ? (resultEvent.background_tasks as Record<string, unknown>[])
+                : []),
+              ...(stopHookReported ?? []),
+            ] as Record<string, unknown>[];
+            const seenIds = new Set(trackedInFlight.map((t) => t.taskId));
+            const sdkReported: BackgroundTaskRef[] = [];
+            for (const t of engineReported) {
+              if (typeof t?.id !== 'string' || seenIds.has(t.id)) continue;
+              const kind = classifyTaskType(
+                // Prefer the tracked discriminant when we have one; the label is a
+                // fallback for work that never produced a `task_started` we saw.
+                taskKindById.get(t.id)?.taskType ?? (typeof t.type === 'string' ? t.type : undefined),
+              );
+              if (!kind.isBackground) continue;
+              seenIds.add(t.id);
+              sdkReported.push({
+                taskId: t.id,
+                taskType: kind.taskType,
+                ...(typeof t.description === 'string' ? { description: t.description } : {}),
+              });
+            }
             const backgroundTasks = [...trackedInFlight, ...sdkReported];
 
             if (resultEvent.subtype === 'success') {
@@ -1628,11 +1850,18 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 type: 'result',
                 output: (resultEvent.result as string) ?? '',
                 rawMessages,
-                // Per-query() cumulative from the SDK (across turns/subagents within THIS query()
-                // call). NOT cross-session — on options.resume, the SDK reports only this query()'s
-                // tokens, not the original session combined. See:
+                // PER-TURN, not cumulative. A run can emit several `result`s — a queued
+                // mid-turn push, or the engine waking the model after background work —
+                // and each one carries only its own turn's cost, so a run total is the
+                // SUM of them (`sumUsageFromEvents()`). Measured on 0.3.153 and 0.3.210:
+                // a second result routinely reports FEWER tokens than the first in every
+                // field, which cumulative counting cannot do. Matches the SDK's own
+                // docs — "each result only reflects the cost of that individual call…
+                // accumulate the totals yourself":
                 // https://code.claude.com/docs/en/agent-sdk/cost-tracking
-                // Do not double-count with per-message usage on NormalizedMessage.
+                // Also NOT cross-session: on options.resume the SDK reports only this
+                // query()'s tokens. Do not double-count with per-message usage on
+                // NormalizedMessage.
                 usage: claudeUsage,
                 contextSize,
                 sessionId,
@@ -1657,18 +1886,30 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             // the session past this result and wakes the model, which then needs the
             // control channel this transport carries.
             //
-            // The condition is "this run started ANY task", not "work is in flight
-            // right now". Nothing-in-flight is not the same as nothing-coming:
-            // observed on 0.3.210, three subagents all reported completion INSIDE the
-            // turn, and the engine still resumed the model for three further turns and
-            // asked a question at the end — which landed on a dead transport when the
-            // channel closed at that first result. Settled work therefore still gets
-            // the short grace window; only work still running gets the long cap.
-            // Both bounds live in beginHold()/armWakeGrace().
+            // Two sources answer "is the engine coming back?", and the hold takes
+            // their UNION, because each misses what the other catches:
+            //
+            //  - the engine's own `Stop`-hook report, when it names something in
+            //    flight. Precise, but version-dependent — 0.3.153 leaves subagents out
+            //    of it entirely and reported `[]` on a session it then resumed, so
+            //    only its positive answer is load-bearing (see A01).
+            //  - the adapter's own tracking, as "this run started ANY task". Coarse on
+            //    purpose: nothing-in-flight is not the same as nothing-coming —
+            //    observed on 0.3.210, three subagents all reported completion INSIDE
+            //    the turn, and the engine still resumed the model for three further
+            //    turns and asked a question at the end, which landed on a dead
+            //    transport when the channel closed at that first result.
+            //
+            // Settled work then gets the short grace window and work still running
+            // gets the long cap; both live in parkHold().
+            const engineHoldsSession = (stopHookReported?.length ?? 0) > 0;
             if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
               // keep open: SDK consumes the next queued message as a new turn
               endHold();
-            } else if (resultEvent.subtype === 'success' && taskKindById.size > 0) {
+            } else if (
+              resultEvent.subtype === 'success' &&
+              (engineHoldsSession || taskKindById.size > 0)
+            ) {
               beginHold();
             } else {
               endHold();

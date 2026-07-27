@@ -751,6 +751,28 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
         ).toBeGreaterThanOrEqual(1);
         assertUserInputRequest(events, 'model-tool');
         expect(events.some((e) => e.type === 'result')).toBe(true);
+
+        // The hold must be SILENT on a run that worked. Only the hard cap warns, and
+        // reaching it here would mean the run was truncated — either mid-turn (the
+        // `Stream closed` defect, re-created by the safety net) or with work still
+        // unsettled. A run that got its answer and reached `result` did neither.
+        // This also pins the regression where the grace window's expiry warned on the
+        // happy path: every task-touching run ended with a false data-loss banner
+        // claiming "Anything the model was told to do after the task did not run".
+        expect(
+          events.filter((e) => e.type === 'warning' && /background work/i.test(e.message)),
+          `a healthy ${cfg.shape} run must end without a hold-bound warning. Sequence: ${sequence}`,
+        ).toEqual([]);
+
+        // The in-flight signal names background work only — never a subagent (M17).
+        for (const r of events.filter((e) => e.type === 'result')) {
+          for (const t of ('backgroundTasks' in r ? (r.backgroundTasks ?? []) : [])) {
+            expect(
+              t.taskType,
+              `result.backgroundTasks must not carry a subagent (got ${t.taskType})`,
+            ).not.toMatch(/agent/i);
+          }
+        }
       },
       240_000,
     );

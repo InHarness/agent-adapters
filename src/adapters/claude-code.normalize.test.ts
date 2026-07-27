@@ -8,6 +8,7 @@ import {
   normalizeAssistantMessage,
   todoItemsFromTodoWriteInput,
   mergeTaskToolInputIntoSnapshot,
+  extractAssignedTaskId,
   CLAUDE_CODE_READONLY_BUILTINS,
   CLAUDE_CODE_MUTATING_BUILTINS,
   CLAUDE_CODE_TASK_TRACKING_TOOLS,
@@ -306,6 +307,41 @@ describe('mergeTaskToolInputIntoSnapshot', () => {
   it('creates a blank-content stub when TaskUpdate references an unknown taskId (e.g. resumed session)', () => {
     const out = mergeTaskToolInputIntoSnapshot([], 'toolu_5', { taskId: 'unknown', status: 'completed' });
     expect(out).toEqual([{ id: 'unknown', content: '', status: 'completed' }]);
+  });
+});
+
+// The alias above is only as good as the id extraction that feeds it, and that
+// extraction reads ENGLISH PROSE out of an unstructured tool_result. One reworded
+// CLI string silently reinstates the M16 bug, so accept the phrasings the engine
+// plausibly emits — not just the one it emits today — and prefer structure when
+// there is any.
+describe('extractAssignedTaskId', () => {
+  it('reads the phrasing the CLI actually emits', () => {
+    // Verbatim from a live TaskCreate on 0.3.153 AND 0.3.210 (both probed).
+    expect(extractAssignedTaskId('Task #1 created successfully: probe task')).toBe('1');
+  });
+
+  it.each([
+    ['Created task 1: probe task', '1'],
+    ['Created task #12: probe task', '12'],
+    ['Task 7 created', '7'],
+    ['{"taskId":"42","subject":"probe task"}', '42'],
+    ['{"task_id":9}', '9'],
+    ['task_id: 3', '3'],
+    ['taskId=88', '88'],
+  ])('reads %j as %j', (content, expected) => {
+    expect(extractAssignedTaskId(content)).toBe(expected);
+  });
+
+  it('does not mistake a word in the sentence for an id', () => {
+    // `/task\s+(\S+)\s+created/` alone captures "was" here — an id that matches
+    // nothing, silently poisoning the alias map.
+    expect(extractAssignedTaskId('The task was created successfully')).toBeUndefined();
+  });
+
+  it('returns undefined when nothing in the payload names an id', () => {
+    expect(extractAssignedTaskId('OK')).toBeUndefined();
+    expect(extractAssignedTaskId('')).toBeUndefined();
   });
 });
 

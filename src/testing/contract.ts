@@ -58,13 +58,17 @@ export async function assertSimpleText(stream: AsyncIterable<UnifiedEvent>): Pro
     );
   }
 
-  const nonFlush = events.filter((e) => e.type !== 'flush');
-  if (nonFlush.length > 0) {
+  // "Terminal" means last non-`flush`, non-`warning`. Both are side-band: `flush` is
+  // a boundary marker, and a `warning` may legitimately trail the terminal `result`
+  // (the background-task hold raises one from a timer, after the last result — M17).
+  // Same precedent as the `adapter_ready is the first non-warning event` check below.
+  const terminal = events.filter((e) => e.type !== 'flush' && e.type !== 'warning');
+  if (terminal.length > 0) {
     assertions.push(
       assert(
         'result is terminal event',
-        nonFlush[nonFlush.length - 1].type === 'result',
-        `Last non-flush event is ${nonFlush[nonFlush.length - 1].type}, expected result`,
+        terminal[terminal.length - 1].type === 'result',
+        `Last non-flush/non-warning event is ${terminal[terminal.length - 1].type}, expected result`,
       ),
     );
   }

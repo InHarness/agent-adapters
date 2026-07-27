@@ -35,6 +35,27 @@ describe('contract assertions with MockAdapter', () => {
     expect(result.passed).toBe(false);
   });
 
+  it('assertSimpleText tolerates a warning trailing the terminal result', async () => {
+    // `warning` is side-band and may legitimately follow the terminal `result`: the
+    // background-task hold raises one from a timer callback, which by construction
+    // fires after the last result of the run (M17). "Result is terminal" means last
+    // non-`warning`, non-`flush` event.
+    const events: UnifiedEvent[] = [
+      { type: 'text_delta', text: 'Hello world', isSubagent: false },
+      { type: 'assistant_message', message: assistantMsg },
+      { type: 'result', output: 'Hello world', rawMessages: [assistantMsg], usage: { inputTokens: 10, outputTokens: 5 }, contextSize: 15 },
+      { type: 'warning', message: 'claude-code: background work still in flight after 120000ms' },
+    ];
+
+    const mock = new MockAdapter('test', events);
+    const result = await assertSimpleText(mock.execute(createTestParams()));
+    expect(
+      result.assertions.find((a) => a.name === 'result is terminal event')?.passed,
+      'a trailing warning must not read as a non-terminal stream',
+    ).toBe(true);
+    expect(result.passed).toBe(true);
+  });
+
   it('assertToolUse passes with tool events', async () => {
     const events: UnifiedEvent[] = [
       { type: 'tool_use', toolName: 'Read', toolUseId: 'tu_1', input: { path: '/tmp' }, isSubagent: false },
