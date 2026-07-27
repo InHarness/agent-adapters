@@ -340,6 +340,25 @@ export const BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT =
   'a native ask-user / AskUserQuestion / question tool available, you MUST use it instead of ' +
   'guessing.';
 
+// The subagent variant of the same shape. The reported failure log showed THREE
+// concurrent subagents settling immediately before the ask, which is a different
+// engine path from a backgrounded Bash task: `task_type` is a subagent rather than a
+// shell, and several notifications land at once.
+export const SUBAGENTS_THEN_QUESTION_PROMPT =
+  'Follow these steps exactly. Step 1: spawn three subagents in parallel, one per item, each ' +
+  'asked to reply with just one word: the first with "alpha", the second with "beta", the third ' +
+  'with "gamma". Step 2: immediately end your turn with a single short sentence saying you ' +
+  'dispatched them. Do NOT wait for them and do NOT summarise their answers yet — stop your turn ' +
+  'while they are still running. Step 3: later, when the subagents have reported back, you MUST ' +
+  'then use your ask-user question tool to ask the user to pick exactly one fruit from this list: ' +
+  'apple, banana, cherry. Do not guess. After the user answers, reply with exactly one word — the ' +
+  'chosen fruit.';
+export const SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT =
+  'You delegate independent work to subagents with the Task tool and let them run in the ' +
+  'background — you end your turn immediately instead of blocking, and you will be notified when ' +
+  'they finish. When you need a decision from the user and you have a native ask-user / ' +
+  'AskUserQuestion / question tool available, you MUST use it instead of guessing.';
+
 /**
  * Fail if any event carries the engine's closed-control-transport error.
  *

@@ -44,6 +44,8 @@ import {
   USER_QUESTION_SYSTEM_PROMPT,
   BACKGROUND_THEN_QUESTION_PROMPT,
   BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
+  SUBAGENTS_THEN_QUESTION_PROMPT,
+  SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
   assertNoStreamClosed,
   runUserQuestionScenario,
   assertUserInputRequest,
@@ -622,49 +624,143 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     // model WAS woken and DID attempt the ask; here it is never woken at all. Same area,
     // plausibly the same root cause, but do not claim this test reproduces it.
     //
+    // REPRODUCES the reported failure. Run as a matrix over the two axes that plausibly
+    // matter, so the outcome is a filled-in table rather than one pass/fail.
+    //
+    // Measured on sonnet-4.6 (`bash` = a `run_in_background` Bash task):
+    //
+    //   work shape        | prompt path | 0.3.153                  | 0.3.210
+    //   backgrounded bash | one-shot    | FLAKY — Stream closed    | FAIL — wake-up lost
+    //                     |             |   on 1 of 3 runs         |   entirely, no ask
+    //   backgrounded bash | streaming   | FLAKY — Stream closed    | pass (1 run)
+    //                     |             |   on 1 of 2 runs         |
+    //   subagents         | one-shot    | FLAKY — Stream closed    | not run
+    //                     |             |   on 1 run, 1 inconclusive |
+    //   subagents         | streaming   | inconclusive (1 run)     | not run
+    //
+    // Every shape and both prompt paths have now produced it. It is not specific to
+    // backgrounded shell work, not specific to the string-prompt path, and not specific
+    // to 0.3.210 — the 0.3.210 wake-up loss is a SEPARATE, deterministic defect.
+    //
+    // "Inconclusive" means the model dispatched the work but the engine completed it
+    // inside the turn, so the session was never held open and there was no post-`result`
+    // control request to lose. Those runs are skipped, not counted either way.
+    //
+    // The failing shape, verbatim, three times per run — the reported symptom:
+    //
+    //   tool_result isError: "Tool permission request failed: Error: Stream closed"
+    //
+    // Confirmed against the engine's own debug log (`DEBUG_CLAUDE_AGENT_SDK=1`, written
+    // to ~/.claude/debug/latest): the CLI is spawned with `--permission-prompt-tool
+    // stdio`, so permission requests ride stdio; after the turn's `result` the request
+    // cannot be sent and the CLI denies locally in ~4ms —
+    // `executePermissionRequestHooks called for tool: AskUserQuestion` immediately
+    // followed by `AskUserQuestion tool permission denied`, with no host round-trip.
+    // The model then retries twice more and falls back to prose.
+    //
+    // It is TIMING-DEPENDENT, which is why these are plain `it` and not `it.fails`: a
+    // `.fails` test would itself fail on the runs that happen to succeed. They are red on
+    // a reproducing run, and that is the deliverable of this branch. It also explains why
+    // the consumer saw it appear and then vanish after a restart.
+    //
+    // Both prompt paths reproduce it, so the earlier hypothesis that only the SDK's
+    // single-turn stdin close (`isSingleUserTurn`, string prompts only) was to blame is
+    // FALSIFIED — `streamingInput: true` dies the same way. What both paths share is
+    // that the adapter closes its side of the transport at the turn's `result`, while
+    // the engine keeps the session alive for in-flight background work.
+    //
     // See PLAN-tests-stream-e2e.md / PLAN-streamingn-input-fix.md.
-    it(
-      'AskUserQuestion still reaches the handler after a backgrounded task settles',
-      async () => {
+    const WAKE_UP_CONFIGS = [
+      {
+        shape: 'backgrounded bash',
+        promptPath: 'one-shot',
+        streamingInput: false,
+        prompt: BACKGROUND_THEN_QUESTION_PROMPT,
+        systemPrompt: BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
+      },
+      {
+        shape: 'backgrounded bash',
+        promptPath: 'streaming',
+        streamingInput: true,
+        prompt: BACKGROUND_THEN_QUESTION_PROMPT,
+        systemPrompt: BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
+      },
+      {
+        shape: 'subagents',
+        promptPath: 'one-shot',
+        streamingInput: false,
+        prompt: SUBAGENTS_THEN_QUESTION_PROMPT,
+        systemPrompt: SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
+      },
+      {
+        shape: 'subagents',
+        promptPath: 'streaming',
+        streamingInput: true,
+        prompt: SUBAGENTS_THEN_QUESTION_PROMPT,
+        systemPrompt: SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
+      },
+    ] as const;
+
+    it.each(WAKE_UP_CONFIGS)(
+      'AskUserQuestion reaches the handler after $shape settle [$promptPath]',
+      async (cfg, ctx) => {
         const adapter = createAdapter('claude-code');
         const { events, handlerCalls } = await runUserQuestionScenario(adapter, {
-          prompt: BACKGROUND_THEN_QUESTION_PROMPT,
-          systemPrompt: BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
+          prompt: cfg.prompt,
+          systemPrompt: cfg.systemPrompt,
           model: MODEL,
-          maxTurns: 10,
+          maxTurns: 12,
+          ...(cfg.streamingInput ? { streamingInput: true } : {}),
           mockAnswer: 'banana',
         });
 
         const sequence = events.map((e) => e.type).join(' → ');
 
-        // Precondition 1: the model really did background the shell work.
-        const backgroundedBash = events.some(
-          (e) =>
-            e.type === 'tool_use' &&
-            e.toolName === 'Bash' &&
-            /"run_in_background"\s*:\s*true/.test(JSON.stringify(e.input)),
-        );
+        // Precondition 1: the model really did dispatch backgroundable work of the
+        // requested shape. Otherwise the engine has nothing to hold the session for.
+        const dispatched =
+          cfg.shape === 'backgrounded bash'
+            ? events.some(
+                (e) =>
+                  e.type === 'tool_use' &&
+                  e.toolName === 'Bash' &&
+                  /"run_in_background"\s*:\s*true/.test(JSON.stringify(e.input)),
+              )
+            : events.some((e) => e.type === 'subagent_started') ||
+              events.some((e) => e.type === 'tool_use' && /^(Task|Agent)$/.test(e.toolName));
         expect(
-          backgroundedBash,
-          `model did not background the shell command — precondition unmet. Sequence: ${sequence}`,
+          dispatched,
+          `model did not dispatch ${cfg.shape} — precondition unmet. Sequence: ${sequence}`,
         ).toBe(true);
 
-        // Precondition 2 — the one that actually makes this scenario meaningful: the
-        // engine held the session open past the turn's `result` and woke the model when
-        // the task settled. The wake-up surfaces as the task_notification projection
-        // (today `subagent_completed`; `task_type` is dropped — known gap in
-        // spec/adapters/A01-claude-code.md). Without a wake-up there is no post-result
-        // control request, so a green run here would prove nothing.
-        expect(
-          events.some((e) => e.type === 'subagent_completed'),
-          'no background-task notification arrived — the session was never held open ' +
-            `past \`result\`, so this run does not exercise the bug. Sequence: ${sequence}`,
-        ).toBe(true);
+        // Precondition 2 — what actually makes a run meaningful: the engine held the
+        // session open past the turn's `result` and woke the model when the work settled.
+        // The wake-up surfaces as the task_notification projection (today
+        // `subagent_completed` for both shapes; `task_type` is dropped — known gap in
+        // spec/adapters/A01-claude-code.md). No wake-up ⇒ no post-`result` control
+        // request ⇒ the run proves nothing either way, so report it as INCONCLUSIVE
+        // rather than as a pass or a failure.
+        //
+        // This is what the two `subagents` rows do in practice: the model dispatches
+        // three subagents, but they complete inside the turn, so the session is never
+        // held open. Reproducing the reported shape (three subagents settling AFTER the
+        // turn ends) would need the engine to background them, which these prompts do
+        // not achieve on sonnet-4.6.
+        if (!events.some((e) => e.type === 'subagent_completed')) {
+          console.warn(
+            `[INCONCLUSIVE] ${cfg.shape} / ${cfg.promptPath}: no task notification — the ` +
+              `session was never held open past \`result\`. Sequence: ${sequence}`,
+          );
+          ctx.skip();
+          return;
+        }
 
         // The actual regression: the control transport must still be alive.
         assertNoStreamClosed(events);
-        expect(handlerCalls, 'onUserInput should fire after the background task settles')
-          .toBeGreaterThanOrEqual(1);
+        expect(
+          handlerCalls,
+          `onUserInput should fire after ${cfg.shape} settle. Sequence: ${sequence}`,
+        ).toBeGreaterThanOrEqual(1);
         assertUserInputRequest(events, 'model-tool');
         expect(events.some((e) => e.type === 'result')).toBe(true);
       },

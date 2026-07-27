@@ -8,7 +8,44 @@ Run on a **worktree**, finished with a **draft PR — never merged**.
 
 ---
 
-## RESULTS — what the tests actually found
+## RESULTS ROUND 2 — the reported symptom IS reproducible
+
+`Tool permission request failed: Error: Stream closed` now reproduces locally, on the repo's own
+SDK pin (0.3.153), sonnet-4.6 — three occurrences per failing run, exactly as reported.
+
+| work shape | prompt path | 0.3.153 | 0.3.210 |
+|---|---|---|---|
+| backgrounded bash | one-shot | **FLAKY** — `Stream closed` on 1 of 3 runs | FAIL — wake-up lost entirely |
+| backgrounded bash | streaming | **FLAKY** — `Stream closed` on 1 of 2 runs | pass (1 run) |
+| subagents | one-shot | **FLAKY** — `Stream closed` on 1 run, 1 inconclusive | not run |
+| subagents | streaming | inconclusive (1 run) | not run |
+
+- **Every shape and both prompt paths produce it.** So the Round 1 conclusion — that only the SDK's
+  `isSingleUserTurn` stdin close mattered — is **falsified**. What all paths share is that the
+  adapter closes its side of the transport at the turn's `result` while the engine keeps the session
+  alive for in-flight background work.
+- **It is timing-dependent**, which is why these stay plain `it` and not `it.fails` (a `.fails` test
+  would fail on the runs that happen to succeed). This also explains the consumer's "it started
+  working after a restart".
+- **Engine-side confirmation** (`DEBUG_CLAUDE_AGENT_SDK=1` → `~/.claude/debug/latest`): the CLI is
+  spawned with `--permission-prompt-tool stdio`, and on failure it logs
+  `executePermissionRequestHooks called for tool: AskUserQuestion` immediately followed ~4ms later by
+  `AskUserQuestion tool permission denied` — no host round-trip at all. The permission request has
+  nowhere to go, so the CLI denies locally; the model retries twice and falls back to prose.
+- **The 0.3.210 wake-up loss is a separate, deterministic defect** — there the model is never woken
+  at all, so there is no ask to lose.
+
+Second, unrelated defect found deterministically (mocked SDK, no live model):
+
+- **`abort()` cannot terminate a run parked on an unanswered `onUserInput`.** The loop does
+  `await effectiveUserInputHandler(...)` with nothing racing the abort signal, and `abort()` only
+  aborts the `AbortController` and closes the input channel. A host whose handler resolves on a human
+  reply therefore can never reclaim the session — adapter and SDK subprocess both leak. Reproduced as
+  a hung pull; committed as `it.fails`.
+
+---
+
+## RESULTS ROUND 1 — superseded in part by the above
 
 The hypothesis in §1 below was only partly right; the live runs corrected it.
 

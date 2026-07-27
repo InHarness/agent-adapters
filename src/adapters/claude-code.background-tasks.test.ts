@@ -32,6 +32,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { collectEvents } from '../utils.js';
 import { createTestParams } from '../testing/helpers.js';
+import { AdapterAbortError } from '../types.js';
 import type { UnifiedEvent, UserInputRequest } from '../types.js';
 
 type QueryArgs = { prompt: AsyncIterable<unknown> | string; options: Record<string, unknown> };
@@ -241,5 +242,153 @@ describe('claude-code streaming input — background-task session hold', () => {
     // The wake-up itself is surfaced (today as subagent_completed — task_type is
     // dropped, tracked separately as a known gap in spec/adapters/A01-claude-code.md).
     expect(events.some((e) => e.type === 'subagent_completed')).toBe(true);
+  });
+});
+
+// --- Abort / cut-off contract while a user-input request is outstanding ---
+
+/**
+ * A control request the host has not answered yet. Nothing about the run advances
+ * until `onUserInput` resolves — which, for a real host, means a human replying over
+ * an HTTP round-trip. So this is the state a session sits in whenever a question is
+ * on screen, and `abort()` is the only lever the host has left.
+ */
+function askOnceScript(): Script {
+  return async function* ({ prompt, options }) {
+    const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+    await input.next();
+
+    // Deferred a macrotask so the adapter's loop has armed its waker (see the note
+    // in runScenario).
+    await new Promise<void>((resolve) => {
+      setImmediate(() => {
+        const canUseTool = options.canUseTool as (
+          t: string,
+          i: Record<string, unknown>,
+          c: { toolUseID: string },
+        ) => Promise<unknown>;
+        void canUseTool(
+          'AskUserQuestion',
+          { questions: [{ question: 'A or B?', header: 'Pick', options: [{ label: 'A' }] }] },
+          { toolUseID: 'toolu_abort' },
+        ).then(
+          () => resolve(),
+          () => resolve(),
+        );
+      });
+    });
+
+    yield resultMessage();
+  };
+}
+
+const PULL_TIMEOUT_MS = 2_000;
+const HUNG = Symbol('hung');
+
+/**
+ * Pump the stream by hand rather than with `for await`, so a stall is a failed
+ * assertion instead of a hung suite: `for await` owns the iterator and gives us no
+ * way to walk away from a pull that never settles.
+ *
+ * `onEvent` runs for each event — that is where the test injects `abort()`.
+ */
+async function pumpUntilDone(
+  stream: AsyncIterable<UnifiedEvent>,
+  onEvent: (e: UnifiedEvent) => void,
+): Promise<{ events: UnifiedEvent[]; terminated: boolean }> {
+  const iterator = stream[Symbol.asyncIterator]();
+  const events: UnifiedEvent[] = [];
+
+  for (;;) {
+    const pull = iterator.next();
+    const winner = await Promise.race([
+      pull,
+      new Promise<typeof HUNG>((r) => setTimeout(() => r(HUNG), PULL_TIMEOUT_MS)),
+    ]);
+
+    if (winner === HUNG) {
+      // Deliberately NOT awaited: the generator is parked on an `await`, not a
+      // `yield`, so `return()` cannot run its `finally` until that await settles —
+      // awaiting it here would reproduce the very hang we are reporting.
+      void iterator.return?.();
+      return { events, terminated: false };
+    }
+    if (winner.done) return { events, terminated: true };
+
+    events.push(winner.value);
+    onEvent(winner.value);
+  }
+}
+
+describe('claude-code — abort while a user-input request is outstanding', () => {
+  // KNOWN FAILING (`it.fails`) if the adapter cannot break out of a pending handler.
+  //
+  // The loop yields `user_input_request` and then does
+  // `await effectiveUserInputHandler(pending.req)`. Nothing in that await watches
+  // `abortController.signal`, and `abort()` only aborts the controller and closes the
+  // input channel — neither settles the host's promise. A host whose handler resolves
+  // on a human reply (the normal shape) therefore has no way to reclaim the session:
+  // it stays parked forever, holding its adapter and its SDK subprocess.
+  //
+  // This is also the only hypothesis so far that explains "restarting the app fixed
+  // it" — library logic does not heal on restart, but an in-memory session parked on
+  // an unresolved promise does.
+  it.fails('abort() terminates a run parked on an unanswered question', async () => {
+    script = askOnceScript();
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const stream = adapter.execute(
+      createTestParams({
+        streamingInput: true,
+        // Never resolves — a question put on screen that the user never answers.
+        onUserInput: () => new Promise<never>(() => {}),
+      }),
+    );
+
+    let sawRequest = false;
+    const { events, terminated } = await pumpUntilDone(stream, (e) => {
+      if (e.type === 'user_input_request') {
+        sawRequest = true;
+        adapter.abort();
+      }
+    });
+
+    expect(sawRequest, 'the question should have surfaced before aborting').toBe(true);
+    expect(
+      terminated,
+      'abort() must end a run parked on an unanswered user-input request — otherwise the ' +
+        'host can never reclaim the session and both the adapter and its SDK subprocess leak',
+    ).toBe(true);
+    expect(
+      events.some((e) => e.type === 'error' && e.error instanceof AdapterAbortError),
+      'aborting should surface AdapterAbortError',
+    ).toBe(true);
+  });
+
+  it('a throwing onUserInput surfaces an error and the run still completes', async () => {
+    script = askOnceScript();
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const events = await collectEvents(
+      adapter.execute(
+        createTestParams({
+          streamingInput: true,
+          onUserInput: async () => {
+            throw new Error('handler exploded');
+          },
+        }),
+      ),
+      10_000,
+    );
+
+    // The adapter resolves the SDK-side promise with `cancel` so the engine is never
+    // left waiting on a decision, reports the throw, and still reaches the result.
+    expect(
+      events.some((e) => e.type === 'error' && /handler exploded/.test(e.error.message)),
+      'the handler throw should surface as an error event',
+    ).toBe(true);
+    expect(events.some((e) => e.type === 'result')).toBe(true);
   });
 });
