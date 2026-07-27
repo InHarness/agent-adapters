@@ -77,7 +77,22 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     resumeImmutable: true,
     resumeImmutableReason:
       'Thinking mode is locked once a session has started. The prior assistant turn\'s thinking blocks are immutable; resuming with a different thinking config makes Anthropic reject the request (400 "thinking blocks cannot be modified"). Start a new session to change it.',
+    // A view of `models.ts:ADAPTIVE_THINKING_ONLY`, keyed by alias rather than
+    // resolved id. `models.test.ts` pins the two lists together — a member
+    // missing here leaves the UI offering a budget the model rejects at 400.
     modelOverrides: {
+      'fable-5': {
+        values: ['adaptive'],
+        description: 'Fable 5 supports adaptive thinking only (fixed budget not allowed).',
+      },
+      'sonnet-5': {
+        values: ['adaptive'],
+        description: 'Sonnet 5 supports adaptive thinking only (fixed budget not allowed).',
+      },
+      'opus-5': {
+        values: ['adaptive'],
+        description: 'Opus 5 supports adaptive thinking only (fixed budget not allowed).',
+      },
       'opus-4.8': {
         values: ['adaptive'],
         description: 'Opus 4.8 supports adaptive thinking only (fixed budget not allowed).',
@@ -85,6 +100,10 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
       'opus-4.7': {
         values: ['adaptive'],
         description: 'Opus 4.7 supports adaptive thinking only (fixed budget not allowed).',
+      },
+      'opus-4.6': {
+        values: ['adaptive'],
+        description: 'Opus 4.6 supports adaptive thinking only (fixed budget not allowed).',
       },
     },
   },

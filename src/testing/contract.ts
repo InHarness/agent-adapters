@@ -201,6 +201,60 @@ export function assertAdapterReady(
 }
 
 /**
+ * Validate that an adapter whose SDK never backgrounds work degrades by
+ * **absence** (M17): no `background_task_*` event is ever emitted, and no
+ * `result` carries a `backgroundTasks` in-flight signal.
+ *
+ * Absence is the whole contract — an adapter that instead reported the gap as an
+ * `error`, or warned about it on every run, would be just as wrong as one that
+ * emitted the events. So this also asserts nothing complained: a consumer that
+ * treats warnings as actionable must not be handed one per turn for a capability
+ * it never asked for.
+ *
+ * Operates on already-collected events rather than a stream, so it can be layered
+ * onto an existing scenario's events without paying for a second run.
+ */
+export function assertNoBackgroundTasks(events: UnifiedEvent[]): ContractResult {
+  const assertions: ContractAssertion[] = [];
+
+  const emitted = events.filter((e) => e.type.startsWith('background_task_'));
+  assertions.push(
+    assert(
+      'no background_task_* events',
+      emitted.length === 0,
+      `Expected none, got: ${emitted.map((e) => e.type).join(', ')}`,
+    ),
+  );
+
+  const signalling = events
+    .filter((e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result')
+    .filter((r) => r.backgroundTasks !== undefined);
+  assertions.push(
+    assert(
+      'no result carries a backgroundTasks signal',
+      signalling.length === 0,
+      `${signalling.length} result event(s) carry backgroundTasks — a consumer would keep ` +
+        `iterating for a background_task_completed that never arrives`,
+    ),
+  );
+
+  const complaints = events.filter(
+    (e) => e.type === 'warning' && /background|task/i.test(e.message),
+  );
+  assertions.push(
+    assert(
+      'the gap is silent, not warned about',
+      complaints.length === 0,
+      `Unsupported background tasks must degrade silently, got: ${complaints
+        .map((e) => (e as Extract<UnifiedEvent, { type: 'warning' }>).message)
+        .join(' | ')}`,
+    ),
+  );
+
+  return buildResult('no_background_tasks', events, assertions);
+}
+
+/**
  * Validate a multi-turn stream.
  * Checks: ≥2 assistant_message events, ≥2 tool_use events, rawMessages.length ≥ 2.
  */

@@ -10,6 +10,7 @@ import type { UnifiedEvent } from '../../types.js';
 import {
   requireEnv,
   assertSimpleTextStream,
+  assertNoBackgroundTasksStream,
   assertEventTypes,
   createPlanModeTmpDir,
   assertNoFileCreated,
@@ -78,6 +79,10 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     );
 
     assertSimpleTextStream(events);
+
+    // Gemini's SDK never backgrounds work (M17) — the family must be absent, and
+    // absence is not something to warn about on every turn.
+    assertNoBackgroundTasksStream(events);
 
     // Gemini has no native todo/plan primitive — snapshot must stay undefined,
     // and no todo_list_updated events should fire.

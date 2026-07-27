@@ -10,6 +10,7 @@ import { AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
 import {
   assertSimpleTextStream,
+  assertNoBackgroundTasksStream,
   createPlanModeTmpDir,
   assertNoFileCreated,
   SIMPLE_PROMPT,
@@ -74,6 +75,10 @@ describe.skipIf(SKIP)('codex e2e', () => {
     );
 
     assertSimpleTextStream(events);
+
+    // The codex SDK never backgrounds work (M17) — the family must be absent, and
+    // absence is not something to warn about on every turn.
+    assertNoBackgroundTasksStream(events);
 
     // Codex only persists assistant text in NormalizedMessage.content;
     // shell/file/mcp tool flows surface as events but stay out of rawMessages.

@@ -174,33 +174,57 @@ const adapter = createAdapter('claude-code', { provider: 'openrouter', apiKey: '
 
 Each architecture has a set of short aliases for popular models. Use an alias instead of the full model ID — the adapter resolves it at runtime. You can also pass the full model ID directly.
 
-| Architecture | Alias | Full model ID |
-|---|---|---|
-| `claude-code` | `fable-5` | `claude-fable-5` |
-| | `sonnet-4.6` | `claude-sonnet-4-6` |
-| | `sonnet-4.5` | `claude-sonnet-4-5-20250929` |
-| | `opus-4.8` | `claude-opus-4-8` |
-| | `opus-4.7` | `claude-opus-4-7` |
-| | `opus-4.6` | `claude-opus-4-6` |
-| | `opus-4.5` | `claude-opus-4-5-20251101` |
-| | `haiku-4.5` | `claude-haiku-4-5-20251001` |
-| `claude-code-ollama` | `qwen-coder-32b` | `qwen2.5-coder:32b` |
-| | `deepseek-coder` | `deepseek-coder-v2:latest` |
-| | `codellama-70b` | `codellama:70b` |
-| | `llama-3.1-70b` | `llama3.1:70b` |
-| `claude-code-minimax` | `minimax-m2.7` | `MiniMax-M2.7` |
-| `codex` | `o4-mini` | `o4-mini` |
-| | `o3` | `o3` |
-| | `codex-mini` | `codex-mini-latest` |
-| `opencode-openrouter` | `claude-fable-5` | `anthropic/claude-fable-5` |
-| | `claude-opus-4.8` | `anthropic/claude-opus-4.8` |
-| | `claude-sonnet-4` | `anthropic/claude-sonnet-4` |
-| | `claude-opus-4` | `anthropic/claude-opus-4` |
-| | `gemini-2.5-pro` | `google/gemini-2.5-pro` |
-| | `deepseek-r1` | `deepseek/deepseek-r1` |
-| `gemini` | `gemini-2.5-pro` | `gemini-2.5-pro` |
-| | `gemini-2.5-flash` | `gemini-2.5-flash` |
-| | `gemini-2.0-flash` | `gemini-2.0-flash` |
+Models marked **adaptive-only** fix their own thinking budget: the adapter leaves them on native adaptive thinking and never pushes `claude_thinking: 'enabled'`.
+
+| Architecture | Alias | Full model ID | |
+|---|---|---|---|
+| `claude-code` | `fable-5` | `claude-fable-5` | adaptive-only |
+| | `sonnet-5` | `claude-sonnet-5` | adaptive-only |
+| | `sonnet-4.6` | `claude-sonnet-4-6` | |
+| | `sonnet-4.5` | `claude-sonnet-4-5-20250929` | |
+| | `opus-5` | `claude-opus-5` | adaptive-only |
+| | `opus-4.8` | `claude-opus-4-8` | adaptive-only |
+| | `opus-4.7` | `claude-opus-4-7` | adaptive-only |
+| | `opus-4.6` | `claude-opus-4-6` | adaptive-only |
+| | `opus-4.5` | `claude-opus-4-5-20251101` | |
+| | `haiku-4.5` | `claude-haiku-4-5-20251001` | |
+| `claude-code-ollama` | `qwen-coder-32b` | `qwen2.5-coder:32b` | |
+| | `deepseek-coder` | `deepseek-coder-v2:latest` | |
+| | `codellama-70b` | `codellama:70b` | |
+| | `llama-3.1-70b` | `llama3.1:70b` | |
+| `claude-code-minimax` | `minimax-m2.7` | `MiniMax-M2.7` | |
+| `codex` | `gpt-5.5` | `gpt-5.5` | |
+| | `gpt-5.5-codex` | `gpt-5.5-codex` | |
+| | `gpt-5.5-mini` | `gpt-5.5-mini` | |
+| | `gpt-5.4` | `gpt-5.4` | |
+| | `gpt-5.4-codex` | `gpt-5.4-codex` | |
+| | `gpt-5.4-mini` | `gpt-5.4-mini` | |
+| | `gpt-5` | `gpt-5` | |
+| | `gpt-5-codex` | `gpt-5-codex` | |
+| | `gpt-5-mini` | `gpt-5-mini` | |
+| `opencode-openrouter` | `kimi-k2.6` | `moonshotai/kimi-k2.6` | |
+| | `step-3.5-flash` | `stepfun/step-3.5-flash` | |
+| | `ling-2.6-1t-free` | `inclusionai/ling-2.6-1t:free` | |
+| | `minimax-m2.7` | `minimax/minimax-m2.7` | |
+| | `claude-sonnet-4.6` | `anthropic/claude-sonnet-4.6` | |
+| | `hy3-preview-free` | `tencent/hy3-preview:free` | |
+| | `gemini-2.5-flash` | `google/gemini-2.5-flash` | |
+| | `nemotron-3-super-free` | `nvidia/nemotron-3-super:free` | |
+| | `claude-fable-5` | `anthropic/claude-fable-5` | |
+| | `claude-opus-5` | `anthropic/claude-opus-5` | |
+| | `claude-opus-4.8` | `anthropic/claude-opus-4.8` | |
+| | `claude-opus-4.7` | `anthropic/claude-opus-4.7` | |
+| | `claude-sonnet-4` | `anthropic/claude-sonnet-4` | |
+| | `claude-opus-4` | `anthropic/claude-opus-4` | |
+| | `gemini-2.5-pro` | `google/gemini-2.5-pro` | |
+| | `deepseek-r1` | `deepseek/deepseek-r1` | |
+| `gemini` | `gemini-3.1-pro` | `gemini-3.1-pro-preview` | |
+| | `gemini-3.1-flash` | `gemini-3-flash-preview` | |
+| | `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite-preview` | |
+| | `gemini-2.5-pro` | `gemini-2.5-pro` | |
+| | `gemini-2.5-flash` | `gemini-2.5-flash` | |
+| | `gemini-2.5-flash-lite` | `gemini-2.5-flash-lite` | |
+| | `gemini-2.0-flash` | `gemini-2.0-flash` | |
 
 ```ts
 import { createAdapter, resolveModel, getModelsForArchitecture, MODEL_ALIASES } from '@inharness-ai/agent-adapters';

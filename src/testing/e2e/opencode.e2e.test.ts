@@ -11,6 +11,7 @@ import type { UnifiedEvent } from '../../types.js';
 import {
   requireEnv,
   assertSimpleTextStream,
+  assertNoBackgroundTasksStream,
   SIMPLE_PROMPT,
   SIMPLE_SYSTEM_PROMPT,
   SUBAGENT_PROMPT,
@@ -71,6 +72,10 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
     );
 
     assertSimpleTextStream(events);
+
+    // The opencode SDK never backgrounds work (M17) — the family must be absent, and
+    // absence is not something to warn about on every turn.
+    assertNoBackgroundTasksStream(events);
 
     const result = events.find(
       (e): e is Extract<UnifiedEvent, { type: 'result' }> => e.type === 'result',

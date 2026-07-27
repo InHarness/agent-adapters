@@ -12,6 +12,7 @@ import type { UnifiedEvent } from '../types.js';
 import { collectEvents } from '../utils.js';
 import { createTestParams } from '../testing/helpers.js';
 import { assertNormalization } from '../testing/normalization.js';
+import { assertNoBackgroundTasks } from '../testing/contract.js';
 import {
   SCENARIO_TEXT_ONLY,
   SCENARIO_TOOL_FLOW,
@@ -304,5 +305,22 @@ describe('codex normalization (fixture replay)', () => {
     } finally {
       if (prev !== undefined) process.env.OPENAI_API_KEY = prev;
     }
+  });
+});
+
+describe('codex — background tasks degrade by absence (M17)', () => {
+  // The codex SDK never backgrounds work, so the whole `background_task_*` family
+  // and the `result.backgroundTasks` signal must simply never appear — and must
+  // not be reported as an error or a per-run warning either. Replayed across
+  // several shapes because a stray emission would most likely come from a
+  // *specific* native event being mismapped, not from the happy path.
+  it.for([
+    ['text only', SCENARIO_TEXT_ONLY],
+    ['tool flow', SCENARIO_TOOL_FLOW],
+    ['command execution', SCENARIO_FAILED_COMMAND],
+  ] as const)('%s', async ([, fixture]) => {
+    const events = await runCodex(fixture);
+    const contract = assertNoBackgroundTasks(events);
+    expect(contract.assertions.filter((a) => !a.passed)).toEqual([]);
   });
 });
