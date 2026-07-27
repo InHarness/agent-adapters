@@ -43,6 +43,8 @@ Two adapters project positively (A01, A03) from different sources; two are hones
 
 Within an adapter's declared L7 range, the task-tracking tool's field/tool *names* may drift without a major SDK bump. M16's rule: read the tool input **defensively** from `Record<string,unknown>` and keep a **dual path** across known aliases, so a renamed field degrades to a correct projection, never a silent no-op (the failure mode where a mis-guessed field name yields an empty todo with no error). The A01 `TodoWrite` → `TaskCreate/…` cutover is the reference instance (see the L7 slice schema <section_ref anchor="d0npth7e"/> and the matrix above).
 
+**Create-then-update must reconcile to one item.** In a per-item CRUD family the create call carries no identifier — the engine assigns one and reports it in the create's `tool_result` — while every later update keys on that assigned id. A projection built from tool *inputs* alone has nothing to match on, so a `TaskUpdate({ taskId, status })` lands as a **second, content-less item** instead of a status change on the first: the snapshot grows a blank-titled entry and the real item never moves. The projection MUST therefore recover the assigned id from the create's `tool_result` and alias it to the item that call produced. This is the one place the family's `tool_result` carries information its input does not; it is read for the identifier only, and the payload stays suppressed as redundant.
+
 <!-- anchor: 8awtmgyk -->
 ## SDK compatibility & schema drift (L7)
 

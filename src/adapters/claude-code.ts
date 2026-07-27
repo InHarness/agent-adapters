@@ -234,12 +234,14 @@ export function todoItemsFromTodoWriteInput(input: Record<string, unknown>): Tod
  * schema (`@anthropic-ai/claude-agent-sdk`'s `sdk-tools.d.ts`):
  * `TaskCreateInput`/`TaskUpdateInput` use `subject`/`description`, and
  * `TaskUpdateInput`/`TaskGetInput` key on `taskId` — never `id`, and
- * `TaskCreateInput` carries no identifier at all (the server only assigns
- * one in the `tool_result`, which this adapter does not parse). A created
- * item is keyed by its `toolUseId` instead, so it will NOT reconcile with a
- * later `TaskUpdate({ taskId: <real server id> })` referencing the same
- * task — a known limitation, tracked via a clarification patch on the
- * 0-0-5-to-0-0-6 brief.
+ * `TaskCreateInput` carries no identifier at all: the engine assigns one and
+ * reports it in the create's `tool_result` (`"Task #1 created successfully:
+ * <subject>"`), which a later `TaskUpdate({ taskId: '1' })` then keys on. A
+ * created item is keyed by its `toolUseId`, so the caller passes
+ * `serverIdAliases` — assigned id → the `toolUseId` of the create that produced
+ * it — and an update reconciles with the item it belongs to. Without that alias
+ * the update would append a second, content-less item and the real one would
+ * never change status (M16).
  *
  * Returns `undefined` (no merge) when the call carries no writable field —
  * `TaskGet`'s `{ taskId }` and `TaskList`'s `{}` inputs never do. The caller
@@ -253,6 +255,7 @@ export function mergeTaskToolInputIntoSnapshot(
   snapshot: TodoItem[],
   toolUseId: string,
   input: Record<string, unknown>,
+  serverIdAliases?: ReadonlyMap<string, string>,
 ): TodoItem[] | undefined {
   const hasWritableField =
     typeof input.subject === 'string' ||
@@ -263,7 +266,10 @@ export function mergeTaskToolInputIntoSnapshot(
 
   const explicitId =
     typeof input.taskId === 'string' ? input.taskId : typeof input.id === 'string' ? input.id : undefined;
-  const id = explicitId ?? toolUseId;
+  // An engine-assigned id resolves back to the create that produced it; an id we
+  // have never seen assigned is used as-is (it may name a task from an earlier
+  // turn, which this snapshot cannot have).
+  const id = (explicitId ? serverIdAliases?.get(explicitId) : undefined) ?? explicitId ?? toolUseId;
 
   const next = snapshot.slice();
   const idx = next.findIndex((item) => item.id === id);
@@ -942,6 +948,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // tool_result payload is redundant with the snapshot already surfaced via
     // `todoList` / `todo_list_updated`.
     const pendingTodoToolUseIds = new Set<string>();
+    // `TaskCreate` tool_use ids awaiting their tool_result, which is where the
+    // engine reports the id it assigned, plus the resulting alias
+    // (assigned id → the toolUseId the snapshot keys that item by).
+    const taskCreateToolUseIds = new Set<string>();
+    const serverTaskIdToToolUseId = new Map<string, string>();
     // Scoped to this execute() call, so a resumed session starts with an
     // empty snapshot. TodoWrite is immune (the model always resends the full
     // list), but a TaskUpdate referencing a taskId created in a prior turn/
@@ -1357,10 +1368,18 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               if (block.toolName === 'TodoWrite') {
                 items = todoItemsFromTodoWriteInput(block.input);
               } else if (CLAUDE_CODE_TASK_TRACKING_TOOLS.includes(block.toolName)) {
-                items = mergeTaskToolInputIntoSnapshot(lastTodoSnapshot ?? [], block.toolUseId, block.input);
+                items = mergeTaskToolInputIntoSnapshot(
+                  lastTodoSnapshot ?? [],
+                  block.toolUseId,
+                  block.input,
+                  serverTaskIdToToolUseId,
+                );
               }
               if (items === undefined) continue;
 
+              // A create's engine-assigned id arrives in its tool_result; remember
+              // which tool_use to read it back for (see the suppression filter).
+              if (block.toolName === 'TaskCreate') taskCreateToolUseIds.add(block.toolUseId);
               pendingTodoToolUseIds.add(block.toolUseId);
               lastTodoSnapshot = items;
               normalized.content[i] = { type: 'todoList', items };
@@ -1410,6 +1429,15 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               // event stream.
               const content = rawContent.filter((block) => {
                 if (block.type === 'toolResult' && pendingTodoToolUseIds.has(block.toolUseId)) {
+                  // One thing in the payload is NOT redundant: the id the engine
+                  // assigned to a freshly created task ("Task #1 created
+                  // successfully: …"). Every later TaskUpdate keys on it, so
+                  // without this the update would append a second, blank-titled
+                  // item and the real one would never change status (M16).
+                  if (taskCreateToolUseIds.delete(block.toolUseId)) {
+                    const assigned = /task\s*#\s*(\S+?)\s+created/i.exec(String(block.content ?? ''));
+                    if (assigned) serverTaskIdToToolUseId.set(assigned[1], block.toolUseId);
+                  }
                   pendingTodoToolUseIds.delete(block.toolUseId);
                   return false;
                 }

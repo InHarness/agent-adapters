@@ -764,10 +764,15 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
           prompt: TODO_PROMPT,
           systemPrompt: TODO_SYSTEM_PROMPT,
           model: MODEL,
-          // 3 turns: deferred-tool discovery (ToolSearch) → TodoWrite → final response.
-          // Recent SDK versions register ToolSearch as a built-in for newer Claude
-          // models, so the model burns one turn discovering tools before TodoWrite.
-          maxTurns: 3,
+          // Generous on purpose. The per-item CRUD family costs a turn PER CALL —
+          // ToolSearch discovery, three TaskCreates, a TaskUpdate, a TaskList, the
+          // final response — and the count drifts with the model. A tight cap ends
+          // the run with "Reached maximum number of turns (N)" *after* the todos were
+          // emitted, so the projection assertions pass and the missing `result` fails,
+          // which says nothing about the projection this test exists to check. The cap
+          // is here to keep a runaway scenario cheap, not to pin the model's step
+          // count.
+          maxTurns: 12,
         }),
       );
 
@@ -1021,7 +1026,13 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       // If claude-agent-sdk did not forward the in-process elicitation, there is
       // nothing to assert — skip (don't false-fail). Enables automatically once
       // the SDK forwards `elicitation/create` from in-process SDK-MCP servers.
-      if (!events.some((e) => e.type === 'user_input_request')) {
+      //
+      // The guard keys on an `mcp-elicitation` request specifically, not on any
+      // request at all: with `onElicitation` set, the adapter also bridges
+      // `AskUserQuestion`, so a model that asks the user directly instead of
+      // letting the server elicit produced a `model-tool` request and turned this
+      // same non-bridging outcome into a red test.
+      if (!events.some((e) => e.type === 'user_input_request' && e.request.source === 'mcp-elicitation')) {
         ctx.skip();
         return;
       }

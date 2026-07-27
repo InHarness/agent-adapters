@@ -256,6 +256,31 @@ describe('mergeTaskToolInputIntoSnapshot', () => {
     expect(afterUpdate).toEqual([{ id: 'toolu_1', content: 'Do the X thing', status: 'completed' }]);
   });
 
+  it('reconciles a TaskUpdate keyed on the engine-assigned id back to the create that made it', () => {
+    // The real shapes, probed live: TaskCreate's input carries no id and its
+    // tool_result reads "Task #1 created successfully: …", after which the model
+    // updates with `{ taskId: '1' }`. Without the alias that appended a SECOND
+    // item with empty content while the first never left `pending` (M16).
+    const afterCreate = mergeTaskToolInputIntoSnapshot([], 'toolu_1', {
+      subject: 'Extract the avatar upload',
+      description: 'Extract the avatar upload component',
+    });
+    const afterUpdate = mergeTaskToolInputIntoSnapshot(
+      afterCreate ?? [],
+      'toolu_2',
+      { taskId: '1', status: 'in_progress' },
+      new Map([['1', 'toolu_1']]),
+    );
+    expect(afterUpdate).toEqual([
+      { id: 'toolu_1', content: 'Extract the avatar upload component', status: 'in_progress' },
+    ]);
+  });
+
+  it('leaves an unknown taskId as-is rather than guessing — it may name an earlier turn\'s task', () => {
+    const out = mergeTaskToolInputIntoSnapshot([], 'toolu_2', { taskId: '7', status: 'completed' }, new Map());
+    expect(out).toEqual([{ id: '7', content: '', status: 'completed' }]);
+  });
+
   it('appends a second task rather than replacing the first (accumulation, not full-list-replace)', () => {
     const afterFirst = mergeTaskToolInputIntoSnapshot([], 'toolu_1', { subject: 'X', description: 'Do X' });
     const afterSecond = mergeTaskToolInputIntoSnapshot(afterFirst ?? [], 'toolu_2', {
