@@ -35,6 +35,13 @@ import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } fr
 import { ensureUsableStdin } from '../stdin-guard.js';
 import { validateSubagents } from '../subagents.js';
 import { probePathScope, getClaudeSandboxConfig } from '../path-scope.js';
+import {
+  createTaskRegistry,
+  createBackgroundHold,
+  projectBackgroundTasks,
+  BACKGROUND_WAKEUP_GRACE_MS,
+  MAX_BACKGROUND_HOLD_MS,
+} from './claude-code.background-hold.js';
 
 // Re-export generic MCP builder from the library
 export { createMcpServer, mcpTool } from '../mcp.js';
@@ -232,12 +239,14 @@ export function todoItemsFromTodoWriteInput(input: Record<string, unknown>): Tod
  * schema (`@anthropic-ai/claude-agent-sdk`'s `sdk-tools.d.ts`):
  * `TaskCreateInput`/`TaskUpdateInput` use `subject`/`description`, and
  * `TaskUpdateInput`/`TaskGetInput` key on `taskId` — never `id`, and
- * `TaskCreateInput` carries no identifier at all (the server only assigns
- * one in the `tool_result`, which this adapter does not parse). A created
- * item is keyed by its `toolUseId` instead, so it will NOT reconcile with a
- * later `TaskUpdate({ taskId: <real server id> })` referencing the same
- * task — a known limitation, tracked via a clarification patch on the
- * 0-0-5-to-0-0-6 brief.
+ * `TaskCreateInput` carries no identifier at all: the engine assigns one and
+ * reports it in the create's `tool_result` (`"Task #1 created successfully:
+ * <subject>"`), which a later `TaskUpdate({ taskId: '1' })` then keys on. A
+ * created item is keyed by its `toolUseId`, so the caller passes
+ * `serverIdAliases` — assigned id → the `toolUseId` of the create that produced
+ * it — and an update reconciles with the item it belongs to. Without that alias
+ * the update would append a second, content-less item and the real one would
+ * never change status (M16).
  *
  * Returns `undefined` (no merge) when the call carries no writable field —
  * `TaskGet`'s `{ taskId }` and `TaskList`'s `{}` inputs never do. The caller
@@ -251,6 +260,7 @@ export function mergeTaskToolInputIntoSnapshot(
   snapshot: TodoItem[],
   toolUseId: string,
   input: Record<string, unknown>,
+  serverIdAliases?: ReadonlyMap<string, string>,
 ): TodoItem[] | undefined {
   const hasWritableField =
     typeof input.subject === 'string' ||
@@ -261,7 +271,10 @@ export function mergeTaskToolInputIntoSnapshot(
 
   const explicitId =
     typeof input.taskId === 'string' ? input.taskId : typeof input.id === 'string' ? input.id : undefined;
-  const id = explicitId ?? toolUseId;
+  // An engine-assigned id resolves back to the create that produced it; an id we
+  // have never seen assigned is used as-is (it may name a task from an earlier
+  // turn, which this snapshot cannot have).
+  const id = (explicitId ? serverIdAliases?.get(explicitId) : undefined) ?? explicitId ?? toolUseId;
 
   const next = snapshot.slice();
   const idx = next.findIndex((item) => item.id === id);
@@ -285,6 +298,49 @@ export function mergeTaskToolInputIntoSnapshot(
   if (idx >= 0) next[idx] = merged;
   else next.push(merged);
   return next;
+}
+
+/**
+ * @internal Exported for unit tests.
+ * Recover the id the engine assigned to a freshly created task from its `TaskCreate`
+ * tool_result. Every later `TaskUpdate` keys on that id, so losing it makes the
+ * update append a second, blank-titled item while the real one never changes status
+ * (M16).
+ *
+ * This reads ENGLISH PROSE out of an unstructured payload, which is a poor contract:
+ * a reworded CLI string reinstates the bug silently. It is mitigated two ways —
+ * several phrasings are accepted rather than one, and the caller has a positional
+ * fallback for when none match — but the right fix is upstream, in a structured
+ * tool_result. Recorded as such in M16.
+ *
+ * A JSON payload is preferred when present, since that needs no guessing at all.
+ */
+export function extractAssignedTaskId(content: string): string | undefined {
+  const structured = safeParseJson(content);
+  for (const key of ['taskId', 'task_id', 'id']) {
+    const v = structured?.[key];
+    if (typeof v === 'string' && v.length > 0) return v;
+    if (typeof v === 'number') return String(v);
+  }
+
+  const patterns = [
+    // "Task #1 created successfully: <subject>" — verbatim on 0.3.153 and 0.3.210.
+    /task\s*#\s*([\w.-]+)\s+created/i,
+    // "Created task 1: <subject>" / "Created task #1"
+    /created\s+task\s*#?\s*([\w.-]+)/i,
+    // "Task 1 created" — the same sentence without the hash.
+    /task\s+([\w.-]+)\s+created/i,
+    // "task_id: 1" / "taskId=1" anywhere in the blob.
+    /task[_\s]?id["'\s]*[:=]["'\s]*([\w.-]+)/i,
+  ];
+  for (const re of patterns) {
+    const candidate = re.exec(content)?.[1];
+    // Guard against capturing a word out of the surrounding sentence — "task was
+    // created" would otherwise yield "was". Real ids are numeric ("1") or long
+    // opaque handles; an English word is neither.
+    if (candidate && (/\d/.test(candidate) || candidate.length >= 8)) return candidate;
+  }
+  return undefined;
 }
 
 function safeParseJson(s: string): Record<string, unknown> | undefined {
@@ -424,6 +480,33 @@ function createInputChannel(seed: SDKUserMessage): InputChannel {
     },
   };
 }
+
+/**
+ * Read a millisecond knob off `architectureConfig`, falling back to the built-in
+ * default. Only a finite number above zero is honoured — a `0`, a negative, or a
+ * string would disarm or corrupt a bound whose whole job is to keep the control
+ * channel open, so a bad value degrades to the measured default rather than to
+ * "no protection".
+ */
+function positiveMsOption(raw: unknown, fallback: number): number {
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+
+// --- Background tasks (M17) ---
+//
+// The task registry, the `result.backgroundTasks` projection and the bounded
+// control-channel hold live in `./claude-code.background-hold.js` — a self-contained
+// state machine rather than a step of the run. Re-exported here because this module
+// is the adapter's public face and the two bounds are part of its documented surface.
+export {
+  BACKGROUND_WAKEUP_GRACE_MS,
+  MAX_BACKGROUND_HOLD_MS,
+  classifyTaskType,
+  createTaskRegistry,
+  createBackgroundHold,
+  projectBackgroundTasks,
+} from './claude-code.background-hold.js';
+export type { TaskKind, TaskRegistry, BackgroundHold } from './claude-code.background-hold.js';
 
 // --- Adapter ---
 
@@ -671,6 +754,39 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       }
     }
 
+    // Background-task disable lever (M17, L3). The SDK exposes no option to
+    // forbid backgrounding, so the lever is a PreToolUse hook denying any Bash
+    // call that asks for it. The deny reason tells the model what to do instead,
+    // so the command runs synchronously inside the turn rather than failing.
+    if (config.claude_disallowBackgroundBash === true) {
+      const existingHooks = (options.hooks ?? {}) as Record<string, unknown[]>;
+      options.hooks = {
+        ...existingHooks,
+        PreToolUse: [
+          ...(existingHooks.PreToolUse ?? []),
+          {
+            matcher: 'Bash',
+            hooks: [
+              async (input: unknown) => {
+                const toolInput = (input as { tool_input?: Record<string, unknown> }).tool_input;
+                if (toolInput?.run_in_background !== true) return { continue: true };
+                return {
+                  continue: true,
+                  hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'deny',
+                    permissionDecisionReason:
+                      'Background execution is disabled for this run (claude_disallowBackgroundBash). ' +
+                      'Re-run the command without run_in_background and wait for it to finish.',
+                  },
+                };
+              },
+            ],
+          },
+        ],
+      } as Options['hooks'];
+    }
+
     // User input — unified bridge covering two SDK-side channels:
     //  (a) AskUserQuestion tool (first-class model tool) via canUseTool
     //  (b) MCP elicitation (server-side side-channel) via options.onElicitation
@@ -690,6 +806,28 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         };
     const pendingUserInputs: PendingUserInput[] = [];
     let userInputWaker: (() => void) | null = null;
+
+    /**
+     * Settle a pending request without an answer. `'cancel'` and `'decline'` are the
+     * two shapes both response types share, so one call site covers both variants —
+     * TypeScript will not narrow the union's `resolveResponse` down to a common
+     * signature on its own, and writing the branch out inline meant three copies of
+     * an if/else whose arms were character-for-character identical.
+     */
+    const settleUnanswered = (p: PendingUserInput, action: 'cancel' | 'decline'): void => {
+      if (p.kind === 'model-tool') p.resolveResponse({ action });
+      else p.resolveResponse({ action });
+    };
+
+    // Settles when this run is aborted (explicitly or by `timeoutMs`). Raced
+    // against everything the loop can park on — the SDK's next message and the
+    // consumer's user-input handler — so abort() is enforceable even when the
+    // other side never responds. Never rejects.
+    const abortSignal = this.abortController.signal;
+    const abortPromise = new Promise<'abort'>((resolve) => {
+      if (abortSignal.aborted) resolve('abort');
+      else abortSignal.addEventListener('abort', () => resolve('abort'), { once: true });
+    });
 
     // Streaming-input mode: messages accepted via pushMessage() that still need
     // a `user_message` event emitted into the loop. The push channel itself is
@@ -819,12 +957,31 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // parent_tool_use_id → task_id lookup. Populated on `system` subtype
     // `task_started`; read on every delta/tool event to resolve subagentTaskId.
     const subagentTaskIdByParentToolUseId = new Map<string, string>();
+    // The SDK multiplexes real subagents and engine-backgrounded side work onto
+    // ONE `task_*` channel, and only `task_started` carries the discriminator
+    // (`task_type`) — `task_progress` / `task_notification` carry just the id.
+    // So the kind is captured once here and every later message for that id is
+    // routed through it: subagent kinds → `subagent_*` (M06), shell/monitor/
+    // workflow → `background_task_*` (M17). See ./claude-code.background-hold.ts
+    // for the settlement invariant this registry enforces.
+    const tasks = createTaskRegistry();
     // Track task-tracking tool_use IDs (TodoWrite or the TaskCreate/TaskGet/
     // TaskUpdate/TaskList family) so we can suppress their matching tool_result
     // (both the UnifiedEvent and the ContentBlock in rawMessages). That
     // tool_result payload is redundant with the snapshot already surfaced via
     // `todoList` / `todo_list_updated`.
     const pendingTodoToolUseIds = new Set<string>();
+    // `TaskCreate` tool_use ids awaiting their tool_result, which is where the
+    // engine reports the id it assigned, plus the resulting alias
+    // (assigned id → the toolUseId the snapshot keys that item by).
+    const taskCreateToolUseIds = new Set<string>();
+    const serverTaskIdToToolUseId = new Map<string, string>();
+    // TaskCreates whose tool_result did not name an assigned id, oldest first. The
+    // last-resort reconciliation: with exactly one outstanding and a TaskUpdate
+    // arriving for an id we have never seen, the two must be the same task, so the
+    // alias can be recovered without the engine having said so in prose. Ambiguous
+    // cases (two or more outstanding) are left alone rather than guessed.
+    const unresolvedTaskCreateToolUseIds: string[] = [];
     // Scoped to this execute() call, so a resumed session starts with an
     // empty snapshot. TodoWrite is immune (the model always resends the full
     // list), but a TaskUpdate referencing a taskId created in a prior turn/
@@ -871,8 +1028,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
     // Resolve attached images into Anthropic content blocks. query() accepts a
     // plain string or AsyncIterable<SDKUserMessage> — a string can't carry image
-    // blocks and a lone SDKUserMessage isn't accepted, so any images force the
-    // channel path (seeded then, when not streaming, closed immediately).
+    // blocks, which is one of the reasons every run rides the channel path
+    // (see the channel construction below).
     let imageBlocks: unknown[] | null = null;
     if (params.images?.length) {
       try {
@@ -888,16 +1045,25 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       ? [{ type: 'text', text: params.prompt }, ...imageBlocks]
       : params.prompt;
 
-    // Streaming-input mode: feed the SDK an open channel seeded with the prompt
-    // so pushMessage() can inject further user messages mid-conversation. When
-    // off (default), the prompt is a one-shot string — identical to before,
-    // unless images are present, which require the single-message channel.
-    let inputChannel: InputChannel | null = null;
+    // EVERY run is driven through the input channel — not only streaming-input
+    // ones. A plain string prompt makes the SDK mark the query single-turn and
+    // call `transport.endInput()` at the first `result` ("First result received
+    // for single-turn query, closing stdin"), which closes the CLI's stdin. The
+    // CLI is spawned with `--permission-prompt-tool stdio`, so its control
+    // protocol rides that same stdin: once closed, a permission/user-input
+    // request raised after the result — exactly what happens when the engine
+    // holds the session for background work and then wakes the model — is
+    // denied inside the CLI with no host round-trip ("Tool permission request
+    // failed: Stream closed"). Feeding an iterable keeps that decision ours, so
+    // the end-of-turn policy below (which honours in-flight background work)
+    // actually governs. `streamingInput` still gates pushMessage() alone; a
+    // one-shot run closes the channel at its result and terminates exactly as
+    // it did with a string prompt. See M11/M17.
+    const inputChannel: InputChannel = createInputChannel(buildUserMessage(seedContent));
+    this.closeInputChannel = () => inputChannel.close();
     if (params.streamingInput) {
-      inputChannel = createInputChannel(buildUserMessage(seedContent));
-      this.closeInputChannel = () => inputChannel!.close();
       this.pushHandler = (text: string, images?: ImageInput[]) => {
-        if (inputChannel!.closed) return false;
+        if (inputChannel.closed) return false;
         // Build image blocks BEFORE enqueueing: a bad image throws here, leaving
         // nothing half-delivered. base64/url need no I/O; `file` is read sync so
         // enqueue stays atomic w.r.t. the end-of-turn close check (see below).
@@ -905,19 +1071,84 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         const content: string | unknown[] = blocks
           ? [{ type: 'text', text }, ...blocks]
           : text;
-        inputChannel!.enqueue(buildUserMessage(content));
+        inputChannel.enqueue(buildUserMessage(content));
         pendingPushEmits.push({ text, images, timestamp: Date.now() });
         // Wake the main loop so the user_message event is emitted promptly.
         userInputWaker?.();
         userInputWaker = null;
         return true;
       };
-    } else if (imageBlocks) {
-      // One-shot with images: seed a channel with the single image-bearing
-      // message and close it immediately. The SDK pulls the seed then sees
-      // `done` — exactly one result, one-shot contract preserved. No pushHandler.
-      inputChannel = createInputChannel(buildUserMessage(seedContent));
-      inputChannel.close();
+    }
+
+    // --- Background-task session hold (M17) ---
+    // The engine keeps the session alive past a turn's `result` while background
+    // work is in flight, then wakes the model. The adapter must keep ITS side of
+    // the transport open for that whole window: the CLI's control protocol
+    // (permission prompts, AskUserQuestion) is multiplexed onto the same stdin
+    // the input channel feeds, so closing the channel at `result` leaves the
+    // woken model unable to ask anything — the request is denied inside the CLI
+    // with no host round-trip and nothing on the stream but a `Stream closed`
+    // tool result.
+    //
+    // WHETHER to hold: the engine offers a signal, but only half of one. The `Stop`
+    // hook fires at every turn boundary carrying `background_tasks`, documented as
+    // "lets hooks distinguish 'session is done' from 'session is paused waiting for
+    // background work to wake it'". Measured on 0.3.153 (see A01), it lands ~3ms
+    // BEFORE the `result` it belongs to and is exact when it says something IS
+    // running — but NOT when it says nothing is: on the three-subagent shape it
+    // reported `[]`, and the engine then held the session, woke the model 2ms after
+    // that `result`, and ran another full turn. Subagent wake-ups are invisible to
+    // the field. So it is read as a positive hold reason only, never as permission
+    // to close; the adapter's own task tracking remains the fallback that catches
+    // the subagent shape.
+    //
+    // HOW LONG to hold is ours to bound either way, because neither source says
+    // whether the engine will ever come back — the two bounds and the rules that
+    // decide between them live in ./claude-code.background-hold.ts.
+    const hold = createBackgroundHold({
+      registry: tasks,
+      closeChannel: () => inputChannel.close(),
+      wake: () => {
+        userInputWaker?.();
+        userInputWaker = null;
+      },
+      graceMs: positiveMsOption(config.claude_backgroundGraceMs, BACKGROUND_WAKEUP_GRACE_MS),
+      capMs: positiveMsOption(config.claude_backgroundHoldCapMs, MAX_BACKGROUND_HOLD_MS),
+    });
+
+    /**
+     * The most recent `Stop`-hook report, consumed and cleared by the next `result`.
+     * `undefined` means "no report for this turn" — the hook has not fired, or the SDK
+     * omits the field. A stale report is never reused: a turn that ends without the
+     * hook firing must not inherit the previous turn's answer.
+     */
+    let stopHookTasks: { id: string; type?: string; description?: string }[] | undefined;
+
+    // Additive w.r.t. anything already registered (the `claude_disallowBackgroundBash`
+    // PreToolUse lever above, and project hooks the CLI merges in from settingSources).
+    // The callback only observes — it returns `{continue: true}`, the no-op decision.
+    {
+      const existingHooks = (options.hooks ?? {}) as Record<string, unknown[]>;
+      options.hooks = {
+        ...existingHooks,
+        Stop: [
+          ...(existingHooks.Stop ?? []),
+          {
+            hooks: [
+              async (input: unknown) => {
+                const reported = (input as { background_tasks?: unknown }).background_tasks;
+                // An absent field is an SDK that does not report this at all; an empty
+                // one is a report that carries no weight (see above). Either way the
+                // fallback decides, so only a non-empty list is worth keeping.
+                if (Array.isArray(reported) && reported.length > 0) {
+                  stopHookTasks = reported as typeof stopHookTasks;
+                }
+                return { continue: true };
+              },
+            ],
+          },
+        ],
+      } as Options['hooks'];
     }
 
     let q: Query;
@@ -940,7 +1171,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         yield { type: 'warning', message: versionCheck.message! };
       }
       q = query({
-        prompt: inputChannel ? inputChannel.iterable : params.prompt,
+        prompt: inputChannel.iterable,
         options,
       });
     } catch (err) {
@@ -977,15 +1208,35 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           }
           if (!effectiveUserInputHandler) {
             // Defensive: bridges are only registered when a handler exists.
-            if (pending.kind === 'mcp-elicitation') {
-              pending.resolveResponse({ action: 'decline' });
-            } else {
-              pending.resolveResponse({ action: 'decline' });
-            }
+            settleUnanswered(pending, 'decline');
             continue;
           }
           try {
-            const res = await effectiveUserInputHandler(pending.req);
+            // Race the consumer's handler against abort. A host that answers
+            // from a UI resolves this promise only when a human replies — which
+            // may be never — so awaiting it bare makes abort()/timeoutMs
+            // unenforceable and parks the run (and its SDK subprocess) forever.
+            // See M13.
+            const outcome = await Promise.race([
+              effectiveUserInputHandler(pending.req).then((res) => ({ kind: 'answer' as const, res })),
+              abortPromise.then(() => ({ kind: 'abort' as const })),
+            ]);
+            if (outcome.kind === 'abort') {
+              // Settle the SDK-side promise so the callback doesn't leak, and
+              // cancel everything still queued behind it.
+              for (const stale of [pending, ...pendingUserInputs.splice(0)]) {
+                settleUnanswered(stale, 'cancel');
+              }
+              yield {
+                type: 'error',
+                error: timedOut
+                  ? new AdapterTimeoutError('claude-code', params.timeoutMs!)
+                  : new AdapterAbortError('claude-code'),
+                phase: 'runtime',
+              };
+              return;
+            }
+            const res = outcome.res;
             if (pending.kind === 'model-tool') {
               pending.resolveResponse(res);
             } else {
@@ -999,11 +1250,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               });
             }
           } catch (err) {
-            if (pending.kind === 'model-tool') {
-              pending.resolveResponse({ action: 'cancel' });
-            } else {
-              pending.resolveResponse({ action: 'cancel' });
-            }
+            settleUnanswered(pending, 'cancel');
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           }
         }
@@ -1021,15 +1268,23 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           };
         }
 
+        // Drain warnings raised off-loop (hold-bound expiry).
+        for (const message of hold.drainWarnings()) {
+          yield { type: 'warning', message };
+        }
+
         if (!pendingNext) pendingNext = sdkIterator.next();
 
-        // Race SDK's next message vs. a wake-up from the user-input bridge.
+        // Race SDK's next message vs. a wake-up from the user-input bridge vs.
+        // abort — the last one matters when the SDK has gone quiet (a held
+        // session waiting on background work that will never settle).
         const wake = new Promise<'wake'>((resolve) => {
           userInputWaker = () => resolve('wake');
         });
         const winner = await Promise.race([
           pendingNext.then((r) => ({ kind: 'sdk' as const, value: r })),
           wake.then(() => ({ kind: 'wake' as const })),
+          abortPromise.then(() => ({ kind: 'abort' as const })),
         ]);
         userInputWaker = null;
 
@@ -1038,9 +1293,24 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           continue;
         }
 
+        if (winner.kind === 'abort') {
+          yield {
+            type: 'error',
+            error: timedOut
+              ? new AdapterTimeoutError('claude-code', params.timeoutMs!)
+              : new AdapterAbortError('claude-code'),
+            phase: 'runtime',
+          };
+          return;
+        }
+
         pendingNext = null;
         if (winner.value.done) break loop;
         const event = winner.value.value;
+        // Session is demonstrably alive — re-decide which bound applies, if any.
+        // Runs BEFORE the switch, so state this message is about to change (a task
+        // settling, say) is re-evaluated by that branch's own hold.touch() call.
+        hold.touch(event);
 
         if (this.abortController.signal.aborted) {
           if (timedOut) {
@@ -1098,10 +1368,38 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               if (block.toolName === 'TodoWrite') {
                 items = todoItemsFromTodoWriteInput(block.input);
               } else if (CLAUDE_CODE_TASK_TRACKING_TOOLS.includes(block.toolName)) {
-                items = mergeTaskToolInputIntoSnapshot(lastTodoSnapshot ?? [], block.toolUseId, block.input);
+                // Last-resort reconciliation (M16): an update naming an id we never
+                // saw assigned, with exactly one create still unaccounted for, can
+                // only be that create. Recovers the alias when the tool_result prose
+                // did not yield one. Two or more outstanding is ambiguous, so it is
+                // left alone rather than guessed — a wrong alias corrupts a real item,
+                // where no alias merely appends a stray one.
+                const updateId =
+                  typeof block.input.taskId === 'string'
+                    ? block.input.taskId
+                    : typeof block.input.id === 'string'
+                      ? block.input.id
+                      : undefined;
+                if (
+                  updateId !== undefined &&
+                  !serverTaskIdToToolUseId.has(updateId) &&
+                  unresolvedTaskCreateToolUseIds.length === 1 &&
+                  !(lastTodoSnapshot ?? []).some((item) => item.id === updateId)
+                ) {
+                  serverTaskIdToToolUseId.set(updateId, unresolvedTaskCreateToolUseIds.shift()!);
+                }
+                items = mergeTaskToolInputIntoSnapshot(
+                  lastTodoSnapshot ?? [],
+                  block.toolUseId,
+                  block.input,
+                  serverTaskIdToToolUseId,
+                );
               }
               if (items === undefined) continue;
 
+              // A create's engine-assigned id arrives in its tool_result; remember
+              // which tool_use to read it back for (see the suppression filter).
+              if (block.toolName === 'TaskCreate') taskCreateToolUseIds.add(block.toolUseId);
               pendingTodoToolUseIds.add(block.toolUseId);
               lastTodoSnapshot = items;
               normalized.content[i] = { type: 'todoList', items };
@@ -1151,6 +1449,29 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               // event stream.
               const content = rawContent.filter((block) => {
                 if (block.type === 'toolResult' && pendingTodoToolUseIds.has(block.toolUseId)) {
+                  // One thing in the payload is NOT redundant: the id the engine
+                  // assigned to a freshly created task ("Task #1 created
+                  // successfully: …"). Every later TaskUpdate keys on it, so
+                  // without this the update would append a second, blank-titled
+                  // item and the real one would never change status (M16).
+                  if (taskCreateToolUseIds.delete(block.toolUseId)) {
+                    const assigned = extractAssignedTaskId(String(block.content ?? ''));
+                    if (assigned) {
+                      serverTaskIdToToolUseId.set(assigned, block.toolUseId);
+                    } else {
+                      // Nothing matched the prose. Remember which TaskCreate is
+                      // outstanding so the next unknown TaskUpdate id can still be
+                      // reconciled positionally — see unresolvedTaskCreateToolUseIds.
+                      unresolvedTaskCreateToolUseIds.push(block.toolUseId);
+                      if (debugUsage()) {
+                        console.error(
+                          '[agent-adapters claude-code] TaskCreate tool_result did not name an ' +
+                            'assigned id; falling back to positional aliasing (M16)',
+                          { toolUseId: block.toolUseId, content: block.content },
+                        );
+                      }
+                    }
+                  }
                   pendingTodoToolUseIds.delete(block.toolUseId);
                   return false;
                 }
@@ -1205,31 +1526,81 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
               const toolUseId = (e.tool_use_id as string) ?? '';
-              if (toolUseId) subagentTaskIdByParentToolUseId.set(toolUseId, taskId);
-              yield {
-                type: 'subagent_started',
-                taskId,
-                description: e.description as string,
-                toolUseId,
-              };
+              const description = (e.description as string) ?? '';
+              const kind = tasks.start(taskId, e.task_type, description);
+              if (kind.isBackground) {
+                yield {
+                  type: 'background_task_started',
+                  taskId,
+                  taskType: kind.taskType,
+                  description,
+                };
+              } else {
+                if (toolUseId) subagentTaskIdByParentToolUseId.set(toolUseId, taskId);
+                yield { type: 'subagent_started', taskId, description, toolUseId };
+              }
             } else if (subtype === 'task_progress') {
               const e = event as Record<string, unknown>;
-              yield {
-                type: 'subagent_progress',
-                taskId: e.task_id as string,
-                description: e.description as string,
-                lastToolName: e.last_tool_name as string | undefined,
-              };
+              const taskId = e.task_id as string;
+              const kind = tasks.kind(taskId);
+              if (kind?.isBackground) {
+                yield {
+                  type: 'background_task_progress',
+                  taskId,
+                  taskType: kind.taskType,
+                  description: e.description as string | undefined,
+                  ...(e.status ? { status: e.status as string } : {}),
+                  ...(e.output_file ? { outputFile: e.output_file as string } : {}),
+                };
+              } else {
+                yield {
+                  type: 'subagent_progress',
+                  taskId,
+                  description: e.description as string,
+                  lastToolName: e.last_tool_name as string | undefined,
+                };
+              }
             } else if (subtype === 'task_notification') {
               const e = event as Record<string, unknown>;
-              yield {
-                type: 'subagent_completed',
-                taskId: e.task_id as string,
-                status: e.status as string,
-                summary: e.summary as string | undefined,
-                // Per-subagent total (sum across the subagent's turns).
-                usage: normalizeClaudeUsage(e.usage),
-              };
+              const taskId = e.task_id as string;
+              const kind = tasks.kind(taskId);
+              tasks.settle(taskId);
+              if (kind?.isBackground) {
+                yield {
+                  type: 'background_task_completed',
+                  taskId,
+                  taskType: kind.taskType,
+                  status: e.status as string,
+                  ...(e.output_file ? { outputFile: e.output_file as string } : {}),
+                  summary: e.summary as string | undefined,
+                  usage: normalizeClaudeUsage(e.usage),
+                };
+              } else {
+                yield {
+                  type: 'subagent_completed',
+                  taskId,
+                  status: e.status as string,
+                  summary: e.summary as string | undefined,
+                  // Per-subagent total (sum across the subagent's turns).
+                  usage: normalizeClaudeUsage(e.usage),
+                };
+              }
+              // The in-flight set just shrank, so the bound may have changed from the
+              // long cap to the short grace — re-park on whichever now applies.
+              hold.touch(event);
+            } else if (subtype === 'task_updated') {
+              // The engine's own "this task finished" patch, which arrives BEFORE
+              // the corresponding notification (observed live). No event of its own
+              // — the lifecycle families already cover start/progress/completion —
+              // but it is what distinguishes "still working" from "done, wake-up
+              // pending", and so which of the two hold bounds applies.
+              const e = event as Record<string, unknown>;
+              const taskId = e.task_id as string;
+              const status = (e.patch as Record<string, unknown> | undefined)?.status;
+              if (typeof status === 'string' && /^(completed|failed|stopped|cancell?ed)$/.test(status)) {
+                tasks.markFinished(taskId);
+                hold.touch(event);
+              }
             } else if (subtype === 'compact_boundary') {
               yield { type: 'flush' };
             }
@@ -1238,6 +1609,24 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
           case 'result': {
             const resultEvent = event as Record<string, unknown>;
+            // Consume the engine's own in-flight report for this turn exactly once:
+            // it feeds both the `backgroundTasks` projection below and the keep-open
+            // decision at the bottom, and must not leak into a later turn.
+            const stopHookReported = stopHookTasks;
+            stopHookTasks = undefined;
+
+            // The engine's own list, from whichever place this SDK publishes it: the
+            // Stop hook today, `result.background_tasks` if a future SDK adds it there.
+            // The union of that and our own tracking, filtered to background work only,
+            // is `projectBackgroundTasks()` — see its JSDoc for why a subagent must
+            // never appear here even though it does hold the session.
+            const backgroundTasks = projectBackgroundTasks(tasks, [
+              ...(Array.isArray(resultEvent.background_tasks)
+                ? (resultEvent.background_tasks as Record<string, unknown>[])
+                : []),
+              ...(stopHookReported ?? []),
+            ]);
+
             if (resultEvent.subtype === 'success') {
               const claudeUsage = normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 };
               const contextSize = claudeUsage.inputTokens + claudeUsage.outputTokens;
@@ -1261,15 +1650,23 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 type: 'result',
                 output: (resultEvent.result as string) ?? '',
                 rawMessages,
-                // Per-query() cumulative from the SDK (across turns/subagents within THIS query()
-                // call). NOT cross-session — on options.resume, the SDK reports only this query()'s
-                // tokens, not the original session combined. See:
+                // PER-TURN, not cumulative. A run can emit several `result`s — a queued
+                // mid-turn push, or the engine waking the model after background work —
+                // and each one carries only its own turn's cost, so a run total is the
+                // SUM of them (`sumUsageFromEvents()`). Measured on 0.3.153 and 0.3.210:
+                // a second result routinely reports FEWER tokens than the first in every
+                // field, which cumulative counting cannot do. Matches the SDK's own
+                // docs — "each result only reflects the cost of that individual call…
+                // accumulate the totals yourself":
                 // https://code.claude.com/docs/en/agent-sdk/cost-tracking
-                // Do not double-count with per-message usage on NormalizedMessage.
+                // Also NOT cross-session: on options.resume the SDK reports only this
+                // query()'s tokens. Do not double-count with per-message usage on
+                // NormalizedMessage.
                 usage: claudeUsage,
                 contextSize,
                 sessionId,
                 ...(lastTodoSnapshot ? { todoListSnapshot: lastTodoSnapshot } : {}),
+                ...(backgroundTasks.length ? { backgroundTasks } : {}),
               };
             } else {
               yield { type: 'error', error: new Error((resultEvent.result as string) ?? 'Unknown error'), phase: 'runtime' };
@@ -1284,12 +1681,39 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             // close returns false and the consumer re-dispatches after-turn.
             // No await runs between the result yield and this check, so the
             // decision is atomic w.r.t. consumer pushes — no lost-message window.
-            if (inputChannel) {
-              if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
-                // keep open: SDK consumes the next queued message as a new turn
-              } else {
-                inputChannel.close();
-              }
+            //
+            // Task activity is the second keep-open reason (M17): the engine holds
+            // the session past this result and wakes the model, which then needs the
+            // control channel this transport carries.
+            //
+            // Two sources answer "is the engine coming back?", and the hold takes
+            // their UNION, because each misses what the other catches:
+            //
+            //  - the engine's own `Stop`-hook report, when it names something in
+            //    flight. Precise, but version-dependent — 0.3.153 leaves subagents out
+            //    of it entirely and reported `[]` on a session it then resumed, so
+            //    only its positive answer is load-bearing (see A01).
+            //  - the adapter's own tracking, as "this run started ANY task". Coarse on
+            //    purpose: nothing-in-flight is not the same as nothing-coming —
+            //    observed on 0.3.210, three subagents all reported completion INSIDE
+            //    the turn, and the engine still resumed the model for three further
+            //    turns and asked a question at the end, which landed on a dead
+            //    transport when the channel closed at that first result.
+            //
+            // Settled work then gets the short grace window and work still running
+            // gets the long cap; both live in the hold.
+            const engineHoldsSession = (stopHookReported?.length ?? 0) > 0;
+            if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
+              // keep open: SDK consumes the next queued message as a new turn
+              hold.end();
+            } else if (
+              resultEvent.subtype === 'success' &&
+              (engineHoldsSession || tasks.touchedATask())
+            ) {
+              hold.begin();
+            } else {
+              hold.end();
+              inputChannel.close();
             }
             break;
           }
@@ -1297,6 +1721,15 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           default:
             break;
         }
+      }
+
+      // The loop exits the instant the SDK iterator reports `done`, which is exactly
+      // what an expiring bound provokes — it closes the channel, the SDK ends, and
+      // the race can resolve `done` before control returns to the drain at the loop
+      // top. Draining once more here is what keeps the cap's truncation warning from
+      // being swallowed by the very shutdown it caused.
+      for (const message of hold.drainWarnings()) {
+        yield { type: 'warning', message };
       }
     } catch (err) {
       if (this.abortController.signal.aborted) {
@@ -1315,7 +1748,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // left awaiting input.
       this.pushHandler = null;
       this.closeInputChannel = null;
-      inputChannel?.close();
+      hold.dispose();
+      inputChannel.close();
       await materialized?.cleanup().catch((err) =>
         console.warn('[agent-adapters] claude-code skill cleanup failed', err),
       );

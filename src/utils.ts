@@ -3,12 +3,24 @@
 import type { UnifiedEvent } from './types.js';
 
 /**
+ * How long {@link collectEvents} waits by default.
+ *
+ * Named rather than inlined because claude-code's background-task hold has to stay
+ * strictly under it: the two clocks race, and this one starts EARLIER (when the run
+ * starts, not when the hold arms at a held `result`). A hold cap at or above this
+ * value could never emit its truncation warning — the helper would already have
+ * rejected the run, losing the only signal that background work was abandoned. See
+ * `MAX_BACKGROUND_HOLD_MS` in `adapters/claude-code.background-hold.ts`.
+ */
+export const COLLECT_EVENTS_DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
  * Collect all events from a stream into an array.
  * Throws if the stream doesn't complete within timeoutMs.
  */
 export async function collectEvents(
   stream: AsyncIterable<UnifiedEvent>,
-  timeoutMs = 120_000,
+  timeoutMs = COLLECT_EVENTS_DEFAULT_TIMEOUT_MS,
 ): Promise<UnifiedEvent[]> {
   const events: UnifiedEvent[] = [];
   const timeout = new Promise<never>((_, reject) =>
@@ -47,17 +59,23 @@ export async function* filterByType<T extends UnifiedEvent['type']>(
 }
 
 /**
- * Yield events until a `result` or `error` event is encountered (inclusive).
+ * Yield events until the run's TERMINAL `result` (or an `error`), inclusive.
  * Useful for consuming exactly one run's worth of events.
+ *
+ * A `result` carrying a non-empty `backgroundTasks` is not terminal: the engine is
+ * holding the session open, will wake the model when that work settles, and the
+ * stream still owes a `background_task_completed`, a continuation turn, and a
+ * further `result` (M17). Stopping there is the exact bug `UnifiedEvent`'s `result`
+ * variant warns consumers about — so this helper, which is what many of them use
+ * instead of hand-rolling the loop, must not commit it either.
  */
 export async function* takeUntilResult(
   stream: AsyncIterable<UnifiedEvent>,
 ): AsyncIterable<UnifiedEvent> {
   for await (const event of stream) {
     yield event;
-    if (event.type === 'result' || event.type === 'error') {
-      return;
-    }
+    if (event.type === 'error') return;
+    if (event.type === 'result' && !event.backgroundTasks?.length) return;
   }
 }
 

@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "edge-case",
+  "slug": "ac-a-background-task-settling-during-the-mo",
+  "status": "active",
+  "tags": [
+    "m17",
+    "m17-edge"
+  ],
+  "text": "A background task settling during the model's continuation turn is serialized by the engine: background_task_completed precedes the run's final result in stream order.",
+  "verifies": []
+}

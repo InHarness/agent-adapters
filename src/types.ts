@@ -136,6 +136,22 @@ export interface UsageStats {
 // --- Unified Events ---
 
 /**
+ * Kind of engine-backgrounded work behind a `background_task_*` event:
+ * `'shell'` (a backgrounded shell command), `'monitor'` (a watch task),
+ * `'workflow'` (an orchestration run). Unknown kinds pass through by name
+ * rather than being collapsed, so a new SDK task kind is observable instead
+ * of silently mislabelled.
+ */
+export type BackgroundTaskType = 'shell' | 'monitor' | 'workflow' | (string & {});
+
+/** In-flight background work reported on a `result` event (M17). */
+export interface BackgroundTaskRef {
+  taskId: string;
+  taskType: BackgroundTaskType;
+  description?: string;
+}
+
+/**
  * `subagentTaskId` on the delta-like variants (`text_delta`, `thinking`,
  * `tool_use`, `tool_result`) matches the `taskId` of the surrounding
  * `subagent_started` envelope. Required for grouping when multiple subagents
@@ -184,6 +200,38 @@ export type UnifiedEvent =
   | { type: 'subagent_started'; taskId: string; description: string; toolUseId: string }
   | { type: 'subagent_progress'; taskId: string; description: string; lastToolName?: string }
   | { type: 'subagent_completed'; taskId: string; status: string; summary?: string; usage?: UsageStats }
+  /**
+   * Engine-backgrounded side work — a shell command the engine detached (e.g.
+   * claude-code's `run_in_background` Bash parameter), a monitor, a workflow
+   * run. **Never a subagent**: real spawned helper agents keep the
+   * `subagent_*` family above. Adapters whose SDK multiplexes both kinds onto
+   * one native channel split them by the SDK's task-kind discriminator.
+   *
+   * The agent itself is never backgrounded — only the process is.
+   *
+   * Semantics are owned by M17; the rule consumers must know is that a `result`
+   * carrying a non-empty {@link UnifiedEvent} `backgroundTasks` list is NOT
+   * end-of-run — iterate `execute()` to generator `done`.
+   */
+  | { type: 'background_task_started'; taskId: string; taskType: BackgroundTaskType; description: string }
+  | {
+      type: 'background_task_progress';
+      taskId: string;
+      taskType: BackgroundTaskType;
+      description?: string;
+      status?: string;
+      /** Tail target: file the engine streams the process's output into. */
+      outputFile?: string;
+    }
+  | {
+      type: 'background_task_completed';
+      taskId: string;
+      taskType: BackgroundTaskType;
+      status: string;
+      outputFile?: string;
+      summary?: string;
+      usage?: UsageStats;
+    }
   | {
       type: 'result';
       output: string;
@@ -248,6 +296,22 @@ export type UnifiedEvent =
        * see capability matrix in `.claude/skills/unified-architecture/SKILL.md`).
        */
       todoListSnapshot?: TodoItem[];
+      /**
+       * IN-FLIGHT BACKGROUND WORK — engine-backgrounded tasks still running when
+       * this `result` was emitted (M17). When non-empty, **this `result` is not
+       * end-of-run**: the engine holds the session open, wakes the model once the
+       * work settles, and the stream yields the `background_task_completed`, the
+       * continuation turn, and a further `result` before the generator is `done`.
+       *
+       * Consumers must iterate `execute()` to `done` rather than stopping at the
+       * first `result` — stopping early is the classic bug this signal exists to
+       * prevent (the completion is never observed and the caller waits out its own
+       * timeout).
+       *
+       * Absent/empty on adapters whose SDK never backgrounds work — an absence,
+       * not a failure.
+       */
+      backgroundTasks?: BackgroundTaskRef[];
     }
   /**
    * Error surfaced from the adapter. `phase` distinguishes errors raised while

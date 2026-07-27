@@ -244,5 +244,17 @@
     "description": "Edge-case acceptance criteria for M16 — Task / todo tracking",
     "name": "m16-edge",
     "slug": "m16-edge"
+  },
+  {
+    "color": "#5d7ea2",
+    "description": "Acceptance criteria for M17 — Background & long-running tasks",
+    "name": "m17",
+    "slug": "m17"
+  },
+  {
+    "color": "#b6553c",
+    "description": "Edge-case acceptance criteria for M17 — Background & long-running tasks",
+    "name": "m17-edge",
+    "slug": "m17-edge"
   }
 ]

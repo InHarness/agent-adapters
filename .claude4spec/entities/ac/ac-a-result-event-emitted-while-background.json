@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-a-result-event-emitted-while-background",
+  "status": "active",
+  "tags": [
+    "m01",
+    "m17"
+  ],
+  "text": "A result event emitted while background tasks are in flight carries a non-empty backgroundTasks in-flight signal, and execute() subsequently yields the background_task_completed, the continuation turn, and a further result before the generator ends.",
+  "verifies": []
+}

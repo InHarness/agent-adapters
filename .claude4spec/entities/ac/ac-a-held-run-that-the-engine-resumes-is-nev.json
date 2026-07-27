@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-a-held-run-that-the-engine-resumes-is-nev",
+  "status": "active",
+  "tags": [
+    "m17",
+    "m17-edge"
+  ],
+  "text": "A held run that the engine resumes is never truncated by a hold bound: a continuation turn that stays busy past the hard cap runs to its own result with every event delivered, because the bounds are released once the main model is producing again and a live turn is bounded only by timeoutMs / abort().",
+  "verifies": []
+}

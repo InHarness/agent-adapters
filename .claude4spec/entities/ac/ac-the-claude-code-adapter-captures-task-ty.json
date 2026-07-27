@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-claude-code-adapter-captures-task-ty",
+  "status": "active",
+  "tags": [
+    "a01",
+    "m17"
+  ],
+  "text": "The claude-code adapter captures task_type on task_started into a per-task map and routes later task_progress / task_notification for that task_id accordingly: 'shell' / 'monitor' / 'workflow' to background_task_*, subagent kinds to subagent_*; unknown or absent task_type defaults to the subagent path.",
+  "verifies": []
+}

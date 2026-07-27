@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-a-task-touching-run-whose-work-has-settl",
+  "status": "active",
+  "tags": [
+    "m17",
+    "m17-edge"
+  ],
+  "text": "A run whose tracked work has all settled and whose engine then goes quiet ends on the grace window and emits NO warning event: settled work plus a quiet engine is the normal end of a task-touching run, not a truncation.",
+  "verifies": []
+}

@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-takeuntilresult-honours-the-in-flight-sig",
+  "status": "active",
+  "tags": [
+    "m09",
+    "m17"
+  ],
+  "text": "The library's own stream helpers honour the in-flight signal: takeUntilResult() passes a result carrying a non-empty backgroundTasks list and stops only at the terminal one, so a consumer using it observes the background_task_completed and the continuation turn rather than the bug the signal exists to prevent.",
+  "verifies": []
+}

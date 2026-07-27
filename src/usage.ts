@@ -86,10 +86,18 @@ export function contextSize(usage: UsageStats): number {
 }
 
 /**
- * Sum every `result` event's `.usage` in a collected event stream. Useful when
- * a consumer keeps the raw event list per execute() call and wants a single
- * total. A stream typically contains exactly one `result`, but multiple are
- * tolerated (e.g. concatenated streams from multiple resume turns).
+ * Sum every `result` event's `.usage` in a collected event stream — the run total
+ * when a consumer keeps the raw event list per execute() call.
+ *
+ * SEVERAL RESULTS IN ONE RUN IS NORMAL, not an edge case: a mid-turn
+ * `pushMessage()` runs as another turn, and claude-code's engine wakes the model
+ * after background work settles and emits a further `result` (M17). Summing is
+ * correct because every adapter emits `result.usage` as that turn's own cost — see
+ * the `usage` JSDoc on `UnifiedEvent`'s `result` variant. Adapters whose SDK
+ * reports cumulative session usage (codex) subtract to a per-call delta before
+ * emitting, so the identity holds there too.
+ *
+ * Do NOT use this for context-window size — take the LAST result's `contextSize`.
  */
 export function sumUsageFromEvents(events: UnifiedEvent[]): UsageStats {
   return events.reduce<UsageStats>(

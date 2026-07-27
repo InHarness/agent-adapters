@@ -8,6 +8,7 @@ import {
   normalizeAssistantMessage,
   todoItemsFromTodoWriteInput,
   mergeTaskToolInputIntoSnapshot,
+  extractAssignedTaskId,
   CLAUDE_CODE_READONLY_BUILTINS,
   CLAUDE_CODE_MUTATING_BUILTINS,
   CLAUDE_CODE_TASK_TRACKING_TOOLS,
@@ -256,6 +257,31 @@ describe('mergeTaskToolInputIntoSnapshot', () => {
     expect(afterUpdate).toEqual([{ id: 'toolu_1', content: 'Do the X thing', status: 'completed' }]);
   });
 
+  it('reconciles a TaskUpdate keyed on the engine-assigned id back to the create that made it', () => {
+    // The real shapes, probed live: TaskCreate's input carries no id and its
+    // tool_result reads "Task #1 created successfully: …", after which the model
+    // updates with `{ taskId: '1' }`. Without the alias that appended a SECOND
+    // item with empty content while the first never left `pending` (M16).
+    const afterCreate = mergeTaskToolInputIntoSnapshot([], 'toolu_1', {
+      subject: 'Extract the avatar upload',
+      description: 'Extract the avatar upload component',
+    });
+    const afterUpdate = mergeTaskToolInputIntoSnapshot(
+      afterCreate ?? [],
+      'toolu_2',
+      { taskId: '1', status: 'in_progress' },
+      new Map([['1', 'toolu_1']]),
+    );
+    expect(afterUpdate).toEqual([
+      { id: 'toolu_1', content: 'Extract the avatar upload component', status: 'in_progress' },
+    ]);
+  });
+
+  it('leaves an unknown taskId as-is rather than guessing — it may name an earlier turn\'s task', () => {
+    const out = mergeTaskToolInputIntoSnapshot([], 'toolu_2', { taskId: '7', status: 'completed' }, new Map());
+    expect(out).toEqual([{ id: '7', content: '', status: 'completed' }]);
+  });
+
   it('appends a second task rather than replacing the first (accumulation, not full-list-replace)', () => {
     const afterFirst = mergeTaskToolInputIntoSnapshot([], 'toolu_1', { subject: 'X', description: 'Do X' });
     const afterSecond = mergeTaskToolInputIntoSnapshot(afterFirst ?? [], 'toolu_2', {
@@ -281,6 +307,41 @@ describe('mergeTaskToolInputIntoSnapshot', () => {
   it('creates a blank-content stub when TaskUpdate references an unknown taskId (e.g. resumed session)', () => {
     const out = mergeTaskToolInputIntoSnapshot([], 'toolu_5', { taskId: 'unknown', status: 'completed' });
     expect(out).toEqual([{ id: 'unknown', content: '', status: 'completed' }]);
+  });
+});
+
+// The alias above is only as good as the id extraction that feeds it, and that
+// extraction reads ENGLISH PROSE out of an unstructured tool_result. One reworded
+// CLI string silently reinstates the M16 bug, so accept the phrasings the engine
+// plausibly emits — not just the one it emits today — and prefer structure when
+// there is any.
+describe('extractAssignedTaskId', () => {
+  it('reads the phrasing the CLI actually emits', () => {
+    // Verbatim from a live TaskCreate on 0.3.153 AND 0.3.210 (both probed).
+    expect(extractAssignedTaskId('Task #1 created successfully: probe task')).toBe('1');
+  });
+
+  it.each([
+    ['Created task 1: probe task', '1'],
+    ['Created task #12: probe task', '12'],
+    ['Task 7 created', '7'],
+    ['{"taskId":"42","subject":"probe task"}', '42'],
+    ['{"task_id":9}', '9'],
+    ['task_id: 3', '3'],
+    ['taskId=88', '88'],
+  ])('reads %j as %j', (content, expected) => {
+    expect(extractAssignedTaskId(content)).toBe(expected);
+  });
+
+  it('does not mistake a word in the sentence for an id', () => {
+    // `/task\s+(\S+)\s+created/` alone captures "was" here — an id that matches
+    // nothing, silently poisoning the alias map.
+    expect(extractAssignedTaskId('The task was created successfully')).toBeUndefined();
+  });
+
+  it('returns undefined when nothing in the payload names an id', () => {
+    expect(extractAssignedTaskId('OK')).toBeUndefined();
+    expect(extractAssignedTaskId('')).toBeUndefined();
   });
 });
 

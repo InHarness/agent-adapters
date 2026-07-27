@@ -1,0 +1,12 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-the-input-control-channel-stays-open-acr",
+  "status": "active",
+  "tags": [
+    "a01",
+    "m17"
+  ],
+  "text": "The input/control channel stays open across a result emitted while background work is in flight, so a user_input_request raised by the woken model still reaches the consumer's handler; closing it there instead surfaces as a tool_result reading 'Tool permission request failed: … Stream closed' with no user_input_request on the stream.",
+  "verifies": []
+}

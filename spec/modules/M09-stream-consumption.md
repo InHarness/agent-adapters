@@ -23,6 +23,7 @@ Developers can observe a run as it happens (`observeStream`, `createConsoleObser
 
 - **Observers** — `observeStream(stream, observer)` dispatches each event to typed callbacks; `createConsoleObserver()` is a ready-made observer for logging/CLI.
 - **Collectors** — `collectEvents(stream)` drains to an array; `filterByType(events, type)` narrows to one variant; `splitBySubagent(events)` partitions parent vs. per-subagent streams. These operate purely on emitted L1 events.
+- **Helpers that stop early MUST honour the in-flight signal.** `takeUntilResult()`, and anything else that ends consumption on a `result`, treats a `result` carrying a non-empty `backgroundTasks` as **not** terminal and keeps going (M01, M17). A shipped helper that stops at the first `result` is worse than a consumer hand-writing the loop: it hands everyone reaching for the ergonomic path the precise bug the signal was added to prevent, while looking like the endorsed way to do it. What this module exports is held to the contract it exists to make easy.
 
 <!-- anchor: 2g7t9cid -->
 ## Public API & Packaging (L4)

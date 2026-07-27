@@ -165,4 +165,38 @@ describe('sumUsageFromEvents', () => {
     ];
     expect(sumUsageFromEvents(events)).toEqual(noCacheA);
   });
+
+  // The M17 shape: a held `result` while a backgrounded task runs, then the
+  // continuation turn the wake-up produced. Both figures are verbatim from a live
+  // 0.3.153 run (recorded in A01) — note the second turn is SMALLER in every field,
+  // which is only possible if each result carries its own turn's cost rather than a
+  // running total. Summing is therefore the run total, and reading either one alone
+  // under-reports it.
+  it('sums the held result and its continuation turn (M17 background wake-up)', () => {
+    const heldTurn: UsageStats = {
+      inputTokens: 15 + 12844 + 40290,
+      outputTokens: 234,
+      cacheReadInputTokens: 40290,
+      cacheCreationInputTokens: 12844,
+    };
+    const continuationTurn: UsageStats = {
+      inputTokens: 10 + 505 + 26541,
+      outputTokens: 125,
+      cacheReadInputTokens: 26541,
+      cacheCreationInputTokens: 505,
+    };
+    const held = resultEvent(heldTurn) as Extract<UnifiedEvent, { type: 'result' }>;
+    const events: UnifiedEvent[] = [
+      { ...held, backgroundTasks: [{ taskId: 'bg-1', taskType: 'shell' }] },
+      { type: 'background_task_completed', taskId: 'bg-1', taskType: 'shell', status: 'completed' },
+      resultEvent(continuationTurn),
+    ];
+
+    expect(sumUsageFromEvents(events)).toEqual({
+      inputTokens: heldTurn.inputTokens + continuationTurn.inputTokens,
+      outputTokens: 359,
+      cacheReadInputTokens: 66831,
+      cacheCreationInputTokens: 13349,
+    });
+  });
 });
