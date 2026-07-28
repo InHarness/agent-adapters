@@ -517,12 +517,36 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
   private pushHandler: ((text: string, images?: ImageInput[]) => boolean) | null = null;
   /** Closes the active input channel (set per-`execute()` in streaming mode). */
   private closeInputChannel: (() => void) | null = null;
+  /** Live SDK query handle, set per-`execute()`. Drives cooperative teardown. */
+  private activeQuery: Query | null = null;
   /** Populated by factory when a provider is configured. */
   _providerConfig?: Record<string, unknown>;
 
   abort(): void {
+    this.interruptActiveQuery();
     this.abortController?.abort();
     this.closeInputChannel?.();
+  }
+
+  /**
+   * Ask the engine to stop the current turn cooperatively, so the CLI unwinds
+   * its own turn instead of dying mid-write when the transport goes. Reachable
+   * on *every* run: the SDK refuses `interrupt()` unless the prompt is an input
+   * channel, and since M11 the adapter drives all runs through one.
+   *
+   * Deliberately fire-and-forget. It is a control-protocol round-trip over the
+   * very stdin the next two teardown lines close, so it can easily outlive its
+   * own transport and never settle. The termination guarantee (M13) therefore
+   * rests on the abort controller and on settling outstanding user-input
+   * requests with `cancel` — never on this call. Awaiting it here would hand a
+   * hang to the one path whose job is to end one.
+   */
+  private interruptActiveQuery(): void {
+    try {
+      void this.activeQuery?.interrupt().catch(() => {});
+    } catch {
+      // A query already past its final turn rejects synchronously — nothing left to stop.
+    }
   }
 
   /**
@@ -996,6 +1020,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
         timedOut = true;
+        this.interruptActiveQuery();
         this.abortController?.abort();
       }, params.timeoutMs);
     }
@@ -1174,6 +1199,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         prompt: inputChannel.iterable,
         options,
       });
+      this.activeQuery = q;
     } catch (err) {
       clearTimeout(timeoutId);
       this.pushHandler = null;
@@ -1748,6 +1774,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // left awaiting input.
       this.pushHandler = null;
       this.closeInputChannel = null;
+      this.activeQuery = null;
       hold.dispose();
       inputChannel.close();
       await materialized?.cleanup().catch((err) =>

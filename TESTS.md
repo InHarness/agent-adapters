@@ -89,8 +89,10 @@ Convenience scripts are already wired up:
 
 ```bash
 npm run test:e2e:claude:fable-5
+npm run test:e2e:claude:sonnet-5
 npm run test:e2e:claude:sonnet-4.6
 npm run test:e2e:claude:sonnet-4.5
+npm run test:e2e:claude:opus-5
 npm run test:e2e:claude:opus-4.8
 npm run test:e2e:claude:opus-4.7
 npm run test:e2e:claude:opus-4.6
@@ -116,15 +118,15 @@ SKIP_CLAUDE_E2E=1 npm run test:e2e
 
 Codex, OpenCode, and Gemini E2E tests currently hardcode their model inside the test file. To try a different model, either edit the `MODEL` constant at the top of the relevant `*.e2e.test.ts`, or add an env-var override the same way `claude-code.e2e.test.ts` does.
 
-Available aliases per architecture (from `src/models.ts` `MODEL_ALIASES`) — you can also pass a full model ID; `resolveModel()` at `src/models.ts:107` passes those through and throws an `AdapterError` listing aliases for anything unknown:
+Available aliases per architecture (from `src/models.ts` `MODEL_ALIASES`) — you can also pass a full model ID. `resolveModel()` passes through anything it does not recognize (with a `console.warn` naming the known aliases) rather than throwing: the underlying SDK is the source of truth for what is actually accepted, so a model newer than this catalog still works.
 
 | Architecture | Aliases |
 | --- | --- |
-| `claude-code` | `fable-5`, `sonnet-4.6`, `sonnet-4.5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `haiku-4.5` |
+| `claude-code` | `fable-5`, `sonnet-5`, `sonnet-4.6`, `sonnet-4.5`, `opus-5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `haiku-4.5` |
 | `claude-code-ollama` | `qwen-coder-32b`, `deepseek-coder`, `codellama-70b`, `llama-3.1-70b` |
 | `claude-code-minimax` | `minimax-m2.7` |
-| `codex` | `o4-mini`, `o3`, `codex-mini` |
-| `opencode-openrouter` | `claude-fable-5`, `claude-opus-4.8`, `claude-sonnet-4.6`, `claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1` |
+| `codex` | `gpt-5.5`, `gpt-5.5-codex`, `gpt-5.5-mini`, `gpt-5.4`, `gpt-5.4-codex`, `gpt-5.4-mini`, `gpt-5`, `gpt-5-codex`, `gpt-5-mini` |
+| `opencode-openrouter` | `kimi-k2.6`, `step-3.5-flash`, `ling-2.6-1t-free`, `minimax-m2.7`, `claude-sonnet-4.6`, `hy3-preview-free`, `gemini-2.5-flash`, `nemotron-3-super-free`, `claude-fable-5`, `claude-opus-5`, `claude-opus-4.8`, `claude-opus-4.7`, `claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1` |
 | `gemini` | `gemini-3.1-pro`, `gemini-3.1-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash` |
 
 <!-- anchor: 25dgpmka -->

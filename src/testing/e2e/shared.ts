@@ -20,6 +20,7 @@ import { sumUsage } from '../../usage.js';
 // Re-exported so existing imports `from './shared.js'` keep working.
 import { assertNormalizedMessage, assertContentBlock } from '../normalization.js';
 export { assertNormalizedMessage, assertContentBlock };
+import { assertNoBackgroundTasks } from '../contract.js';
 
 // --- Skip guard ---
 
@@ -42,6 +43,21 @@ export function assertEventTypes(events: UnifiedEvent[], expectedTypes: UnifiedE
       true,
     );
   }
+}
+
+/**
+ * M17: on an adapter whose SDK never backgrounds work, the capability degrades by
+ * **absence** — no `background_task_*` event, no `result.backgroundTasks`, and no
+ * warning about either. Live counterpart to the fixture-replay checks in the
+ * codex/opencode normalize suites; the only route for gemini, which has no
+ * blackbox harness at unit level.
+ */
+export function assertNoBackgroundTasksStream(events: UnifiedEvent[]): void {
+  const failed = assertNoBackgroundTasks(events).assertions.filter((a) => !a.passed);
+  expect(
+    failed.map((a) => `${a.name} — ${a.message}`),
+    'background tasks must be absent on this adapter, not reported as an error or a warning',
+  ).toEqual([]);
 }
 
 /** Assert that all text_delta events have non-empty text and isSubagent field. */

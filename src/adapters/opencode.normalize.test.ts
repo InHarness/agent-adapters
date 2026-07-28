@@ -8,6 +8,7 @@ import type { UnifiedEvent } from '../types.js';
 import { collectEvents } from '../utils.js';
 import { createTestParams } from '../testing/helpers.js';
 import { assertNormalization } from '../testing/normalization.js';
+import { assertNoBackgroundTasks } from '../testing/contract.js';
 import {
   scenarioTextOnly,
   scenarioToolFlow,
@@ -176,5 +177,19 @@ describe('opencode normalization (fixture replay)', () => {
     } finally {
       if (prev !== undefined) process.env.OPENROUTER_API_KEY = prev;
     }
+  });
+});
+
+describe('opencode — background tasks degrade by absence (M17)', () => {
+  // See the codex counterpart: the SDK has no notion of engine-backgrounded work,
+  // so the contract here is that nothing at all shows up — not an error, not a warning.
+  it.for([
+    ['text only', scenarioTextOnly],
+    ['tool flow', scenarioToolFlow],
+    ['multi message', scenarioMultiMessage],
+  ] as const)('%s', async ([, scenario]) => {
+    const events = await runOpencode(scenario(FAKE_SESSION_ID));
+    const contract = assertNoBackgroundTasks(events);
+    expect(contract.assertions.filter((a) => !a.passed)).toEqual([]);
   });
 });

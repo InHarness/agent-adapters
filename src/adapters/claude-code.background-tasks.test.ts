@@ -41,16 +41,29 @@ type Script = (args: QueryArgs) => AsyncGenerator<unknown>;
 
 let script: Script | null = null;
 
+/**
+ * Stands in for `Query.interrupt()`. The real `query()` returns an AsyncGenerator
+ * with control methods bolted on; the bare generator below has none, which is
+ * itself worth exercising — an SDK that drops the method must not break teardown.
+ * Tests that care about the call opt in by assigning this.
+ */
+let interruptStub: (() => Promise<void>) | null = null;
+
 vi.mock('@anthropic-ai/claude-agent-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@anthropic-ai/claude-agent-sdk')>();
   return {
     ...actual,
-    query: (args: QueryArgs) => script!(args),
+    query: (args: QueryArgs) => {
+      const gen = script!(args);
+      if (interruptStub) (gen as unknown as { interrupt: unknown }).interrupt = interruptStub;
+      return gen;
+    },
   };
 });
 
 beforeEach(() => {
   script = null;
+  interruptStub = null;
 });
 
 function resultMessage(overrides: Record<string, unknown> = {}): SDKMessage {
@@ -806,6 +819,63 @@ describe('claude-code — abort while a user-input request is outstanding', () =
       events.some((e) => e.type === 'error' && e.error instanceof AdapterAbortError),
       'aborting should surface AdapterAbortError',
     ).toBe(true);
+  });
+
+  // `Query.interrupt()` lets the CLI unwind its own turn instead of dying mid-write
+  // when the transport goes. It is only reachable because M11 put *every* run on an
+  // input channel — the SDK refuses to interrupt a plain string prompt. It is an
+  // addition to teardown, never the thing teardown depends on: the two tests below
+  // pin both halves of that.
+  it('abort() asks the engine to interrupt the turn before tearing the transport down', async () => {
+    const interrupted = vi.fn(async () => {});
+    interruptStub = interrupted;
+    script = askOnceScript();
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const stream = adapter.execute(
+      createTestParams({ streamingInput: true, onUserInput: () => new Promise<never>(() => {}) }),
+    );
+
+    const { terminated } = await pumpUntilDone(stream, (e) => {
+      if (e.type === 'user_input_request') adapter.abort();
+    });
+
+    expect(interrupted, 'abort() should signal the engine, not just kill the transport').toHaveBeenCalled();
+    expect(terminated).toBe(true);
+  });
+
+  it('still terminates when interrupt() rejects, throws, or is missing entirely', async () => {
+    // Each of these is a plausible SDK state at abort time: a control round-trip
+    // over a stdin that is about to close, a query already past its final turn,
+    // and a version that never had the method. If any of them could block or
+    // throw through `abort()`, the run it was supposed to end would leak.
+    const broken: Array<[string, (() => Promise<void>) | null]> = [
+      ['rejects', async () => { throw new Error('Stream closed'); }],
+      ['throws synchronously', (() => { throw new Error('no active turn'); }) as () => Promise<void>],
+      ['is absent', null],
+    ];
+
+    for (const [label, stub] of broken) {
+      interruptStub = stub;
+      script = askOnceScript();
+      const { ClaudeCodeAdapter } = await import('./claude-code.js');
+      const adapter = new ClaudeCodeAdapter();
+
+      const stream = adapter.execute(
+        createTestParams({ streamingInput: true, onUserInput: () => new Promise<never>(() => {}) }),
+      );
+
+      const { events, terminated } = await pumpUntilDone(stream, (e) => {
+        if (e.type === 'user_input_request') adapter.abort();
+      });
+
+      expect(terminated, `abort() must end the run even when interrupt() ${label}`).toBe(true);
+      expect(
+        events.some((e) => e.type === 'error' && e.error instanceof AdapterAbortError),
+        `AdapterAbortError must still surface when interrupt() ${label}`,
+      ).toBe(true);
+    }
   });
 
   it('a throwing onUserInput surfaces an error and the run still completes', async () => {
