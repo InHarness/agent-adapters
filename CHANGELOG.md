@@ -4,7 +4,7 @@
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
 <!-- anchor: b7t4m2xk -->
-## [0.10.0] — 2026-07-27
+## [0.9.1] — 2026-07-28
 
 <!-- anchor: n5r8k3wq -->
 ### Added
@@ -37,7 +37,7 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 - **The model catalog's mirrors had fallen three releases behind.** `src/models.ts` is the mirror of M02 canon, but the human-facing copies of it were never propagated: README's alias table still advertised `o4-mini` / `o3` / `codex-mini` for `codex` — none of which have been in the catalog for several releases — and both README and TESTS.md omitted `sonnet-5` and the whole `gpt-5.x` and `gemini-3.1` families. Both tables are now generated from the catalog and match it entry for entry. TESTS.md also claimed `resolveModel()` "throws an `AdapterError`" for an unknown alias; it warns and passes through, which is the difference between a model newer than this catalog working and not.
 - **`claude-code` `result.usage` is per-turn, not per-`query()` cumulative** — the code comment claiming otherwise was wrong, and made summing several results look like double-counting. Measured across four live runs on both pins, a run's second `result` reports *fewer* tokens than its first in nearly every field, which a running total cannot do. Several `result`s in one run is normal (a mid-turn push, or a background wake-up), the run's billing is their sum via `sumUsageFromEvents()`, and `contextSize` is the last one's. No behaviour change.
 
-[0.10.0]: https://github.com/InHarness/agent-adapters/compare/v0.9.0...v0.10.0
+[0.9.1]: https://github.com/InHarness/agent-adapters/compare/v0.9.0...v0.9.1
 
 <!-- anchor: pf03z7hn -->
 ## [0.9.0] — 2026-07-15
