@@ -1,0 +1,11 @@
+{
+  "description": null,
+  "kind": "requirement",
+  "slug": "ac-resolvemodel-claude-code-opus-5-re",
+  "status": "active",
+  "tags": [
+    "m02"
+  ],
+  "text": "resolveModel('claude-code', 'opus-5') returns 'claude-opus-5', and 'claude-opus-5' is a member of ADAPTIVE_THINKING_ONLY.",
+  "verifies": []
+}

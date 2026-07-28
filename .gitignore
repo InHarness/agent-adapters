@@ -11,3 +11,4 @@ dist/
 *.deprecated
 # /claude4spec (auto-added)
 .DS_Store
+PLAN-*.md
