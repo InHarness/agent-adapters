@@ -445,6 +445,13 @@ export interface McpHttpServerConfig {
 export interface McpSdkServerConfig {
   type: 'sdk';
   name: string;
+  /**
+   * A live in-process `McpServer`. ONE INSTANCE PER `execute()` CALL: the server is
+   * bound to a single transport, so handing the same object to two overlapping runs
+   * leaves it connected to the first and merely advertised to the second — every tool
+   * call there then comes back empty. Adapters reject a concurrent reuse at init
+   * rather than letting it surface that way. Sequential reuse is fine.
+   */
   instance: unknown;
 }
 
@@ -966,6 +973,44 @@ export class AdapterAbortError extends AdapterError {
   constructor(adapter: string) {
     super(`${adapter} adapter was aborted`, adapter);
     this.name = 'AdapterAbortError';
+  }
+}
+
+/**
+ * The adapter held the session open for background work (M17) and that work stopped
+ * making progress for longer than the cap allows, so the run was ended.
+ *
+ * WHY THIS IS AN ERROR AND NOT A WARNING. The alternative — and what the adapter did
+ * before — was to close its input channel and let the run continue. That channel is
+ * the CLI's only host-side control transport: MCP tool calls, permission prompts,
+ * hook callbacks and elicitation all ride it. Closing it under a live CLI produced a
+ * session that kept talking while every one of those silently stopped working, and
+ * the consumer's only clue was a warning string among dozens of successful-looking
+ * empty tool results. A terminal, typed error is something a consumer can branch on;
+ * a warning was not.
+ *
+ * Distinguishable from {@link AdapterAbortError} (the consumer called `abort()`) and
+ * {@link AdapterTimeoutError} (the consumer's own `timeoutMs` elapsed) both by class
+ * and by `name`, which survives serialization. `capMs` is the bound that was hit —
+ * `claude_backgroundHoldCapMs`, or the built-in default.
+ */
+export class AdapterBackgroundHoldExpiredError extends AdapterError {
+  constructor(
+    adapter: string,
+    readonly capMs: number,
+  ) {
+    super(
+      `${adapter} adapter ended the run: background work made no progress for ${capMs}ms. ` +
+        'The session was terminated rather than left open with a closed control channel; ' +
+        'any remaining background task is abandoned and its completion will not be reported. ' +
+        'Raise or disarm the bound with the `claude_backgroundHoldCapMs` architecture option.',
+      adapter,
+    );
+    this.name = 'AdapterBackgroundHoldExpiredError';
+  }
+
+  override toJSON(): Record<string, unknown> {
+    return { ...super.toJSON(), capMs: this.capMs };
   }
 }
 

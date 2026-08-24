@@ -26,7 +26,13 @@ import type {
   ElicitationResponse,
   ImageInput,
 } from '../types.js';
-import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+import {
+  AdapterInitError,
+  AdapterTimeoutError,
+  AdapterAbortError,
+  AdapterBackgroundHoldExpiredError,
+  type AdapterError,
+} from '../types.js';
 import { resolveModel, ADAPTIVE_THINKING_ONLY } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -42,6 +48,8 @@ import {
   BACKGROUND_WAKEUP_GRACE_MS,
   MAX_BACKGROUND_HOLD_MS,
 } from './claude-code.background-hold.js';
+
+import { claimSdkMcpInstances, releaseSdkMcpInstances, mcpInstanceReuseError } from '../mcp.js';
 
 // Re-export generic MCP builder from the library
 export { createMcpServer, mcpTool } from '../mcp.js';
@@ -482,13 +490,21 @@ function createInputChannel(seed: SDKUserMessage): InputChannel {
 }
 
 /**
- * Read a millisecond knob off `architectureConfig`, falling back to the built-in
- * default. Only a finite number above zero is honoured — a `0`, a negative, or a
- * string would disarm or corrupt a bound whose whole job is to keep the control
- * channel open, so a bad value degrades to the measured default rather than to
- * "no protection".
+ * Read a millisecond knob off `architectureConfig`. Three outcomes, and the
+ * distinction between the last two is the point:
+ *
+ *  - a finite number above zero → that value;
+ *  - `null` or `Infinity` → `null`, the DISARM SENTINEL. An explicit, unambiguous
+ *    "I do not want this bound"; the run is then bounded by `timeoutMs`/`abort()`
+ *    alone. Consumers had no way to say this before — every non-positive value was
+ *    read as a mistake — which left them no escape hatch from a bound that could
+ *    end their run;
+ *  - anything else (`0`, a negative, a string) → the measured default. Those really
+ *    are mistakes, and silently degrading a bound to "no protection" on a typo is
+ *    worse than ignoring the typo.
  */
-function positiveMsOption(raw: unknown, fallback: number): number {
+function msOption(raw: unknown, fallback: number): number | null {
+  if (raw === null || raw === Number.POSITIVE_INFINITY) return null;
   return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : fallback;
 }
 
@@ -506,26 +522,51 @@ export {
   createBackgroundHold,
   projectBackgroundTasks,
 } from './claude-code.background-hold.js';
-export type { TaskKind, TaskRegistry, BackgroundHold } from './claude-code.background-hold.js';
+export type { TaskKind, TaskRegistry, BackgroundHold, HoldExpiry } from './claude-code.background-hold.js';
 
 // --- Adapter ---
 
+/**
+ * Everything about ONE `execute()` that a later `abort()`/`pushMessage()` has to be
+ * able to reach.
+ *
+ * It used to be four fields on the adapter, each overwritten by the next
+ * `execute()`. Two concurrent runs on one adapter therefore clobbered each other:
+ * the second run's `AbortController` replaced the first's, so `abort()` could only
+ * ever reach the most recent one and the earlier run became unstoppable — its CLI
+ * subprocess included. Making the state per-run means `abort()` can address every
+ * live run rather than "whichever started last".
+ */
+interface RunContext {
+  abortController: AbortController;
+  /** Streaming-input push handler — set when `streamingInput` is on. */
+  pushHandler: ((text: string, images?: ImageInput[]) => boolean) | null;
+  /** Closes this run's input channel. */
+  closeInputChannel: (() => void) | null;
+  /** Live SDK query handle. Drives cooperative teardown. */
+  activeQuery: Query | null;
+}
+
 export class ClaudeCodeAdapter implements RuntimeAdapter {
   architecture = 'claude-code' as const;
-  private abortController: AbortController | null = null;
-  /** Streaming-input push handler — set per-`execute()` when streamingInput is on. */
-  private pushHandler: ((text: string, images?: ImageInput[]) => boolean) | null = null;
-  /** Closes the active input channel (set per-`execute()` in streaming mode). */
-  private closeInputChannel: (() => void) | null = null;
-  /** Live SDK query handle, set per-`execute()`. Drives cooperative teardown. */
-  private activeQuery: Query | null = null;
+  /** Every `execute()` currently in flight on this adapter instance. */
+  private readonly runs = new Set<RunContext>();
+  /** The most recently started run — the one `pushMessage()` addresses. */
+  private latestRun: RunContext | null = null;
   /** Populated by factory when a provider is configured. */
   _providerConfig?: Record<string, unknown>;
 
+  /**
+   * Stop every run this adapter has in flight. The signature names no run, and a
+   * silently-unstoppable run is the worse failure of the two readings, so it stops
+   * all of them rather than guessing which one the caller meant.
+   */
   abort(): void {
-    this.interruptActiveQuery();
-    this.abortController?.abort();
-    this.closeInputChannel?.();
+    for (const run of [...this.runs]) {
+      this.interruptRun(run);
+      run.abortController.abort();
+      run.closeInputChannel?.();
+    }
   }
 
   /**
@@ -541,18 +582,36 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
    * requests with `cancel` — never on this call. Awaiting it here would hand a
    * hang to the one path whose job is to end one.
    */
-  private interruptActiveQuery(): void {
+  private interruptRun(run: RunContext): void {
     try {
-      void this.activeQuery?.interrupt().catch(() => {});
+      void run.activeQuery?.interrupt().catch(() => {});
     } catch {
       // A query already past its final turn rejects synchronously — nothing left to stop.
     }
   }
 
   /**
+   * Drop a finished run so a later `abort()` cannot reach into it. Also detaches its
+   * push handler, so a `pushMessage()` arriving after teardown returns `false`
+   * instead of enqueueing into a channel nobody reads.
+   */
+  private forgetRun(run: RunContext): void {
+    run.pushHandler = null;
+    run.closeInputChannel = null;
+    run.activeQuery = null;
+    this.runs.delete(run);
+    if (this.latestRun === run) this.latestRun = null;
+  }
+
+  /**
    * Push a user message into the live session mid-turn. See
    * {@link RuntimeAdapter.pushMessage}. Returns false when not in
    * streaming-input mode or the channel has closed (turn ended).
+   *
+   * Addresses the MOST RECENTLY STARTED run. With one run in flight — the shape the
+   * contract is written for — that is simply "the run"; with several, the choice has
+   * to be made somewhere and the newest is the only one the caller can have just
+   * learned about. `abort()` deliberately differs and reaches all of them.
    *
    * Optional `images` are normalized into Anthropic content blocks the same way
    * the initial prompt's images are (synchronously — `file` sources are read with
@@ -561,19 +620,32 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
    * that the channel was closed.
    */
   pushMessage(text: string, images?: ImageInput[]): boolean {
-    return this.pushHandler?.(text, images) ?? false;
+    return this.latestRun?.pushHandler?.(text, images) ?? false;
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
     // Self-heal a throwing `process.stdin` (Passenger/CageFS fd-0 EEXIST) before
     // anything imports the SDK or touches stdin. No-op when stdin is healthy.
     ensureUsableStdin();
-    this.abortController = new AbortController();
+
+    // Per-run state, so two concurrent execute() calls on one adapter cannot clobber
+    // each other's abort handles (see RunContext). Registered here rather than at
+    // query() time because every early return between here and there must still be
+    // abortable — and must still be deregistered, which `forgetRun` does.
+    const run: RunContext = {
+      abortController: new AbortController(),
+      pushHandler: null,
+      closeInputChannel: null,
+      activeQuery: null,
+    };
+    this.runs.add(run);
+    this.latestRun = run;
 
     let resolvedModel: string;
     try {
       resolvedModel = resolveModel(this.architecture, params.model);
     } catch (err) {
+      this.forgetRun(run);
       yield {
         type: 'error',
         error: err instanceof Error ? err : new AdapterInitError('claude-code', err),
@@ -592,7 +664,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     const softScope = pathScope.requested && pathScope.strength === 'soft';
 
     const options: Options = {
-      abortController: this.abortController,
+      abortController: run.abortController,
       model: resolvedModel,
       systemPrompt: params.systemPrompt,
       maxTurns: params.maxTurns,
@@ -843,11 +915,24 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       else p.resolveResponse({ action });
     };
 
+    /**
+     * Settle EVERY outstanding request and empty the queue. Idempotent, so the
+     * teardown that always runs it costs nothing when the drain already did.
+     *
+     * The invariant it exists for: a promise the SDK is awaiting must never outlive
+     * the run. Each entry holds an unresolved promise the SDK parked a `canUseTool`
+     * or `onElicitation` call on, and resolving it is the only thing that lets that
+     * call — and the closure behind it — go.
+     */
+    const settleAllPending = (action: 'cancel' | 'decline' = 'cancel'): void => {
+      for (const p of pendingUserInputs.splice(0)) settleUnanswered(p, action);
+    };
+
     // Settles when this run is aborted (explicitly or by `timeoutMs`). Raced
     // against everything the loop can park on — the SDK's next message and the
     // consumer's user-input handler — so abort() is enforceable even when the
     // other side never responds. Never rejects.
-    const abortSignal = this.abortController.signal;
+    const abortSignal = run.abortController.signal;
     const abortPromise = new Promise<'abort'>((resolve) => {
       if (abortSignal.aborted) resolve('abort');
       else abortSignal.addEventListener('abort', () => resolve('abort'), { once: true });
@@ -1017,11 +1102,26 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // Timeout handling
     let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    /**
+     * Why this run is ending, once something has aborted it. All three arrive at the
+     * same place — a tripped `AbortController` — so the reason has to be carried
+     * alongside, and every exit path must report the SAME one. It is a single
+     * closure because there are four such paths and they used to hold three copies
+     * of the same ternary, which is exactly how a fourth reason gets added to some
+     * of them and not the others.
+     */
+    let backgroundHoldExpiredAfterMs: number | null = null;
+    const terminalRuntimeError = (): AdapterError =>
+      timedOut
+        ? new AdapterTimeoutError('claude-code', params.timeoutMs!)
+        : backgroundHoldExpiredAfterMs !== null
+          ? new AdapterBackgroundHoldExpiredError('claude-code', backgroundHoldExpiredAfterMs)
+          : new AdapterAbortError('claude-code');
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
         timedOut = true;
-        this.interruptActiveQuery();
-        this.abortController?.abort();
+        this.interruptRun(run);
+        run.abortController.abort();
       }, params.timeoutMs);
     }
 
@@ -1039,6 +1139,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         ];
       } catch (err) {
         clearTimeout(timeoutId);
+        this.forgetRun(run);
         yield { type: 'error', error: new AdapterInitError('claude-code', err), phase: 'init' };
         return;
       }
@@ -1061,6 +1162,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         imageBlocks = await buildClaudeImageBlocks(params.images);
       } catch (err) {
         clearTimeout(timeoutId);
+        this.forgetRun(run);
         await materialized?.cleanup().catch(() => {});
         yield { type: 'error', error: new AdapterInitError('claude-code', err), phase: 'init' };
         return;
@@ -1085,9 +1187,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // one-shot run closes the channel at its result and terminates exactly as
     // it did with a string prompt. See M11/M17.
     const inputChannel: InputChannel = createInputChannel(buildUserMessage(seedContent));
-    this.closeInputChannel = () => inputChannel.close();
+    run.closeInputChannel = () => inputChannel.close();
     if (params.streamingInput) {
-      this.pushHandler = (text: string, images?: ImageInput[]) => {
+      run.pushHandler = (text: string, images?: ImageInput[]) => {
         if (inputChannel.closed) return false;
         // Build image blocks BEFORE enqueueing: a bad image throws here, leaving
         // nothing half-delivered. base64/url need no I/O; `file` is read sync so
@@ -1130,15 +1232,35 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // HOW LONG to hold is ours to bound either way, because neither source says
     // whether the engine will ever come back — the two bounds and the rules that
     // decide between them live in ./claude-code.background-hold.ts.
+    const capMs = msOption(config.claude_backgroundHoldCapMs, MAX_BACKGROUND_HOLD_MS);
     const hold = createBackgroundHold({
       registry: tasks,
-      closeChannel: () => inputChannel.close(),
+      // The two bounds are opposite outcomes, not two flavours of one (see HoldExpiry).
+      //
+      //  - grace: everything settled and the engine went quiet. Close the channel,
+      //    exactly where the pre-hold code closed it — the ordinary end of the run.
+      //  - cap: the held work stopped making progress, but the CLI is still ALIVE.
+      //    Closing the channel here is what produced the defect this release fixes:
+      //    stdin is the only host→CLI control transport, so the session carried on
+      //    with MCP, canUseTool, hooks and elicitation all silently dead, and the
+      //    consumer saw nothing but `(<tool> completed with no output)` results.
+      //    So end the run instead, down the same path abort() uses, and let the loop
+      //    surface a typed AdapterBackgroundHoldExpiredError.
+      onExpire: (reason) => {
+        if (reason === 'grace') {
+          inputChannel.close();
+          return;
+        }
+        backgroundHoldExpiredAfterMs = capMs;
+        this.interruptRun(run);
+        run.abortController.abort();
+      },
       wake: () => {
         userInputWaker?.();
         userInputWaker = null;
       },
-      graceMs: positiveMsOption(config.claude_backgroundGraceMs, BACKGROUND_WAKEUP_GRACE_MS),
-      capMs: positiveMsOption(config.claude_backgroundHoldCapMs, MAX_BACKGROUND_HOLD_MS),
+      graceMs: msOption(config.claude_backgroundGraceMs, BACKGROUND_WAKEUP_GRACE_MS),
+      capMs,
     });
 
     /**
@@ -1176,14 +1298,33 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       } as Options['hooks'];
     }
 
+    // One SDK-type MCP server instance per run. Claimed as late as possible — right
+    // before the CLI is spawned — so every earlier failure path exits without a claim
+    // to unwind; from here on the finally below owns the release. A reuse therefore
+    // fails at init, naming the server, instead of surfacing later as tool calls that
+    // silently come back empty. See src/mcp.ts.
+    const mcpClaim = claimSdkMcpInstances(params.mcpServers);
+    if (!mcpClaim.ok) {
+      clearTimeout(timeoutId);
+      this.forgetRun(run);
+      await materialized?.cleanup().catch(() => {});
+      yield {
+        type: 'error',
+        error: mcpInstanceReuseError('claude-code', mcpClaim.conflictingServer),
+        phase: 'init',
+      };
+      return;
+    }
+    const claimedMcpInstances = mcpClaim.claimed;
+
     let q: Query;
     try {
       const { query } = await import('@anthropic-ai/claude-agent-sdk');
       const versionCheck = checkPeerSdkVersion('@anthropic-ai/claude-agent-sdk');
       if (versionCheck.status === 'mismatch') {
         clearTimeout(timeoutId);
-        this.pushHandler = null;
-        this.closeInputChannel = null;
+        this.forgetRun(run);
+        releaseSdkMcpInstances(claimedMcpInstances);
         await materialized?.cleanup().catch(() => {});
         yield {
           type: 'error',
@@ -1199,11 +1340,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         prompt: inputChannel.iterable,
         options,
       });
-      this.activeQuery = q;
+      run.activeQuery = q;
     } catch (err) {
       clearTimeout(timeoutId);
-      this.pushHandler = null;
-      this.closeInputChannel = null;
+      this.forgetRun(run);
+      releaseSdkMcpInstances(claimedMcpInstances);
       await materialized?.cleanup().catch(() => {});
       yield { type: 'error', error: new AdapterInitError('claude-code', err), phase: 'init' };
       return;
@@ -1250,16 +1391,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             if (outcome.kind === 'abort') {
               // Settle the SDK-side promise so the callback doesn't leak, and
               // cancel everything still queued behind it.
-              for (const stale of [pending, ...pendingUserInputs.splice(0)]) {
-                settleUnanswered(stale, 'cancel');
-              }
-              yield {
-                type: 'error',
-                error: timedOut
-                  ? new AdapterTimeoutError('claude-code', params.timeoutMs!)
-                  : new AdapterAbortError('claude-code'),
-                phase: 'runtime',
-              };
+              settleUnanswered(pending, 'cancel');
+              settleAllPending();
+              yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
               return;
             }
             const res = outcome.res;
@@ -1294,11 +1428,6 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           };
         }
 
-        // Drain warnings raised off-loop (hold-bound expiry).
-        for (const message of hold.drainWarnings()) {
-          yield { type: 'warning', message };
-        }
-
         if (!pendingNext) pendingNext = sdkIterator.next();
 
         // Race SDK's next message vs. a wake-up from the user-input bridge vs.
@@ -1320,13 +1449,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         }
 
         if (winner.kind === 'abort') {
-          yield {
-            type: 'error',
-            error: timedOut
-              ? new AdapterTimeoutError('claude-code', params.timeoutMs!)
-              : new AdapterAbortError('claude-code'),
-            phase: 'runtime',
-          };
+          settleAllPending();
+          yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
           return;
         }
 
@@ -1338,12 +1462,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         // settling, say) is re-evaluated by that branch's own hold.touch() call.
         hold.touch(event);
 
-        if (this.abortController.signal.aborted) {
-          if (timedOut) {
-            yield { type: 'error', error: new AdapterTimeoutError('claude-code', params.timeoutMs!), phase: 'runtime' };
-          } else {
-            yield { type: 'error', error: new AdapterAbortError('claude-code'), phase: 'runtime' };
-          }
+        if (run.abortController.signal.aborted) {
+          settleAllPending();
+          yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
           return;
         }
 
@@ -1741,6 +1862,10 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               hold.end();
               inputChannel.close();
             }
+            // The decision for this turn is made, so the settlements that fed it have
+            // done their job. Forgetting them is what stops one early subagent from
+            // arming the hold at every later `result` for the rest of the run.
+            tasks.markTurnBoundary();
             break;
           }
 
@@ -1749,21 +1874,20 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         }
       }
 
-      // The loop exits the instant the SDK iterator reports `done`, which is exactly
-      // what an expiring bound provokes — it closes the channel, the SDK ends, and
-      // the race can resolve `done` before control returns to the drain at the loop
-      // top. Draining once more here is what keeps the cap's truncation warning from
-      // being swallowed by the very shutdown it caused.
-      for (const message of hold.drainWarnings()) {
-        yield { type: 'warning', message };
+      // A cap expiry aborts this run rather than closing the channel under a live
+      // CLI, and the abort can land while the loop is parked on the SDK's next
+      // message — which then resolves `done` and breaks the loop before the abort
+      // branch is reached. Reporting it here is what keeps that race from ending the
+      // run as an ordinary completion with no signal at all.
+      if (run.abortController.signal.aborted) {
+        settleAllPending();
+        yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
+        return;
       }
     } catch (err) {
-      if (this.abortController.signal.aborted) {
-        if (timedOut) {
-          yield { type: 'error', error: new AdapterTimeoutError('claude-code', params.timeoutMs!), phase: 'runtime' };
-        } else {
-          yield { type: 'error', error: new AdapterAbortError('claude-code'), phase: 'runtime' };
-        }
+      if (run.abortController.signal.aborted) {
+        settleAllPending();
+        yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
         return;
       }
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
@@ -1772,11 +1896,17 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // Tear down streaming-input state: detach the push handler so a late
       // pushMessage() returns false, and close the channel so the SDK isn't
       // left awaiting input.
-      this.pushHandler = null;
-      this.closeInputChannel = null;
-      this.activeQuery = null;
+      this.forgetRun(run);
+      releaseSdkMcpInstances(claimedMcpInstances);
       hold.dispose();
       inputChannel.close();
+      // Settle anything the SDK is still awaiting. This `finally` runs on EVERY exit
+      // — the abort/timeout early returns, a throw, and a consumer that abandons the
+      // stream mid-iteration (the generator's own `.return()`) — and only the
+      // user-input drain settled the map before, so a `canUseTool`/`onElicitation`
+      // promise outstanding on any other path leaked its callback and closure for
+      // the lifetime of the process.
+      settleAllPending();
       await materialized?.cleanup().catch((err) =>
         console.warn('[agent-adapters] claude-code skill cleanup failed', err),
       );

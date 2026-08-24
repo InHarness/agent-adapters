@@ -43,6 +43,7 @@ export {
   AdapterInitError,
   AdapterTimeoutError,
   AdapterAbortError,
+  AdapterBackgroundHoldExpiredError,
 } from './types.js';
 
 // Adapters
