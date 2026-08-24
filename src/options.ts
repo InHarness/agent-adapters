@@ -173,7 +173,8 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
       'How long the session stays open after background work settles, waiting for the engine to wake the model (M17). ' +
       'Paid as dead time at the end of any run that started a task — the consumer already has its result, only the ' +
       'stream stays open. Lower it to shorten that tail; below ~5s risks cutting off a wake-up that was really coming. ' +
-      'Set to null to disarm the wait entirely; a 0 or a negative is read as a mistake and falls back to the default.',
+      'Set to null to skip the wait entirely — the session then ends as soon as the work has settled; a 0 or a ' +
+      'negative is read as a mistake and falls back to the default.',
   },
   {
     key: 'claude_backgroundHoldCapMs',

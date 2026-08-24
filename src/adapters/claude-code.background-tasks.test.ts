@@ -808,6 +808,60 @@ describe('claude-code — the background-task hold is bounded', () => {
     expect(events.some((e) => e.type === 'error' && e.error instanceof AdapterBackgroundHoldExpiredError)).toBe(false);
   });
 
+  // A consumer that abandons the stream — `break` in its `for await`, or an explicit
+  // `.return()` — unwinds the generator, which runs only the `finally` blocks it is
+  // suspended INSIDE. Everything yielded before the run's own try (adapter_ready, the
+  // sandbox and peer-SDK warnings) sits outside all of them, so teardown has to be
+  // owned one level up. What leaks otherwise is not just memory: an abandoned run's
+  // MCP claim is process-global, so it would fail every LATER run using the same server.
+  it('abandoning the stream tears the run down, even from before the CLI is spawned', async () => {
+    script = holdThenGoQuietScript({ settle: true });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+    const live = () => (adapter as unknown as { runs: Set<unknown> }).runs.size;
+
+    const early = adapter.execute(createTestParams({ streamingInput: true }))[Symbol.asyncIterator]();
+    const first = await early.next();
+    expect(first.value?.type, 'adapter_ready is yielded well before the run’s own try').toBe('adapter_ready');
+    expect(live(), 'registered from the first line, so an early abort can still reach it').toBe(1);
+
+    await early.return?.(undefined as never);
+    expect(live(), 'and deregistered however the consumer leaves').toBe(0);
+
+    // The same holds once the run is well underway.
+    const late = adapter.execute(createTestParams({ streamingInput: true }))[Symbol.asyncIterator]();
+    await drainUntilResult(late);
+    expect(live()).toBe(1);
+    await late.return?.(undefined as never);
+    expect(live()).toBe(0);
+  });
+
+  it('a consumer that stops the session after its result still gets a clean end', async () => {
+    // `abort()` is how a consumer says "I have what I need" — commonly right after the
+    // final `result`, from inside its own loop. The flag it sets is the same one a cap
+    // expiry sets, so keying the run's outcome off `signal.aborted` alone would report
+    // a perfectly successful run as a failed one.
+    script = async function* ({ prompt }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+      yield resultMessage();
+    };
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const events: UnifiedEvent[] = [];
+    for await (const event of adapter.execute(createTestParams({ streamingInput: true }))) {
+      events.push(event);
+      if (event.type === 'result') adapter.abort();
+    }
+
+    expect(events.some((e) => e.type === 'result')).toBe(true);
+    expect(
+      events.filter((e) => e.type === 'error'),
+      'a completed run must not end in an error',
+    ).toEqual([]);
+  });
+
   // Run state used to be four fields on the adapter, each overwritten by the next
   // execute(). Two concurrent runs therefore clobbered each other's abort handles:
   // abort() reached only the newest, and the older run — plus its CLI subprocess —

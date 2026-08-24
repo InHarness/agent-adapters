@@ -85,6 +85,24 @@ describe('createTaskRegistry', () => {
     expect(r.kind('t1')?.taskType).toBe('subagent');
   });
 
+  it('three settlements inside one turn buy three further turns, not one', () => {
+    // The measured 0.3.210 shape, and the reason the decay redeems ONE settlement per
+    // boundary rather than clearing the set. Each settlement is a wake-up the engine
+    // may still take; answering the second `result` with "nothing pending" would close
+    // the control channel under the turns that follow — the defect M17 exists for.
+    const r = createTaskRegistry();
+    for (const id of ['t1', 't2', 't3']) {
+      r.start(id, 'subagent', id);
+      r.settle(id);
+    }
+
+    for (const turn of [1, 2, 3]) {
+      expect(r.touchedATask(), `result #${turn} still has a wake-up outstanding`).toBe(true);
+      r.markTurnBoundary();
+    }
+    expect(r.touchedATask(), 'all three redeemed — the run may now end').toBe(false);
+  });
+
   it('keeps claiming it while work is genuinely in flight, boundary or not', () => {
     const r = createTaskRegistry();
     r.start('t1', 'shell', 'sleep 3600');
@@ -150,6 +168,13 @@ describe('isBackgroundProgress', () => {
     expect(isBackgroundProgress(sdk({ type: 'stream_event', parent_tool_use_id: 'toolu_1' }))).toBe(true);
     expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'task_updated' }))).toBe(true);
     expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'task_notification' }))).toBe(true);
+  });
+
+  it('counts `task_progress` — some work reports through nothing else', () => {
+    // A `monitor`/`workflow` task, or a subagent sitting inside one long tool call,
+    // produces no token frames at all: `task_progress` is the ONLY evidence it is
+    // moving. Leaving it out let the cap end precisely the work it exists to wait for.
+    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'task_progress' }))).toBe(true);
   });
 
   it('does NOT count heartbeats — bounding a stalled run depends on it', () => {
@@ -253,16 +278,31 @@ describe('createBackgroundHold', () => {
     expect(expiries).toEqual(['cap']);
   });
 
-  it('a null bound is disarmed rather than reset to the default', () => {
+  it('a null cap is disarmed rather than reset to the default', () => {
     // The escape hatch consumers had no way to ask for: every non-positive value used
     // to be read as a typo and silently replaced by the default, so a bound that could
     // end their run could only ever be raised, never switched off.
-    const { registry, hold } = makeHold({ capMs: null, graceMs: null });
+    const { registry, hold } = makeHold({ capMs: null });
     registry.start('t1', 'shell', 'sleep 3600');
     hold.begin();
 
     vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS * 10);
     expect(expiries, 'timeoutMs/abort() are then the only bounds — by request').toEqual([]);
+  });
+
+  it('a null grace window means NO wait, not an unbounded one', () => {
+    // The two sentinels are not symmetric, and reading them as such is a trap: the
+    // grace option exists to shorten the dead tail, so its limit is zero. Treating
+    // `null` as "park without a bound" would keep a perfectly healthy run open until
+    // the cap ended it with an error — slower AND failed, from an option asking for
+    // the opposite.
+    const { registry, hold } = makeHold({ graceMs: null });
+    registry.start('t1', 'shell', 'x');
+    registry.markFinished('t1');
+    hold.begin();
+
+    vi.advanceTimersByTime(1);
+    expect(expiries).toEqual(['grace']);
   });
 
   it('re-arms the grace window from every frame, so it measures silence', () => {

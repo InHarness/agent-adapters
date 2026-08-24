@@ -80,7 +80,7 @@ export function isMainModelActivity(event: SDKMessage): boolean {
  * publishes on that channel (`status`, `background_tasks_changed`, …) is a
  * heartbeat: it says the engine is alive, not that the work is moving.
  */
-const TASK_LIFECYCLE_SUBTYPES = new Set(['task_started', 'task_updated', 'task_notification']);
+const TASK_LIFECYCLE_SUBTYPES = new Set(['task_started', 'task_progress', 'task_updated', 'task_notification']);
 
 /**
  * Is this message evidence that the HELD work is still moving? The cap is re-armed
@@ -92,8 +92,11 @@ const TASK_LIFECYCLE_SUBTYPES = new Set(['task_started', 'task_updated', 'task_n
  *    is the single commonest reason a run legitimately stays parked for minutes.
  *    Before this, such a stretch was exactly what reached the cap, because the
  *    release path ({@link isMainModelActivity}) cannot recognise it either.
- *  - a task's own lifecycle frame (`task_started` / `task_updated` /
- *    `task_notification`).
+ *  - a task's own lifecycle frame (`task_started` / `task_progress` /
+ *    `task_updated` / `task_notification`). `task_progress` matters most of the
+ *    four: a `monitor`/`workflow` task, or a subagent sitting in one long tool
+ *    call, reports through it and emits no token frames at all, so leaving it out
+ *    would let the cap end exactly the work it is supposed to wait for.
  *
  * Everything else is false ON PURPOSE — above all `system/status` and
  * `system/background_tasks_changed`. The engine emits those while it babysits a
@@ -164,9 +167,9 @@ export interface TaskRegistry {
    */
   touchedATask(): boolean;
   /**
-   * A turn ended and the hold has already decided on it: forget settlements that
-   * belong to it, so the next `result` is answered by what happened since, not by
-   * the whole run's history.
+   * A turn ended and the hold has already decided on it: redeem ONE settlement, so
+   * the next `result` is answered by what is still outstanding rather than by the
+   * whole run's history — while three settlements still buy three further turns.
    */
   markTurnBoundary(): void;
 }
@@ -204,7 +207,17 @@ export function createTaskRegistry(): TaskRegistry {
     inFlight,
     noWorkLeftRunning: () => [...inFlight].every((id) => finished.has(id)),
     touchedATask: () => inFlight.size > 0 || settledSinceBoundary.size > 0,
-    markTurnBoundary: () => settledSinceBoundary.clear(),
+    markTurnBoundary() {
+      // ONE settlement per boundary, not the whole set. Each settlement is one
+      // wake-up the engine may still take, and the 0.3.210 observation is precisely
+      // that three of them landing inside a single turn bought three FURTHER turns.
+      // Clearing the set at the first boundary would answer the second `result`
+      // with "nothing pending", close the channel, and leave the remaining turns
+      // running against a dead control transport — the very defect this module
+      // exists to prevent. Redeeming one keeps the pairing exact.
+      const oldest = settledSinceBoundary.values().next();
+      if (!oldest.done) settledSinceBoundary.delete(oldest.value);
+    },
   };
 }
 
@@ -409,12 +422,17 @@ export function createBackgroundHold(deps: {
    * rather than elapsed time — an earlier version disarmed on any SDK message and
    * let only `task_*` events re-arm, so one stray frame (`system/status`,
    * `system/background_tasks_changed` — both real) killed the short bound outright.
+   *
+   * `null` means NO WAIT — release as soon as the work has settled — not "wait
+   * without a bound". The option exists to shorten the dead tail, and its limit is
+   * zero; reading `null` as an unbounded wait would park a perfectly healthy run
+   * until the cap ended it with an error, which is the opposite of what asking for
+   * a shorter tail means.
    */
   const park = () => {
     if (!holding) return;
     if (graceTimer) clearTimeout(graceTimer);
-    graceTimer =
-      graceMs !== null && registry.noWorkLeftRunning() ? setTimeout(() => expire('grace'), graceMs) : undefined;
+    graceTimer = registry.noWorkLeftRunning() ? setTimeout(() => expire('grace'), graceMs ?? 0) : undefined;
   };
 
   /**

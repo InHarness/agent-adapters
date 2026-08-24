@@ -545,6 +545,8 @@ interface RunContext {
   closeInputChannel: (() => void) | null;
   /** Live SDK query handle. Drives cooperative teardown. */
   activeQuery: Query | null;
+  /** SDK-type MCP server instances this run holds a claim on (see src/mcp.ts). */
+  claimedMcpInstances: readonly object[];
 }
 
 export class ClaudeCodeAdapter implements RuntimeAdapter {
@@ -623,6 +625,23 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     return this.latestRun?.pushHandler?.(text, images) ?? false;
   }
 
+  /**
+   * Owns this run's REGISTRATION, and nothing else — the run itself is
+   * {@link runSession}.
+   *
+   * The split exists because `execute()` is a generator, and a consumer that stops
+   * iterating early (a `break` on a warning, say) unwinds it with `.return()`. That
+   * runs `finally` blocks the generator is currently suspended INSIDE, and nothing
+   * else: a yield sitting outside `runSession`'s own try — the peer-SDK version
+   * warning, the sandbox-degradation warning — would abandon the run with its
+   * `RunContext` still in `this.runs` and its MCP instances still claimed. The claim
+   * is process-global, so that leak poisons every LATER run using the same server:
+   * each one fails at init with "already connected to another run". Delegating
+   * through `yield*` inside a try/finally makes teardown reachable from every
+   * suspension point. The releases inside `runSession` stay — they free things at
+   * the moment they stop being needed rather than at teardown — and both are
+   * idempotent, so running them twice is a no-op.
+   */
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
     // Self-heal a throwing `process.stdin` (Passenger/CageFS fd-0 EEXIST) before
     // anything imports the SDK or touches stdin. No-op when stdin is healthy.
@@ -637,10 +656,20 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       pushHandler: null,
       closeInputChannel: null,
       activeQuery: null,
+      claimedMcpInstances: [],
     };
     this.runs.add(run);
     this.latestRun = run;
 
+    try {
+      yield* this.runSession(params, run);
+    } finally {
+      this.forgetRun(run);
+      releaseSdkMcpInstances(run.claimedMcpInstances);
+    }
+  }
+
+  private async *runSession(params: RuntimeExecuteParams, run: RunContext): AsyncIterable<UnifiedEvent> {
     let resolvedModel: string;
     try {
       resolvedModel = resolveModel(this.architecture, params.model);
@@ -1316,6 +1345,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       return;
     }
     const claimedMcpInstances = mcpClaim.claimed;
+    // Also recorded on the run, so the outer registration owner can release it even
+    // when the consumer abandons this generator mid-run (see `execute`).
+    run.claimedMcpInstances = claimedMcpInstances;
 
     let q: Query;
     try {
@@ -1879,7 +1911,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // message — which then resolves `done` and breaks the loop before the abort
       // branch is reached. Reporting it here is what keeps that race from ending the
       // run as an ordinary completion with no signal at all.
-      if (run.abortController.signal.aborted) {
+      // Gated on OUR OWN terminal reasons, not on `signal.aborted` alone. A consumer
+      // that calls `abort()` after the final `result` — "I have what I need, stop the
+      // session" — trips the flag on a run that completed successfully, and turning
+      // that into a terminal error would report a good run as a failed one.
+      if (backgroundHoldExpiredAfterMs !== null || timedOut) {
         settleAllPending();
         yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
         return;

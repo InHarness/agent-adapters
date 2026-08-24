@@ -210,7 +210,7 @@ export function claimSdkMcpInstances(
 }
 
 /** Release a claim taken by {@link claimSdkMcpInstances}. Safe to call twice. */
-export function releaseSdkMcpInstances(claimed: object[]): void {
+export function releaseSdkMcpInstances(claimed: readonly object[]): void {
   for (const instance of claimed) claimedSdkMcpInstances.delete(instance);
 }
 
