@@ -172,7 +172,9 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     description:
       'How long the session stays open after background work settles, waiting for the engine to wake the model (M17). ' +
       'Paid as dead time at the end of any run that started a task — the consumer already has its result, only the ' +
-      'stream stays open. Lower it to shorten that tail; below ~5s risks cutting off a wake-up that was really coming.',
+      'stream stays open. Lower it to shorten that tail; below ~5s risks cutting off a wake-up that was really coming. ' +
+      'Set to null to skip the wait entirely — the session then ends as soon as the work has settled; a 0 or a ' +
+      'negative is read as a mistake and falls back to the default.',
   },
   {
     key: 'claude_backgroundHoldCapMs',
@@ -184,9 +186,13 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     max: 600000,
     step: 5000,
     description:
-      'Hard cap on holding the session for background work that never settles (a backgrounded `sleep 3600`). Measured ' +
-      'from the engine going silent, so it cannot fire under a live engine; expiry ends the run with a warning. Keep ' +
-      'it below the timeout your consumer applies to the stream, or the run is rejected before the warning is emitted.',
+      'Cap on holding the session for background work that stops making progress (a backgrounded `sleep 3600`). ' +
+      'Measured from the last sign that the work itself is moving — subagent output and task lifecycle frames re-arm ' +
+      'it, engine heartbeats do not — so a long subagent stretch is not cut off. Expiry ENDS the run with a typed ' +
+      'AdapterBackgroundHoldExpiredError; it never leaves the session open with a closed control channel. Keep it ' +
+      'below the timeout your consumer applies to the stream, or the run is rejected before that error is emitted. ' +
+      'Set to null to disarm the cap and let your own timeoutMs be the only bound; a 0 or a negative is read as a ' +
+      'mistake and falls back to the default.',
   },
 ];
 

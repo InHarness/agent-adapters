@@ -33,7 +33,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { collectEvents } from '../utils.js';
 import { BACKGROUND_WAKEUP_GRACE_MS, MAX_BACKGROUND_HOLD_MS } from './claude-code.js';
 import { createTestParams } from '../testing/helpers.js';
-import { AdapterAbortError } from '../types.js';
+import { AdapterAbortError, AdapterBackgroundHoldExpiredError } from '../types.js';
 import type { UnifiedEvent, UserInputRequest } from '../types.js';
 
 type QueryArgs = { prompt: AsyncIterable<unknown> | string; options: Record<string, unknown> };
@@ -435,6 +435,13 @@ async function drainWithClock(
  * virtual time the run actually consumed. Without it "the tail got shorter" can only
  * be tested by letting the run hang past a tight ceiling, which fails as a timeout
  * rather than as an assertion.
+ *
+ * COUNTED FROM THE FIRST `result`, deliberately. The tail these tests are about is
+ * the dead time a task-touching run pays AFTER the consumer has its result — that is
+ * what the bounds govern. Everything before it is startup, and startup here is real
+ * async work (module resolution, the mocked dynamic import) that this loop can only
+ * wait out in 500ms virtual steps. Counting those made the measurement a function of
+ * how warm the module cache happened to be, which is a flake, not a bound.
  */
 async function drainMeasuringClock(
   stream: AsyncIterable<UnifiedEvent>,
@@ -444,6 +451,7 @@ async function drainMeasuringClock(
   const iterator = stream[Symbol.asyncIterator]();
   const events: UnifiedEvent[] = [];
   let advancedMs = 0;
+  let counting = false;
 
   for (;;) {
     let settled = false;
@@ -453,11 +461,40 @@ async function drainMeasuringClock(
     });
     for (let waited = 0; !settled && waited <= CEILING_MS; waited += STEP_MS) {
       await vi.advanceTimersByTimeAsync(STEP_MS);
-      if (!settled) advancedMs += STEP_MS;
+      // Counted even when this step is the one that ends the run: the bound elapsed
+      // inside it, so dropping it would under-report every tail by exactly one step.
+      if (counting) advancedMs += STEP_MS;
     }
     const next = await pull;
     if (next.done) return { events, advancedMs };
     events.push(next.value);
+    if (next.value.type === 'result') counting = true;
+  }
+}
+
+/**
+ * Pull events until the run's first `result`, under the fake clock. The per-pull
+ * budget is the same generous one the full drains use: everything before the result
+ * is startup, and startup is real async work this loop can only wait out in virtual
+ * steps — a tight budget here gives up on a cold module cache rather than on a bug.
+ */
+async function drainUntilResult(iterator: AsyncIterator<UnifiedEvent>): Promise<UnifiedEvent[]> {
+  const STEP_MS = 500;
+  const CEILING_MS = MAX_BACKGROUND_HOLD_MS + BACKGROUND_WAKEUP_GRACE_MS + 5_000;
+  const seen: UnifiedEvent[] = [];
+  for (;;) {
+    let settled = false;
+    const pull = iterator.next().then((r) => {
+      settled = true;
+      return r;
+    });
+    for (let waited = 0; !settled && waited <= CEILING_MS; waited += STEP_MS) {
+      await vi.advanceTimersByTimeAsync(STEP_MS);
+    }
+    const next = await pull;
+    if (next.done) return seen;
+    seen.push(next.value);
+    if (next.value.type === 'result') return seen;
   }
 }
 
@@ -490,7 +527,13 @@ describe('claude-code — the background-task hold is bounded', () => {
     expect(events.some((e) => e.type === 'result')).toBe(true);
   });
 
-  it('closes the hold at the hard cap when the task never settles', async () => {
+  // THE DEFECT THIS RELEASE FIXES. The cap used to close the input channel and let
+  // the run carry on. That channel is the CLI's only host-side control transport, so
+  // the session continued with MCP, canUseTool, hooks and elicitation all silently
+  // dead — the consumer saw a warning, then dozens of `(<tool> completed with no
+  // output)` results. Cap expiry must END the run, with an error a consumer can
+  // branch on.
+  it('ends the run with a typed error at the hard cap, instead of severing the channel', async () => {
     script = holdThenGoQuietScript({ settle: false });
     const { ClaudeCodeAdapter } = await import('./claude-code.js');
     const adapter = new ClaudeCodeAdapter();
@@ -498,10 +541,15 @@ describe('claude-code — the background-task hold is bounded', () => {
     // Nothing settles, so the grace window never arms — only the cap can end this.
     const events = await drainWithClock(adapter.execute(createTestParams({ streamingInput: true })));
 
-    expect(
-      events.find((e) => e.type === 'warning' && /still in flight after/.test(e.message)),
-      'a task that never settles must hit the cap and say so',
-    ).toBeDefined();
+    const terminal = events.find((e) => e.type === 'error');
+    expect(terminal, 'a task that never settles must hit the cap and end the run').toBeDefined();
+    expect((terminal as { error: Error }).error).toBeInstanceOf(AdapterBackgroundHoldExpiredError);
+    expect((terminal as { error: AdapterBackgroundHoldExpiredError }).error.capMs).toBe(MAX_BACKGROUND_HOLD_MS);
+    // Distinguishable from the consumer's own levers, which is the whole point of a
+    // typed error over a warning string.
+    expect((terminal as { error: Error }).error).not.toBeInstanceOf(AdapterAbortError);
+    expect(events.filter((e) => e.type === 'warning')).toEqual([]);
+    expect(events.indexOf(terminal!), 'and it is the last thing the run says').toBe(events.length - 1);
   });
 
   it('reports in-flight work on the held result so consumers know it is not terminal', async () => {
@@ -627,11 +675,121 @@ describe('claude-code — the background-task hold is bounded', () => {
       new ClaudeCodeAdapter().execute(createTestParams({ streamingInput: true })),
     );
 
-    // Silence proves it: the cap is the only bound that emits a warning.
+    // The cap is the only bound that ends the run with an error, so its absence is
+    // what proves the short bound decided this run.
     expect(
-      events.filter((e) => e.type === 'warning'),
+      events.filter((e) => e.type === 'warning' || e.type === 'error'),
       'a stray frame must RE-ARM the short bound, not disarm it and fall through to the cap',
     ).toEqual([]);
+  });
+
+  // THE SHAPE THE PRODUCTION DEFECT TOOK. A subagent working for minutes produces a
+  // steady stream of frames that carry `parent_tool_use_id` — so the release path
+  // (isMainModelActivity) cannot see them, and under an ABSOLUTE cap nothing stopped
+  // the 90s bound from firing in the middle of perfectly healthy work. Consumer
+  // telemetry showed the warning followed within seconds by dozens of MCP calls
+  // returning `(<tool> completed with no output)`.
+  it('a long subagent stretch is not truncated, because its output re-arms the cap', async () => {
+    const BEAT_MS = 20_000;
+    const BEATS = 8; // 160s of subagent work — well past MAX_BACKGROUND_HOLD_MS
+
+    script = async function* ({ prompt }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+
+      yield {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'sub-1',
+        task_type: 'subagent',
+        description: 'research',
+      } as unknown as SDKMessage;
+      yield resultMessage();
+
+      const pull = input.next();
+      // The subagent keeps working long past the cap. Nothing here is main-model
+      // activity, and nothing settles, so under the old rules only the cap applied
+      // and it was already counting.
+      for (let i = 0; i < BEATS; i += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, BEAT_MS));
+        yield {
+          type: 'assistant',
+          parent_tool_use_id: 'toolu_sub_1',
+          message: { role: 'assistant', content: [{ type: 'text', text: `sub beat ${i}` }] },
+        } as unknown as SDKMessage;
+      }
+
+      yield {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'sub-1',
+        status: 'completed',
+      } as unknown as SDKMessage;
+      await pull;
+    };
+
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const events = await drainWithClock(
+      new ClaudeCodeAdapter().execute(createTestParams({ streamingInput: true })),
+      BEAT_MS * BEATS + MAX_BACKGROUND_HOLD_MS + BACKGROUND_WAKEUP_GRACE_MS + 5_000,
+    );
+
+    expect(
+      events.filter((e) => e.type === 'error'),
+      'work that is visibly moving must not be called stalled',
+    ).toEqual([]);
+    expect(events.some((e) => e.type === 'subagent_completed')).toBe(true);
+  });
+
+  // The cap now ABORTS the run, and an abort must not leave the SDK holding a promise
+  // that never settles. Every exit path has to empty the pending map — only the
+  // user-input drain did, so a question outstanding when any other path fired leaked
+  // its callback and closure for the life of the process.
+  it('settles an outstanding user-input request when the cap ends the run', async () => {
+    let settledWith: unknown;
+    script = async function* ({ prompt, options }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+
+      yield {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'bg-1',
+        task_type: 'shell',
+        description: 'sleep 3600',
+      } as unknown as SDKMessage;
+      yield resultMessage();
+
+      const pull = input.next();
+      // The woken model asks something the host never answers — the state a real
+      // session sits in whenever a question is on screen. Deferred a macrotask so the
+      // adapter's loop has armed its waker first (see the note in runScenario).
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const canUseTool = options.canUseTool as (
+        t: string,
+        i: Record<string, unknown>,
+        c: { toolUseID: string },
+      ) => Promise<unknown>;
+      void canUseTool(
+        'AskUserQuestion',
+        { questions: [{ question: 'now what?', header: 'x', options: [{ label: 'a' }, { label: 'b' }] }] },
+        { toolUseID: 'toolu_held' },
+      ).then((r) => {
+        settledWith = r;
+      });
+      await pull;
+    };
+
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const events = await drainWithClock(
+      new ClaudeCodeAdapter().execute(
+        createTestParams({ streamingInput: true, onUserInput: () => new Promise<never>(() => {}) }),
+      ),
+    );
+
+    expect(events.some((e) => e.type === 'error' && e.error instanceof AdapterBackgroundHoldExpiredError)).toBe(true);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(settledWith, 'a promise the SDK awaits must never outlive the run').toBeDefined();
   });
 
   it('abort() releases a held run without waiting for the bounds', async () => {
@@ -647,7 +805,139 @@ describe('claude-code — the background-task hold is bounded', () => {
     }
 
     expect(events.some((e) => e.type === 'error' && e.error instanceof AdapterAbortError)).toBe(true);
-    expect(events.some((e) => e.type === 'warning' && /in flight after/.test(e.message))).toBe(false);
+    expect(events.some((e) => e.type === 'error' && e.error instanceof AdapterBackgroundHoldExpiredError)).toBe(false);
+  });
+
+  // A consumer that abandons the stream — `break` in its `for await`, or an explicit
+  // `.return()` — unwinds the generator, which runs only the `finally` blocks it is
+  // suspended INSIDE. Everything yielded before the run's own try (adapter_ready, the
+  // sandbox and peer-SDK warnings) sits outside all of them, so teardown has to be
+  // owned one level up. What leaks otherwise is not just memory: an abandoned run's
+  // MCP claim is process-global, so it would fail every LATER run using the same server.
+  it('abandoning the stream tears the run down, even from before the CLI is spawned', async () => {
+    script = holdThenGoQuietScript({ settle: true });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+    const live = () => (adapter as unknown as { runs: Set<unknown> }).runs.size;
+
+    const early = adapter.execute(createTestParams({ streamingInput: true }))[Symbol.asyncIterator]();
+    const first = await early.next();
+    expect(first.value?.type, 'adapter_ready is yielded well before the run’s own try').toBe('adapter_ready');
+    expect(live(), 'registered from the first line, so an early abort can still reach it').toBe(1);
+
+    await early.return?.(undefined as never);
+    expect(live(), 'and deregistered however the consumer leaves').toBe(0);
+
+    // The same holds once the run is well underway.
+    const late = adapter.execute(createTestParams({ streamingInput: true }))[Symbol.asyncIterator]();
+    await drainUntilResult(late);
+    expect(live()).toBe(1);
+    await late.return?.(undefined as never);
+    expect(live()).toBe(0);
+  });
+
+  it('a consumer that stops the session after its result still gets a clean end', async () => {
+    // `abort()` is how a consumer says "I have what I need" — commonly right after the
+    // final `result`, from inside its own loop. The flag it sets is the same one a cap
+    // expiry sets, so keying the run's outcome off `signal.aborted` alone would report
+    // a perfectly successful run as a failed one.
+    script = async function* ({ prompt }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+      yield resultMessage();
+    };
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const events: UnifiedEvent[] = [];
+    for await (const event of adapter.execute(createTestParams({ streamingInput: true }))) {
+      events.push(event);
+      if (event.type === 'result') adapter.abort();
+    }
+
+    expect(events.some((e) => e.type === 'result')).toBe(true);
+    expect(
+      events.filter((e) => e.type === 'error'),
+      'a completed run must not end in an error',
+    ).toEqual([]);
+  });
+
+  // Run state used to be four fields on the adapter, each overwritten by the next
+  // execute(). Two concurrent runs therefore clobbered each other's abort handles:
+  // abort() reached only the newest, and the older run — plus its CLI subprocess —
+  // could not be stopped at all.
+  it('abort() reaches every run in flight, not just the most recent', async () => {
+    script = holdThenGoQuietScript({ settle: false });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const first = adapter.execute(createTestParams({ streamingInput: true }))[Symbol.asyncIterator]();
+    const second = adapter.execute(createTestParams({ streamingInput: true }))[Symbol.asyncIterator]();
+
+    // Drive both to their held `result`, so each is parked with the channel open.
+    expect((await drainUntilResult(first)).some((e) => e.type === 'result')).toBe(true);
+    expect((await drainUntilResult(second)).some((e) => e.type === 'result')).toBe(true);
+
+    adapter.abort();
+
+    const nextError = async (it: AsyncIterator<UnifiedEvent>) => {
+      for (;;) {
+        const next = await it.next();
+        if (next.done) return undefined;
+        if (next.value.type === 'error') return next.value.error;
+      }
+    };
+    expect(await nextError(first), 'the older run must be stoppable too').toBeInstanceOf(AdapterAbortError);
+    expect(await nextError(second)).toBeInstanceOf(AdapterAbortError);
+  });
+
+  // `touchedATask()` used to be `kindById.size > 0` over a map that is never pruned,
+  // so ONE subagent early in a run armed the hold at every later `result` for the rest
+  // of the run — each one paying the grace tail, and each one arming the cap that
+  // could then end the session. The signal has to decay once a turn has passed on it.
+  it('a task that settled a turn ago no longer holds the session at a later result', async () => {
+    script = async function* ({ prompt }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+
+      yield {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'sub-1',
+        task_type: 'subagent',
+        description: 'research',
+      } as unknown as SDKMessage;
+      yield {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'sub-1',
+        status: 'completed',
+      } as unknown as SDKMessage;
+      // Turn 1's result: the settlement is fresh, so holding here is correct — this is
+      // the measured shape where the engine goes on to wake the model.
+      yield resultMessage();
+
+      const pull = input.next();
+      // ...and it does. A continuation turn runs and ends. Nothing task-related
+      // happens in it.
+      yield {
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'continued' }] },
+      } as unknown as SDKMessage;
+      yield resultMessage({ result: 'done' });
+      await pull;
+    };
+
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const { events, advancedMs } = await drainMeasuringClock(
+      new ClaudeCodeAdapter().execute(createTestParams({ streamingInput: true })),
+    );
+
+    expect(events.filter((e) => e.type === 'result')).toHaveLength(2);
+    expect(
+      advancedMs,
+      'the second result has no live reason to hold, so it must end the run at once',
+    ).toBeLessThan(BACKGROUND_WAKEUP_GRACE_MS);
   });
 
   // The bounds are sized off measurements of ONE engine (see A01), and the grace is
@@ -699,8 +989,40 @@ describe('claude-code — the background-task hold is bounded', () => {
       ),
     );
 
-    expect(events.find((e) => e.type === 'warning' && /still in flight after 6000ms/.test(e.message))).toBeDefined();
+    const terminal = events.find((e) => e.type === 'error');
+    expect(terminal).toBeDefined();
+    expect((terminal as { error: AdapterBackgroundHoldExpiredError }).error.capMs).toBe(6_000);
     expect(advancedMs).toBeLessThan(MAX_BACKGROUND_HOLD_MS);
+  });
+
+  it('a null cap disarms the bound rather than resetting it to the default', async () => {
+    // Consumers had no escape hatch: every non-positive value was read as a typo and
+    // replaced by the default, so a bound that can end their run could only be raised.
+    // With it disarmed, `timeoutMs` is the only clock left — asserted here by the run
+    // NOT ending on its own.
+    script = holdThenGoQuietScript({ settle: false });
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+
+    const stream = adapter.execute(
+      createTestParams({ streamingInput: true, architectureConfig: { claude_backgroundHoldCapMs: null } }),
+    );
+    const iterator = stream[Symbol.asyncIterator]();
+    // Drain up to the result, then prove nothing further arrives across ten caps'
+    // worth of virtual time.
+    const seen = await drainUntilResult(iterator);
+    expect(seen.some((e) => e.type === 'result')).toBe(true);
+
+    let ended = false;
+    void iterator.next().then(() => {
+      ended = true;
+    });
+    await vi.advanceTimersByTimeAsync(MAX_BACKGROUND_HOLD_MS * 10);
+    expect(ended, 'a disarmed cap must not end the run').toBe(false);
+
+    adapter.abort();
+    await vi.advanceTimersByTimeAsync(100);
+    await iterator.return?.();
   });
 });
 

@@ -15,9 +15,11 @@ import {
   projectBackgroundTasks,
   classifyTaskType,
   isMainModelActivity,
+  isBackgroundProgress,
   BACKGROUND_WAKEUP_GRACE_MS,
   MAX_BACKGROUND_HOLD_MS,
 } from './claude-code.background-hold.js';
+import type { HoldExpiry } from './claude-code.background-hold.js';
 
 function sdk(msg: Record<string, unknown>): SDKMessage {
   return msg as unknown as SDKMessage;
@@ -63,6 +65,48 @@ describe('createTaskRegistry', () => {
     expect([...r.inFlight]).toEqual([]);
     // Still routable: a late message about a settled task must reach the right family.
     expect(r.kind('t1')?.taskType).toBe('shell');
+    expect(r.touchedATask()).toBe(true);
+  });
+
+  it('stops claiming the engine will come back once a turn has passed on it', () => {
+    // The latch this replaces was `kindById.size > 0`, and kindById is never pruned:
+    // one subagent early in a run armed the hold at EVERY later `result` for the rest
+    // of the run, which is what made the cap reachable in ordinary turns. The signal
+    // has to survive the result that follows the settlement (that result is where the
+    // engine's wake-up would be decided) and then decay.
+    const r = createTaskRegistry();
+    r.start('t1', 'subagent', 'research');
+    r.settle('t1');
+
+    expect(r.touchedATask(), 'the result right after a settlement still holds').toBe(true);
+    r.markTurnBoundary();
+    expect(r.touchedATask(), 'a later result must not inherit it').toBe(false);
+    // The kind is still routable — pruning the latch must not prune the routing table.
+    expect(r.kind('t1')?.taskType).toBe('subagent');
+  });
+
+  it('three settlements inside one turn buy three further turns, not one', () => {
+    // The measured 0.3.210 shape, and the reason the decay redeems ONE settlement per
+    // boundary rather than clearing the set. Each settlement is a wake-up the engine
+    // may still take; answering the second `result` with "nothing pending" would close
+    // the control channel under the turns that follow — the defect M17 exists for.
+    const r = createTaskRegistry();
+    for (const id of ['t1', 't2', 't3']) {
+      r.start(id, 'subagent', id);
+      r.settle(id);
+    }
+
+    for (const turn of [1, 2, 3]) {
+      expect(r.touchedATask(), `result #${turn} still has a wake-up outstanding`).toBe(true);
+      r.markTurnBoundary();
+    }
+    expect(r.touchedATask(), 'all three redeemed — the run may now end').toBe(false);
+  });
+
+  it('keeps claiming it while work is genuinely in flight, boundary or not', () => {
+    const r = createTaskRegistry();
+    r.start('t1', 'shell', 'sleep 3600');
+    r.markTurnBoundary();
     expect(r.touchedATask()).toBe(true);
   });
 
@@ -118,15 +162,43 @@ describe('projectBackgroundTasks', () => {
   });
 });
 
+describe('isBackgroundProgress', () => {
+  it('counts subagent output and task lifecycle frames', () => {
+    expect(isBackgroundProgress(sdk({ type: 'assistant', parent_tool_use_id: 'toolu_1' }))).toBe(true);
+    expect(isBackgroundProgress(sdk({ type: 'stream_event', parent_tool_use_id: 'toolu_1' }))).toBe(true);
+    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'task_updated' }))).toBe(true);
+    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'task_notification' }))).toBe(true);
+  });
+
+  it('counts `task_progress` — some work reports through nothing else', () => {
+    // A `monitor`/`workflow` task, or a subagent sitting inside one long tool call,
+    // produces no token frames at all: `task_progress` is the ONLY evidence it is
+    // moving. Leaving it out let the cap end precisely the work it exists to wait for.
+    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'task_progress' }))).toBe(true);
+  });
+
+  it('does NOT count heartbeats — bounding a stalled run depends on it', () => {
+    // `system/status` and `system/background_tasks_changed` are what the engine emits
+    // while it babysits a backgrounded `sleep 3600`. If they extended the cap, the one
+    // case the cap exists for would never end.
+    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'status' }))).toBe(false);
+    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'background_tasks_changed' }))).toBe(false);
+    expect(isBackgroundProgress(sdk({ type: 'result', subtype: 'success' }))).toBe(false);
+    // Main-model output is a RELEASE, handled by isMainModelActivity — not progress
+    // on the held work.
+    expect(isBackgroundProgress(sdk({ type: 'assistant', parent_tool_use_id: null }))).toBe(false);
+  });
+});
+
 describe('createBackgroundHold', () => {
-  let closed: number;
+  let expiries: HoldExpiry[];
   let woken: number;
 
-  function makeHold(overrides: { graceMs?: number; capMs?: number } = {}) {
+  function makeHold(overrides: { graceMs?: number | null; capMs?: number | null } = {}) {
     const registry = createTaskRegistry();
     const hold = createBackgroundHold({
       registry,
-      closeChannel: () => void closed++,
+      onExpire: (reason) => void expiries.push(reason),
       wake: () => void woken++,
       ...overrides,
     });
@@ -134,7 +206,7 @@ describe('createBackgroundHold', () => {
   }
 
   beforeEach(() => {
-    closed = 0;
+    expiries = [];
     woken = 0;
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   });
@@ -149,10 +221,10 @@ describe('createBackgroundHold', () => {
     hold.begin();
 
     vi.advanceTimersByTime(BACKGROUND_WAKEUP_GRACE_MS + 1);
-    expect(closed).toBe(1);
+    // 'grace' is the caller's cue to close the channel — a healthy run's end, not a
+    // truncation. The hold itself closes nothing either way.
+    expect(expiries).toEqual(['grace']);
     expect(woken).toBe(1);
-    // A healthy run's end is not a truncation — no banner.
-    expect(hold.drainWarnings()).toEqual([]);
   });
 
   it('work still running is bounded by the cap, not the grace window', () => {
@@ -161,11 +233,76 @@ describe('createBackgroundHold', () => {
     hold.begin();
 
     vi.advanceTimersByTime(BACKGROUND_WAKEUP_GRACE_MS + 1);
-    expect(closed, 'the short window must not arm while work is genuinely running').toBe(0);
+    expect(expiries, 'the short window must not arm while work is genuinely running').toEqual([]);
 
     vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS);
-    expect(closed).toBe(1);
-    expect(hold.drainWarnings()).toEqual([expect.stringContaining('still in flight after')]);
+    // 'cap' is a different outcome from 'grace', not a louder one: the caller ends the
+    // run, because the CLI is still alive and closing its stdin would leave a session
+    // whose control channel is dead but whose model keeps talking.
+    expect(expiries).toEqual(['cap']);
+  });
+
+  it('a heartbeat does not extend the cap', () => {
+    // The bound must still catch a backgrounded `sleep 3600`, and the engine chatters
+    // the whole time it babysits one.
+    const { registry, hold } = makeHold();
+    registry.start('t1', 'shell', 'sleep 3600');
+    hold.begin();
+
+    for (let i = 0; i < 4; i++) {
+      vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS / 4);
+      hold.touch(sdk({ type: 'system', subtype: 'status' }));
+    }
+    vi.advanceTimersByTime(1);
+    expect(expiries).toEqual(['cap']);
+  });
+
+  it('subagent output extends the cap for as long as the work keeps moving', () => {
+    // THE REGRESSION THIS RELEASE EXISTS FOR. The cap used to be absolute, armed once
+    // at the held `result`. A long subagent-driven stretch is precisely the shape that
+    // reached it — and precisely the shape the release path cannot recognise either,
+    // because subagent frames carry `parent_tool_use_id`. Healthy runs were cut off at
+    // 90s for using a subagent.
+    const { registry, hold } = makeHold();
+    registry.start('t1', 'subagent', 'research'); // never settles: it is still working
+    hold.begin();
+
+    for (let i = 0; i < 6; i++) {
+      vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS - 1_000);
+      hold.touch(sdk({ type: 'stream_event', parent_tool_use_id: 'toolu_1' }));
+    }
+    expect(expiries, 'work that is visibly moving must not be called stalled').toEqual([]);
+
+    // ...and the moment it does stop moving, the bound still applies.
+    vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS + 1);
+    expect(expiries).toEqual(['cap']);
+  });
+
+  it('a null cap is disarmed rather than reset to the default', () => {
+    // The escape hatch consumers had no way to ask for: every non-positive value used
+    // to be read as a typo and silently replaced by the default, so a bound that could
+    // end their run could only ever be raised, never switched off.
+    const { registry, hold } = makeHold({ capMs: null });
+    registry.start('t1', 'shell', 'sleep 3600');
+    hold.begin();
+
+    vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS * 10);
+    expect(expiries, 'timeoutMs/abort() are then the only bounds — by request').toEqual([]);
+  });
+
+  it('a null grace window means NO wait, not an unbounded one', () => {
+    // The two sentinels are not symmetric, and reading them as such is a trap: the
+    // grace option exists to shorten the dead tail, so its limit is zero. Treating
+    // `null` as "park without a bound" would keep a perfectly healthy run open until
+    // the cap ended it with an error — slower AND failed, from an option asking for
+    // the opposite.
+    const { registry, hold } = makeHold({ graceMs: null });
+    registry.start('t1', 'shell', 'x');
+    registry.markFinished('t1');
+    hold.begin();
+
+    vi.advanceTimersByTime(1);
+    expect(expiries).toEqual(['grace']);
   });
 
   it('re-arms the grace window from every frame, so it measures silence', () => {
@@ -180,10 +317,10 @@ describe('createBackgroundHold', () => {
       vi.advanceTimersByTime(BACKGROUND_WAKEUP_GRACE_MS - 1_000);
       hold.touch(sdk({ type: 'system', subtype: 'status' }));
     }
-    expect(closed, 'a talking engine is not a stuck one').toBe(0);
+    expect(expiries, 'a talking engine is not a stuck one').toEqual([]);
 
     vi.advanceTimersByTime(BACKGROUND_WAKEUP_GRACE_MS + 1);
-    expect(closed).toBe(1);
+    expect(expiries).toEqual(['grace']);
   });
 
   it('releases BOTH bounds the moment the main model produces again', () => {
@@ -197,7 +334,7 @@ describe('createBackgroundHold', () => {
     hold.touch(sdk({ type: 'assistant', parent_tool_use_id: null }));
     vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS * 3);
 
-    expect(closed, 'no bound may fire while a continuation turn is running').toBe(0);
+    expect(expiries, 'no bound may fire while a continuation turn is running').toEqual([]);
   });
 
   it('subagent chatter keeps the run parked instead of releasing it', () => {
@@ -209,7 +346,7 @@ describe('createBackgroundHold', () => {
     hold.touch(sdk({ type: 'assistant', parent_tool_use_id: 'toolu_1' }));
     vi.advanceTimersByTime(BACKGROUND_WAKEUP_GRACE_MS + 1);
 
-    expect(closed, 'a helper talking after its parent turn ended is the held state').toBe(1);
+    expect(expiries, 'a helper talking after its parent turn ended is the held state').toEqual(['grace']);
   });
 
   it('end() and dispose() leave no timer able to close the channel later', () => {
@@ -220,7 +357,7 @@ describe('createBackgroundHold', () => {
     hold.dispose();
 
     vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS * 2);
-    expect(closed).toBe(0);
+    expect(expiries).toEqual([]);
   });
 
   it('honours caller-supplied bounds', () => {
@@ -230,16 +367,17 @@ describe('createBackgroundHold', () => {
     hold.begin();
 
     vi.advanceTimersByTime(2_001);
-    expect(closed).toBe(1);
+    expect(expiries).toEqual(['grace']);
   });
 });
 
 describe('the hold cap and the collectEvents default timeout', () => {
-  it('leaves room for the truncation warning to be emitted', async () => {
+  it('leaves room for the terminal error to reach the consumer', async () => {
     // Both clocks race, and collectEvents' starts EARLIER (when the run starts, not
     // when the hold arms at a held result). An equal cap means the helper rejects the
-    // run before the cap can say the background work was abandoned — losing the only
-    // signal there is. This is a coupling, so it is asserted rather than commented.
+    // run before the cap's AdapterBackgroundHoldExpiredError can be yielded — losing
+    // the only signal there is. This is a coupling, so it is asserted rather than
+    // commented.
     const { COLLECT_EVENTS_DEFAULT_TIMEOUT_MS } = await import('../utils.js');
     expect(MAX_BACKGROUND_HOLD_MS).toBeLessThan(COLLECT_EVENTS_DEFAULT_TIMEOUT_MS);
   });

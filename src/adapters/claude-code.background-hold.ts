@@ -75,6 +75,49 @@ export function isMainModelActivity(event: SDKMessage): boolean {
   return ((event as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null) === null;
 }
 
+/**
+ * `system` subtypes that carry a task's own lifecycle. Anything else the engine
+ * publishes on that channel (`status`, `background_tasks_changed`, …) is a
+ * heartbeat: it says the engine is alive, not that the work is moving.
+ */
+const TASK_LIFECYCLE_SUBTYPES = new Set(['task_started', 'task_progress', 'task_updated', 'task_notification']);
+
+/**
+ * Is this message evidence that the HELD work is still moving? The cap is re-armed
+ * from it, so the question is deliberately narrower than "did a frame arrive".
+ *
+ * Two shapes qualify, and only two:
+ *
+ *  - subagent content (`parent_tool_use_id` set) — a helper agent producing tokens
+ *    is the single commonest reason a run legitimately stays parked for minutes.
+ *    Before this, such a stretch was exactly what reached the cap, because the
+ *    release path ({@link isMainModelActivity}) cannot recognise it either.
+ *  - a task's own lifecycle frame (`task_started` / `task_progress` /
+ *    `task_updated` / `task_notification`). `task_progress` matters most of the
+ *    four: a `monitor`/`workflow` task, or a subagent sitting in one long tool
+ *    call, reports through it and emits no token frames at all, so leaving it out
+ *    would let the cap end exactly the work it is supposed to wait for.
+ *
+ * Everything else is false ON PURPOSE — above all `system/status` and
+ * `system/background_tasks_changed`. The engine emits those while it babysits a
+ * backgrounded `sleep 3600`, and bounding that case is the cap's whole job: if
+ * heartbeats re-armed it, nothing would.
+ */
+export function isBackgroundProgress(event: SDKMessage): boolean {
+  if (event.type === 'system') {
+    return TASK_LIFECYCLE_SUBTYPES.has((event as { subtype?: string }).subtype ?? '');
+  }
+  if (
+    event.type !== 'assistant' &&
+    event.type !== 'stream_event' &&
+    event.type !== 'user' &&
+    event.type !== 'tool_use_summary'
+  ) {
+    return false;
+  }
+  return ((event as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? null) !== null;
+}
+
 // --- Task registry ---
 
 /**
@@ -110,18 +153,37 @@ export interface TaskRegistry {
    */
   noWorkLeftRunning(): boolean;
   /**
-   * Did this run start ANY task? The coarse keep-open reason — deliberately coarse,
-   * because nothing-in-flight is not the same as nothing-coming (observed on 0.3.210:
+   * Is there a reason to expect the engine to come back? Deliberately coarse:
+   * nothing-in-flight is not the same as nothing-coming (observed on 0.3.210 —
    * three subagents all reported completion INSIDE the turn and the engine still
-   * resumed the model for three further turns).
+   * resumed the model for three further turns). So it answers YES for work still
+   * in flight AND for work that settled since the last turn boundary.
+   *
+   * What it deliberately does NOT do any more is latch for the whole run. It used
+   * to be `kindById.size > 0`, and `kindById` is never pruned — one subagent early
+   * in a run therefore armed the hold at EVERY subsequent `result`, long after that
+   * subagent was done. That is what made the cap reachable in otherwise ordinary
+   * turns, so the signal decays instead (see {@link markTurnBoundary}).
    */
   touchedATask(): boolean;
+  /**
+   * A turn ended and the hold has already decided on it: redeem ONE settlement, so
+   * the next `result` is answered by what is still outstanding rather than by the
+   * whole run's history — while three settlements still buy three further turns.
+   */
+  markTurnBoundary(): void;
 }
 
 export function createTaskRegistry(): TaskRegistry {
   const kindById = new Map<string, TaskKind>();
   const inFlight = new Set<string>();
   const finished = new Set<string>();
+  /**
+   * Ids settled since the last turn boundary. The decaying half of
+   * {@link TaskRegistry.touchedATask} — `kindById` cannot serve that purpose
+   * because entries there must survive forever to route late notifications.
+   */
+  const settledSinceBoundary = new Set<string>();
 
   return {
     start(taskId, rawTaskType, description) {
@@ -138,10 +200,24 @@ export function createTaskRegistry(): TaskRegistry {
     settle(taskId) {
       inFlight.delete(taskId);
       finished.delete(taskId);
+      // A settlement is the engine's own wake-up trigger, so it is precisely the
+      // thing that makes "the engine may come back" true for the NEXT result.
+      settledSinceBoundary.add(taskId);
     },
     inFlight,
     noWorkLeftRunning: () => [...inFlight].every((id) => finished.has(id)),
-    touchedATask: () => kindById.size > 0,
+    touchedATask: () => inFlight.size > 0 || settledSinceBoundary.size > 0,
+    markTurnBoundary() {
+      // ONE settlement per boundary, not the whole set. Each settlement is one
+      // wake-up the engine may still take, and the 0.3.210 observation is precisely
+      // that three of them landing inside a single turn bought three FURTHER turns.
+      // Clearing the set at the first boundary would answer the second `result`
+      // with "nothing pending", close the channel, and leave the remaining turns
+      // running against a dead control transport — the very defect this module
+      // exists to prevent. Redeeming one keeps the pairing exact.
+      const oldest = settledSinceBoundary.values().next();
+      if (!oldest.done) settledSinceBoundary.delete(oldest.value);
+    },
   };
 }
 
@@ -220,21 +296,48 @@ export function projectBackgroundTasks(
 export const BACKGROUND_WAKEUP_GRACE_MS = 15_000;
 
 /**
- * Hard cap on the hold, measured from the engine's last sign of life. Bounds the
- * case the grace window cannot see: work that never settles at all (a backgrounded
- * `sleep 3600`). Without it, holding the channel would hand this run's lifetime to
- * the engine indefinitely. Because it measures SILENCE it cannot fire under a live
- * engine; on expiry the run ends exactly as it did before the hold existed — plus a
- * `warning`, so a genuine truncation is visible rather than silent.
+ * Cap on the hold, measured from the last sign that the HELD WORK IS MOVING — not
+ * from the start of the parked stretch, and not from the engine's last frame of any
+ * kind. Bounds the case the grace window cannot see: work that never settles at all
+ * (a backgrounded `sleep 3600`). Without it, holding the channel would hand this
+ * run's lifetime to the engine indefinitely.
+ *
+ * WHY PROGRESS AND NOT WALL-CLOCK. It used to be absolute, armed once at `begin()`.
+ * A long subagent-driven stretch is exactly the shape that then reached it — and
+ * exactly the shape the release path cannot recognise either, because subagent
+ * traffic carries `parent_tool_use_id` and so fails {@link isMainModelActivity}. A
+ * healthy run was therefore cut off for the crime of using a subagent for more than
+ * 90 seconds. Re-arming from {@link isBackgroundProgress} keeps such a run alive
+ * while still ending a stalled one, because heartbeats deliberately do not count.
+ *
+ * WHAT EXPIRY MEANS. It ends the run, through the same path `abort()` uses, with a
+ * typed `AdapterBackgroundHoldExpiredError`. It must NEVER be "close the input
+ * channel and carry on": that channel is the only host→CLI control transport (MCP,
+ * `canUseTool`, hooks, elicitation all ride it), so closing it under a live CLI
+ * leaves a half-dead session that keeps producing plausible output with four
+ * capabilities silently gone. See the M17 notes and A01.
  *
  * DELIBERATELY BELOW `collectEvents()`'s 120s default (src/utils.ts). The two clocks
  * race: `collectEvents` starts its timer when the run starts, the cap only arms at
- * the first held `result`, so an equal cap could never emit its warning before the
- * helper rejected the whole run — losing the only signal that background work was
- * abandoned. Raise it with `claude_backgroundHoldCapMs` (and the helper's own
- * `timeoutMs` alongside) when a consumer genuinely waits longer.
+ * the first held `result`, so an equal cap could never surface its terminal error
+ * before the helper rejected the whole run — losing the only signal a consumer can
+ * act on. Raise it with `claude_backgroundHoldCapMs` (and the helper's own
+ * `timeoutMs` alongside) when a consumer genuinely waits longer, or disarm it with
+ * `null` and let `timeoutMs` be the only bound.
  */
 export const MAX_BACKGROUND_HOLD_MS = 90_000;
+
+/**
+ * Which bound ran out — the ONLY thing the hold decides. What that should do to the
+ * session is the adapter's call, deliberately: the two outcomes are not variations
+ * of one action, they are opposites.
+ *
+ *  - `'grace'` — settled work, quiet engine. The ordinary end of a task-touching
+ *    run; the channel closes exactly where the pre-hold code closed it, at `result`.
+ *  - `'cap'` — work that is not moving. The session is still LIVE, so the channel
+ *    must not simply be closed under it; the run has to end.
+ */
+export type HoldExpiry = 'grace' | 'cap';
 
 export interface BackgroundHold {
   /** Enter the hold at a `result` the engine is expected to resume from. */
@@ -243,8 +346,6 @@ export interface BackgroundHold {
   end(): void;
   /** An SDK message arrived: re-decide which bound applies, if any. */
   touch(event: SDKMessage): void;
-  /** Take and clear warnings raised off-loop by an expiring bound. */
-  drainWarnings(): string[];
   /** Stop every timer (teardown). Does not close the channel. */
   dispose(): void;
 }
@@ -265,22 +366,27 @@ export interface BackgroundHold {
  */
 export function createBackgroundHold(deps: {
   registry: TaskRegistry;
-  /** Ends the input iterable — the SDK then closes the CLI's stdin. */
-  closeChannel: () => void;
+  /**
+   * A bound ran out. The hold has already stopped waiting; what that means for the
+   * session is the caller's decision — see {@link HoldExpiry}. Deliberately NOT a
+   * `closeChannel()` the hold calls itself: that hard-wiring is what let a cap
+   * expiry sever the control transport of a session that was still alive.
+   */
+  onExpire: (reason: HoldExpiry) => void;
   /** Wakes the adapter's main loop so an expiry is acted on promptly. */
   wake: () => void;
-  graceMs?: number;
-  capMs?: number;
+  /** `null` disarms the bound entirely; omitted takes the measured default. */
+  graceMs?: number | null;
+  /** `null` disarms the bound entirely; omitted takes the measured default. */
+  capMs?: number | null;
 }): BackgroundHold {
-  const { registry, closeChannel, wake } = deps;
-  const graceMs = deps.graceMs ?? BACKGROUND_WAKEUP_GRACE_MS;
-  const capMs = deps.capMs ?? MAX_BACKGROUND_HOLD_MS;
+  const { registry, onExpire, wake } = deps;
+  const graceMs = deps.graceMs === undefined ? BACKGROUND_WAKEUP_GRACE_MS : deps.graceMs;
+  const capMs = deps.capMs === undefined ? MAX_BACKGROUND_HOLD_MS : deps.capMs;
 
   let holding = false;
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
   let capTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Raised off the loop (timer callbacks) — drained by the adapter. */
-  const warnings: string[] = [];
 
   const clearTimers = () => {
     if (graceTimer) clearTimeout(graceTimer);
@@ -290,18 +396,20 @@ export function createBackgroundHold(deps: {
   };
 
   /**
-   * A bound expired: close the channel and wake the loop. `message` is passed only
-   * by the hard cap. Grace expiry is SILENT — settled work plus a quiet engine is
-   * the normal end of a task-touching run, not a truncation; it closes the channel
-   * exactly where the pre-hold code closed it, at `result`. Warning there told
-   * every healthy run that its work "did not run".
+   * A bound ran out: stop waiting, hand the outcome to the caller, wake the loop.
+   *
+   * The hold does no more than that ON PURPOSE. It used to call `closeChannel()`
+   * for both bounds, which is right for `'grace'` (settled work, quiet engine — the
+   * ordinary end of the run) and catastrophic for `'cap'` (a live CLI whose only
+   * host control transport then disappears from under it). Splitting the decision
+   * out is what makes "stop waiting" and "close the channel" stop being one
+   * operation.
    */
-  const expire = (message?: string) => {
+  const expire = (reason: HoldExpiry) => {
     clearTimers();
     if (!holding) return;
     holding = false;
-    if (message) warnings.push(message);
-    closeChannel();
+    onExpire(reason);
     wake();
   };
 
@@ -314,32 +422,40 @@ export function createBackgroundHold(deps: {
    * rather than elapsed time — an earlier version disarmed on any SDK message and
    * let only `task_*` events re-arm, so one stray frame (`system/status`,
    * `system/background_tasks_changed` — both real) killed the short bound outright.
+   *
+   * `null` means NO WAIT — release as soon as the work has settled — not "wait
+   * without a bound". The option exists to shorten the dead tail, and its limit is
+   * zero; reading `null` as an unbounded wait would park a perfectly healthy run
+   * until the cap ended it with an error, which is the opposite of what asking for
+   * a shorter tail means.
    */
   const park = () => {
     if (!holding) return;
     if (graceTimer) clearTimeout(graceTimer);
-    graceTimer = registry.noWorkLeftRunning() ? setTimeout(() => expire(), graceMs) : undefined;
+    graceTimer = registry.noWorkLeftRunning() ? setTimeout(() => expire('grace'), graceMs ?? 0) : undefined;
+  };
+
+  /**
+   * (Re-)arm the outer bound. Called at `begin()` and again from every frame that
+   * shows the held work MOVING ({@link isBackgroundProgress}) — so it measures a
+   * stall, not elapsed time. `null` disarms it: the run is then bounded only by the
+   * consumer's `timeoutMs`/`abort()`, which is the point of the escape hatch.
+   */
+  const armCap = () => {
+    if (capTimer) clearTimeout(capTimer);
+    capTimer = capMs === null ? undefined : setTimeout(() => expire('cap'), capMs);
   };
 
   return {
     begin() {
       holding = true;
-      // The outer bound on this parked stretch. Absolute rather than inactivity-based,
-      // because the engine does emit periodic frames while it babysits a long task, and
-      // an inactivity cap would let a backgrounded `sleep 3600` hand this run's whole
-      // lifetime to the engine. It is safe to make it absolute only because end()
-      // releases it the moment the model is producing again (see touch) — an earlier
-      // version never released it, and cut live resumed runs off mid-turn.
-      if (capTimer) clearTimeout(capTimer);
-      capTimer = setTimeout(
-        () =>
-          expire(
-            `claude-code: background work still in flight after ${capMs}ms — ` +
-              'closing the session. Any remaining background task is abandoned and its ' +
-              'completion will not be reported.',
-          ),
-        capMs,
-      );
+      // The outer bound on this parked stretch. Re-armed from progress rather than
+      // running absolute: the engine emits periodic frames while it babysits a long
+      // task, so a plain inactivity cap would let a backgrounded `sleep 3600` hand
+      // this run's whole lifetime to the engine — but an absolute one cut off live
+      // subagent-driven runs, which is the defect this release fixes. The middle
+      // ground is to re-arm only on evidence that the WORK is moving (see touch).
+      armCap();
       park();
     },
 
@@ -361,18 +477,24 @@ export function createBackgroundHold(deps: {
      *  - anything else — task lifecycle frames, subagent chatter (`parent_tool_use_id`
      *    set: a helper talking after its parent turn ended is the held state, not a
      *    resumption of it) → still parked, so re-arm.
+     *
+     * Which bound gets re-armed differs. The short one re-arms from ANY frame,
+     * because it measures silence. The cap re-arms only from
+     * {@link isBackgroundProgress} — a heartbeat must not extend it, or a
+     * backgrounded `sleep 3600` would never end.
      */
     touch(event) {
       if (!holding) return;
       if (isMainModelActivity(event)) {
         clearTimers();
         holding = false;
-      } else {
-        park();
+        return;
       }
+      // Still parked. Re-arm the short bound from any frame (it measures silence),
+      // and the outer one only from evidence that the held work itself is moving.
+      park();
+      if (isBackgroundProgress(event)) armCap();
     },
-
-    drainWarnings: () => warnings.splice(0),
 
     dispose: clearTimers,
   };

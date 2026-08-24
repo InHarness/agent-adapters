@@ -7,7 +7,13 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
-import { AdapterError, AdapterInitError } from './types.js';
+import {
+  AdapterError,
+  AdapterInitError,
+  AdapterAbortError,
+  AdapterTimeoutError,
+  AdapterBackgroundHoldExpiredError,
+} from './types.js';
 
 describe('AdapterInitError', () => {
   it('surfaces message + OS fields through JSON.stringify (bridge-stripped cause)', () => {
@@ -97,5 +103,33 @@ describe('AdapterError', () => {
     });
     // The original cause is still available for programmatic access.
     expect((err.cause as { path: string }).path).toBe('/tmp/x');
+  });
+});
+
+describe('AdapterBackgroundHoldExpiredError', () => {
+  it('is distinguishable from the consumer\'s own abort and timeout', () => {
+    // The three reach the consumer through the same `{ type: 'error' }` event and mean
+    // very different things: "you called abort()", "your timeoutMs elapsed", and "the
+    // adapter ended a run whose background work stopped moving". Branching on them is
+    // the point of the class — before this, the third was a warning string.
+    const held = new AdapterBackgroundHoldExpiredError('claude-code', 90_000);
+
+    expect(held).toBeInstanceOf(AdapterError);
+    expect(held).not.toBeInstanceOf(AdapterAbortError);
+    expect(held).not.toBeInstanceOf(AdapterTimeoutError);
+    expect(new AdapterAbortError('claude-code')).not.toBeInstanceOf(AdapterBackgroundHoldExpiredError);
+  });
+
+  it('carries the bound that was hit through JSON.stringify', () => {
+    // Consumers stream errors over SSE, where only enumerable fields and toJSON()
+    // survive — `name` and `capMs` are what a remote consumer has to branch on.
+    const wire = JSON.parse(JSON.stringify({ type: 'error', error: new AdapterBackgroundHoldExpiredError('claude-code', 6_000) }));
+
+    expect(wire.error.name).toBe('AdapterBackgroundHoldExpiredError');
+    expect(wire.error.adapter).toBe('claude-code');
+    expect(wire.error.capMs).toBe(6_000);
+    expect(wire.error.message).toContain('6000ms');
+    // Names the lever that changes it, so the message is actionable on its own.
+    expect(wire.error.message).toContain('claude_backgroundHoldCapMs');
   });
 });

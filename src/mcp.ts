@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import type { McpSdkServerConfig } from './types.js';
+import type { McpSdkServerConfig, McpServerConfig } from './types.js';
 import { AdapterInitError } from './types.js';
 import { checkPeerSdkVersion } from './sdk-version.js';
 
@@ -86,6 +86,12 @@ export interface McpServerInstance {
  * });
  * adapter.execute({ ...params, mcpServers: { 'my-tools': config } });
  * ```
+ *
+ * ONE SERVER PER RUN. The returned instance is bound to a single transport for the
+ * duration of an `execute()` call, so build a fresh one per run (or await the
+ * previous run) rather than sharing one across concurrent runs — see
+ * {@link claimSdkMcpInstances} for what happens otherwise, and why it is refused
+ * up front instead.
  */
 export function createMcpServer(options: CreateMcpServerOptions): McpServerInstance {
   let McpServer: typeof import('@modelcontextprotocol/sdk/server/mcp.js').McpServer;
@@ -152,4 +158,74 @@ export function mcpTool(
   annotations?: ToolAnnotations,
 ): McpToolDefinition {
   return { name, description, inputSchema, handler, annotations };
+}
+
+// --- One instance per run ---
+
+/**
+ * SDK-type MCP server instances currently bound to a live `execute()`.
+ *
+ * WHY THIS EXISTS. An `McpServer` is a single-transport object: the Agent SDK
+ * connects it to the run's transport, and `Protocol.connect()` on an already
+ * connected server throws `"Already connected to a transport"`. The SDK swallows
+ * that rejection into a debug log and still advertises the server to the CLI, so
+ * every later `mcp_message` for it fails with `"SDK MCP server not found"` — which
+ * the CLI renders as `(<tool> completed with no output)`. That is the same silent
+ * signature as a severed control channel, from a completely different cause, and
+ * nothing in this library used to catch it.
+ *
+ * So the contract is: ONE server instance per `execute()` call. Reusing one across
+ * concurrent runs is rejected eagerly, at init, where the message can still name
+ * what went wrong.
+ *
+ * A `Set` of live claims, not a `WeakSet` of "ever used": a SEQUENTIAL reuse is
+ * fine — the previous run released its transport — and only an overlap is the bug.
+ */
+const claimedSdkMcpInstances = new Set<object>();
+
+/**
+ * Claim every SDK-type instance in `servers` for one run. All-or-nothing: on a
+ * conflict nothing stays claimed, so the failing run cannot strand another one's
+ * ability to start.
+ *
+ * @returns the claimed instances (pass to {@link releaseSdkMcpInstances}), or the
+ * name of the server that was already in use.
+ */
+export function claimSdkMcpInstances(
+  servers: Record<string, McpServerConfig> | undefined,
+): { ok: true; claimed: object[] } | { ok: false; conflictingServer: string } {
+  const claimed: object[] = [];
+  for (const [name, cfg] of Object.entries(servers ?? {})) {
+    if ((cfg as McpSdkServerConfig).type !== 'sdk') continue;
+    const instance = (cfg as McpSdkServerConfig).instance;
+    if (typeof instance !== 'object' || instance === null) continue;
+    if (claimedSdkMcpInstances.has(instance)) {
+      for (const c of claimed) claimedSdkMcpInstances.delete(c);
+      return { ok: false, conflictingServer: name };
+    }
+    claimedSdkMcpInstances.add(instance);
+    claimed.push(instance);
+  }
+  return { ok: true, claimed };
+}
+
+/** Release a claim taken by {@link claimSdkMcpInstances}. Safe to call twice. */
+export function releaseSdkMcpInstances(claimed: readonly object[]): void {
+  for (const instance of claimed) claimedSdkMcpInstances.delete(instance);
+}
+
+/**
+ * The error a reused instance produces. Exported so adapters phrase it identically.
+ */
+export function mcpInstanceReuseError(adapter: string, serverName: string): AdapterInitError {
+  return new AdapterInitError(
+    adapter,
+    new Error(
+      `MCP server "${serverName}" is already connected to another run on this process. ` +
+        'An SDK-type MCP server instance can serve one execute() call at a time — build a ' +
+        'fresh one with createMcpServer() per run, or await the previous run before starting ' +
+        'the next. Reusing it would leave the server advertised but unreachable, and every ' +
+        'tool call would come back empty.',
+    ),
+  );
 }

@@ -8,9 +8,11 @@ import type { UnifiedEvent } from './types.js';
  * Named rather than inlined because claude-code's background-task hold has to stay
  * strictly under it: the two clocks race, and this one starts EARLIER (when the run
  * starts, not when the hold arms at a held `result`). A hold cap at or above this
- * value could never emit its truncation warning — the helper would already have
- * rejected the run, losing the only signal that background work was abandoned. See
- * `MAX_BACKGROUND_HOLD_MS` in `adapters/claude-code.background-hold.ts`.
+ * value could never surface its `AdapterBackgroundHoldExpiredError` — the helper
+ * would already have rejected the whole run with a bare timeout `Error`, losing the
+ * only signal that says WHY it ended. The cap ends the run cleanly and this helper's
+ * rejection does not, so the ordering matters. See `MAX_BACKGROUND_HOLD_MS` in
+ * `adapters/claude-code.background-hold.ts`.
  */
 export const COLLECT_EVENTS_DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -23,9 +25,10 @@ export async function collectEvents(
   timeoutMs = COLLECT_EVENTS_DEFAULT_TIMEOUT_MS,
 ): Promise<UnifiedEvent[]> {
   const events: UnifiedEvent[] = [];
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`collectEvents timed out after ${timeoutMs}ms`)), timeoutMs),
-  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`collectEvents timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
 
   const collect = async () => {
     for await (const event of stream) {
@@ -34,7 +37,13 @@ export async function collectEvents(
     return events;
   };
 
-  return Promise.race([collect(), timeout]);
+  try {
+    return await Promise.race([collect(), timeout]);
+  } finally {
+    // Otherwise a run that finishes in a second still holds the process open for the
+    // rest of the window — a two-minute exit delay for any short-lived CLI consumer.
+    clearTimeout(timer);
+  }
 }
 
 /**
