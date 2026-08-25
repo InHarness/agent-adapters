@@ -2,6 +2,7 @@
 // NormalizedMessage. Pure-function level — no SDK calls.
 
 import { describe, it, expect } from 'vitest';
+import { PLAN_MODE_DENY_GROUPS } from '../tool-groups.js';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
   normalizeContentBlocks,
@@ -9,8 +10,8 @@ import {
   todoItemsFromTodoWriteInput,
   mergeTaskToolInputIntoSnapshot,
   extractAssignedTaskId,
-  CLAUDE_CODE_READONLY_BUILTINS,
-  CLAUDE_CODE_MUTATING_BUILTINS,
+  buildClaudeCodeToolPolicy,
+  subagentToolPolicy,
   CLAUDE_CODE_TASK_TRACKING_TOOLS,
 } from './claude-code.js';
 
@@ -345,64 +346,116 @@ describe('extractAssignedTaskId', () => {
   });
 });
 
-// Regression: plan mode sets options.tools = CLAUDE_CODE_READONLY_BUILTINS, which is
-// the only knob that shapes the model's built-in catalog. Skill must be on it, or
-// inline skills materialized as a local plugin can never be opened ("No such tool
-// available: Skill"). Skill is read-only — mutations stay gated by disallowedTools.
-describe('plan-mode tool whitelist', () => {
-  it('exposes Skill as a read-only built-in (plan mode can open injected skills)', () => {
-    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('Skill');
-  });
+// Regression, now expressed against the M18 residual allow-list: `options.tools`
+// is the only knob that shapes the model's built-in catalog, and under the
+// plan-mode preset it is built by `buildClaudeCodeToolPolicy(['file-write','shell'])`.
+describe('plan-mode residual allow-list (M18 preset)', () => {
+  const plan = buildClaudeCodeToolPolicy([...PLAN_MODE_DENY_GROUPS])!;
 
-  it('does not also list Skill as a mutating built-in', () => {
-    expect(CLAUDE_CODE_MUTATING_BUILTINS).not.toContain('Skill');
-  });
-
-  // Subagents are allowed in plan mode (read-only research). Both names are
-  // whitelisted because Task→Agent was renamed in Claude Code v2.1.63 but the
+  // Subagents are allowed under the preset (read-only research). Both names are
+  // listed because Task→Agent was renamed in Claude Code v2.1.63 but the
   // system:init tools list (what `tools`/`disallowedTools` filter against) still
   // uses 'Task'.
-  it('exposes subagent spawning (Task and Agent) as read-only built-ins', () => {
-    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('Task');
-    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('Agent');
+  it('exposes subagent spawning (Task and Agent)', () => {
+    expect(plan.allow).toContain('Task');
+    expect(plan.allow).toContain('Agent');
+    expect(plan.deny).not.toContain('Task');
+    expect(plan.deny).not.toContain('Agent');
   });
 
-  it('does not list subagent spawning as a mutating built-in', () => {
-    expect(CLAUDE_CODE_MUTATING_BUILTINS).not.toContain('Task');
-    expect(CLAUDE_CODE_MUTATING_BUILTINS).not.toContain('Agent');
-  });
-
-  it('still blocks the genuinely mutating built-ins in plan mode', () => {
-    expect(CLAUDE_CODE_MUTATING_BUILTINS).toEqual(
+  it('still blocks the genuinely mutating built-ins', () => {
+    expect(plan.deny).toEqual(
       expect.arrayContaining(['Bash', 'Edit', 'Write', 'NotebookEdit']),
     );
+    for (const tool of ['Bash', 'Edit', 'Write', 'NotebookEdit']) {
+      expect(plan.allow).not.toContain(tool);
+    }
+  });
+
+  it('keeps reads and web available — plan mode must still be able to research', () => {
+    expect(plan.allow).toEqual(expect.arrayContaining(['Read', 'Grep', 'Glob']));
+    expect(plan.allow).toEqual(expect.arrayContaining(['WebFetch', 'WebSearch']));
   });
 
   // Newer Claude models replace TodoWrite with a per-item CRUD family
   // (TaskCreate/TaskGet/TaskUpdate/TaskList) discovered via ToolSearch. Both
-  // must stay whitelisted or a plan-mode turn on a newer model silently falls
-  // back to prose-only planning (no usable task-tracking tool at all).
-  it('exposes every task-tracking alias plus the ToolSearch discovery gate as read-only built-ins', () => {
-    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TodoWrite');
-    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TaskCreate');
-    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TaskGet');
-    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TaskUpdate');
-    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('TaskList');
-    expect(CLAUDE_CODE_READONLY_BUILTINS).toContain('ToolSearch');
-  });
-
-  it('does not list the task-tracking family as mutating built-ins', () => {
-    for (const tool of CLAUDE_CODE_TASK_TRACKING_TOOLS) {
-      expect(CLAUDE_CODE_MUTATING_BUILTINS).not.toContain(tool);
+  // must stay allowed or a plan-mode turn on a newer model silently falls back
+  // to prose-only planning (no usable task-tracking tool at all).
+  it('exposes every task-tracking alias plus the ToolSearch discovery gate', () => {
+    for (const tool of [...CLAUDE_CODE_TASK_TRACKING_TOOLS, 'ToolSearch']) {
+      expect(plan.allow).toContain(tool);
+      expect(plan.deny).not.toContain(tool);
     }
   });
 
-  // The alias-tracking invariant itself: the shared constant — not a
-  // hand-copied second list — is what the allowlist is built from, so a
-  // future rename only needs updating in one place.
-  it('derives the read-only allowlist from CLAUDE_CODE_TASK_TRACKING_TOOLS (no drift between the two)', () => {
+  // The alias-tracking invariant itself: the shared constant — not a hand-copied
+  // second list — is what the allow-list is built from, so a future rename only
+  // needs updating in one place.
+  it('derives the allow-list from CLAUDE_CODE_TASK_TRACKING_TOOLS (no drift)', () => {
     for (const tool of CLAUDE_CODE_TASK_TRACKING_TOOLS) {
-      expect(CLAUDE_CODE_READONLY_BUILTINS).toContain(tool);
+      expect(plan.allow).toContain(tool);
     }
+  });
+
+  // Skill must be present or inline skills materialized as a local plugin can
+  // never be opened ("No such tool available: Skill"). Under the plan-mode
+  // preset shell IS denied, and a `shell` deny suppresses Skill — a skill
+  // routinely instructs the model to run shell commands, so leaving it would
+  // reopen the group through the front door. That override is the point.
+  it('suppresses Skill under the preset, because the preset denies shell', () => {
+    expect(plan.allow).not.toContain('Skill');
+  });
+
+  it('keeps Skill available when shell is NOT denied', () => {
+    const writeOnly = buildClaudeCodeToolPolicy(['file-write'])!;
+    expect(writeOnly.allow).toContain('Skill');
+  });
+});
+
+// The residual-allow-list invariant, asserted on the SHAPE handed to the SDK
+// rather than on today's tool set: a built-in this library has never heard of
+// must be BLOCKED, not allowed. A deny-only enumeration would fail this.
+describe('residual allow-list invariant', () => {
+  it('is an allow-list, so an unknown future built-in is not in it', () => {
+    const policy = buildClaudeCodeToolPolicy(['shell'])!;
+    expect(policy.allow).not.toContain('SomeFutureBuiltinAnthropicShips');
+    // ...and it is a real, finite list — not `undefined`, which would mean
+    // "SDK default catalog" and therefore fail open.
+    expect(Array.isArray(policy.allow)).toBe(true);
+    expect(policy.allow.length).toBeGreaterThan(0);
+  });
+
+  it('is undefined when nothing is denied, so an ungated run is byte-for-byte unchanged', () => {
+    expect(buildClaudeCodeToolPolicy([])).toBeUndefined();
+  });
+
+  it('never lists a tool as both allowed and denied', () => {
+    for (const groups of [['shell'], ['file-read'], ['file-write'], ['web'], [...PLAN_MODE_DENY_GROUPS]] as const) {
+      const policy = buildClaudeCodeToolPolicy([...groups])!;
+      const allow = new Set(policy.allow);
+      for (const denied of policy.deny) expect(allow.has(denied)).toBe(false);
+    }
+  });
+});
+
+// A subagent does not natively inherit the parent's denies, so without
+// propagation "deny the shell" would mean "deny the shell until the model
+// delegates".
+describe('subagent deny propagation', () => {
+  const policy = buildClaudeCodeToolPolicy(['shell'])!;
+
+  it('narrows a definition that names a denied tool, silently — not an error', () => {
+    const out = subagentToolPolicy({ tools: ['Read', 'Bash'] }, policy);
+    expect(out.tools).toEqual(['Read']);
+    expect(out.disallowedTools).toEqual(expect.arrayContaining(['Bash']));
+  });
+
+  it('gives a definition with no toolset the run\'s residual allow-list', () => {
+    const out = subagentToolPolicy({}, policy);
+    expect(out.tools).toEqual(policy.allow);
+  });
+
+  it('is a no-op when the run denies nothing', () => {
+    expect(subagentToolPolicy({ tools: ['Bash'] }, undefined)).toEqual({ tools: ['Bash'] });
   });
 });

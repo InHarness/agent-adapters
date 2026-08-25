@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { createAdapter } from '../../factory.js';
 import { collectEvents } from '../../utils.js';
 import { resolveModel } from '../../models.js';
+import { probeToolGating } from '../../tool-groups.js';
 import { assertSimpleText, assertToolUse, assertThinking, assertAdapterReady } from '../contract.js';
 import { AdapterAbortError, AdapterTimeoutError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
@@ -76,6 +77,13 @@ import {
   ELICIT_ANSWER_TIME,
   TIMEOUT_PROMPT,
   TIMEOUT_SYSTEM_PROMPT,
+  GATING_SHELL_PROMPT,
+  GATING_SHELL_SYSTEM_PROMPT,
+  GATING_WEB_PROMPT,
+  assertNoToolFromGroup,
+  assertToolFromGroupUsed,
+  assertToolPolicyRefusal,
+  assertPorousWarning,
 } from './shared.js';
 
 /** Narrow a collected stream to its `result` event (undefined if none). */
@@ -461,7 +469,11 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     }
   });
 
-  describe('plan mode', () => {
+  // `plan-mode` is now a THIN WRAPPER over the M18 preset: plan mode desugars
+  // into disallowedToolGroups ['file-write','shell'], so these cases assert the
+  // preset's observable contract (mutation blocked, reads and web still
+  // working) rather than a plan-mode-specific code path, which no longer exists.
+  describe('plan mode (M18 preset: file-write + shell)', () => {
     it('planMode=true blocks file creation', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
@@ -1101,6 +1113,174 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   });
 
   // --- M12 scenario: path-scope (allowedPaths / disallowedPaths) ---
+  // --- tool-gating scenario (M18) ---
+  //
+  // Live-model runs matter more here than replay: only a live model
+  // distinguishes *the tool is gone* from *the model chose not to use it*.
+  describe('tool-gating (deny-groups on the model\'s catalog)', () => {
+    it('a denied `shell` is unusable for the whole run', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('claude-code').execute({
+            prompt: GATING_SHELL_PROMPT,
+            systemPrompt: GATING_SHELL_SYSTEM_PROMPT,
+            model: MODEL,
+            maxTurns: 3,
+            cwd: dir,
+            disallowedToolGroups: ['shell'],
+          }),
+        );
+        assertNoToolFromGroup(events, 'shell');
+        expect(events.some((e) => e.type === 'result')).toBe(true);
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    // The baseline that proves the assertion above can actually fail: with no
+    // deny, the very same prompt DOES reach the shell.
+    it('the same prompt reaches the shell when nothing is denied (baseline)', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('claude-code').execute({
+            prompt: GATING_SHELL_PROMPT,
+            systemPrompt: GATING_SHELL_SYSTEM_PROMPT,
+            model: MODEL,
+            maxTurns: 3,
+            cwd: dir,
+          }),
+        );
+        assertToolFromGroupUsed(events, 'shell');
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    it('a denied `file-write` blocks mutation while reads keep working', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('claude-code').execute({
+            prompt: PLAN_WRITE_PROMPT,
+            systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
+            model: MODEL,
+            maxTurns: 3,
+            cwd: dir,
+            // shell denied too, or the model just writes the file with `cat`
+            // — which is precisely what the porous-combination warning says.
+            disallowedToolGroups: ['file-write', 'shell'],
+          }),
+        );
+        assertNoToolFromGroup(events, 'file-write');
+        assertNoFileCreated(dir, 'notes.txt');
+        assertPorousWarning(events, false);
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    it('a denied `web` is unusable, and the rest of the catalog still works', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('claude-code').execute({
+            prompt: GATING_WEB_PROMPT,
+            systemPrompt: 'Answer using your tools where possible.',
+            model: MODEL,
+            maxTurns: 3,
+            cwd: dir,
+            disallowedToolGroups: ['web'],
+          }),
+        );
+        assertNoToolFromGroup(events, 'web');
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    it('an unknown group refuses the run before dispatch', async () => {
+      const events = await collectEvents(
+        createAdapter('claude-code').execute({
+          prompt: 'hello',
+          systemPrompt: 'You are helpful.',
+          model: MODEL,
+          disallowedToolGroups: ['shel' as 'shell'],
+        }),
+      );
+      assertToolPolicyRefusal(events);
+    }, 60_000);
+
+    // --- negative tests, one per documented escape surface ---
+    //
+    // Each pins a hole the matrix ADMITS TO. They are written to pass while the
+    // hole is open, so closing one shows up as a flipping test rather than as
+    // silence.
+
+    it('escape surface: with `shell` allowed, a `file-read` deny is bypassable', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('claude-code').execute({
+            prompt:
+              'Show me the first line of README.md in the current directory. Use whatever tool you have.',
+            systemPrompt: 'Use your tools to answer.',
+            model: MODEL,
+            maxTurns: 3,
+            cwd: dir,
+            disallowedToolGroups: ['file-read'],
+          }),
+        );
+        // The read tools really are gone...
+        assertNoToolFromGroup(events, 'file-read');
+        // ...and this is the documented hole: the probe reports `file-read` as
+        // `soft` naming exactly this surface, so the run announcing it via the
+        // porous warning is the contract, not a bug.
+        assertPorousWarning(events, true);
+        const [report] = probeToolGating('claude-code', ['file-read']);
+        expect(report.strength).toBe('soft');
+        expect(report.escapeSurfaces.join(' ')).toMatch(/shell/i);
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    it('escape surface: a subagent does not natively inherit the deny, so `shell` is never `hard`', () => {
+      const [report] = probeToolGating('claude-code', ['shell']);
+      expect(report.enforceable).toBe(true);
+      expect(report.strength).not.toBe('hard');
+      expect(report.escapeSurfaces.join(' ')).toMatch(/subagent/i);
+    });
+
+    // MCP is explicitly out of M18's scope: tool names are opaque and cannot be
+    // classified, so a consumer-curated server survives every deny. The remedy
+    // is to withhold the server.
+    it('an MCP server stays fully usable under a file-read + file-write deny', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const { config } = createE2eMcpServer();
+        const events = await collectEvents(
+          createAdapter('claude-code').execute({
+            prompt: 'Use the echo tool to echo the word BANANA, then tell me what it returned.',
+            systemPrompt: 'You have an MCP echo tool. Use it.',
+            model: MODEL,
+            maxTurns: 3,
+            cwd: dir,
+            mcpServers: { 'e2e-test': config },
+            disallowedToolGroups: ['file-read', 'file-write'],
+          }),
+        );
+        const echoUse = events
+          .filter((e): e is Extract<UnifiedEvent, { type: 'tool_use' }> => e.type === 'tool_use')
+          .find((tu) => tu.toolName.includes('echo'));
+        expect(echoUse, 'an MCP tool must survive a built-in deny — M18 gates built-ins only').toBeDefined();
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+  });
+
   describe('path scope (allowedPaths / disallowedPaths)', () => {
     it('resolves scope on adapter_ready with disallowedPaths precedence (soft gate)', async () => {
       const { cwd, extraDir, secretDir, cleanup } = createPathScopeDirs();

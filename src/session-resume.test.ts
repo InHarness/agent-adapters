@@ -46,11 +46,12 @@ describe('getSessionResumeConstraints', () => {
     }
   });
 
-  it('includes model and path-scope fields even for an unknown architecture', () => {
+  it('includes model, path-scope and tool-gating fields even for an unknown architecture', () => {
     expect(getSessionResumeConstraints('does-not-exist')).toEqual([
       { path: 'model', reason: expect.any(String) },
       { path: 'allowedPaths', reason: expect.any(String) },
       { path: 'disallowedPaths', reason: expect.any(String) },
+      { path: 'disallowedToolGroups', reason: expect.any(String) },
     ]);
   });
 });
@@ -168,5 +169,47 @@ describe('findResumeViolations', () => {
       { model: 'opus-4.8' },
     );
     expect(violations).toEqual([]);
+  });
+});
+
+// Tool gating (M18) is immutable for the same reason path scope is: a capability
+// gate must not shrink or grow mid-session. Because plan mode is a PRESET over
+// the same field, flipping it is a violation through the same check.
+describe('findResumeViolations — tool gating (M18)', () => {
+  it('flags a changed disallowedToolGroups', () => {
+    const violations = findResumeViolations(
+      'claude-code',
+      { disallowedToolGroups: ['shell'] },
+      { disallowedToolGroups: ['shell', 'web'] },
+    );
+    expect(violations.map((v) => v.path)).toContain('disallowedToolGroups');
+  });
+
+  it('does not flag a reordered or duplicated set — order is insignificant', () => {
+    const violations = findResumeViolations(
+      'claude-code',
+      { disallowedToolGroups: ['web', 'shell'] },
+      { disallowedToolGroups: ['shell', 'web', 'shell'] },
+    );
+    expect(violations.map((v) => v.path)).not.toContain('disallowedToolGroups');
+  });
+
+  it('flags a planMode flip, because plan mode is a preset over the same field', () => {
+    const violations = findResumeViolations('claude-code', { planMode: true }, { planMode: false });
+    expect(violations.map((v) => v.path)).toContain('disallowedToolGroups');
+  });
+
+  it('does not flag when plan mode is restated as its own preset groups', () => {
+    const violations = findResumeViolations(
+      'claude-code',
+      { planMode: true },
+      { disallowedToolGroups: ['file-write', 'shell'] },
+    );
+    expect(violations.map((v) => v.path)).not.toContain('disallowedToolGroups');
+  });
+
+  it('does not flag a session that never gated tools at all', () => {
+    const violations = findResumeViolations('claude-code', {}, {});
+    expect(violations.map((v) => v.path)).not.toContain('disallowedToolGroups');
   });
 });

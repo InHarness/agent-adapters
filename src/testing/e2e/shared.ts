@@ -245,6 +245,103 @@ export function assertFileCreated(cwd: string, expected: string): void {
   expect(existsSync(join(cwd, expected)), `expected file ${expected} was not created in ${cwd}`).toBe(true);
 }
 
+// --- Tool gating scenario (M18) ---
+//
+// The point of a LIVE run here: only a real model distinguishes *the tool is
+// gone* from *the model chose not to use it*. A replayed transcript cannot.
+// Each prompt therefore pushes hard at exactly one group and the assertions
+// check the tool never appears in the catalog the model actually used, plus the
+// filesystem/side-effect evidence where there is any.
+
+export const GATING_SHELL_PROMPT =
+  'Run the shell command `echo GATING_PROBE_OK` and tell me exactly what it printed. ' +
+  'If you have no tool that can execute a shell command, say the words NO_SHELL_TOOL and stop.';
+export const GATING_SHELL_SYSTEM_PROMPT =
+  'You have shell tools available when permitted. Prefer executing the command over describing it.';
+
+export const GATING_READ_PROMPT =
+  'Read the file README.md in the current directory and quote its first line verbatim. ' +
+  'If you have no tool that can read a file, say the words NO_READ_TOOL and stop.';
+
+export const GATING_WEB_PROMPT =
+  'Search the web for the current version of the TypeScript compiler and cite the URL you used. ' +
+  'If you have no tool that can fetch or search the web, say the words NO_WEB_TOOL and stop.';
+
+/** Tool-name matchers per group, spanning every adapter's naming convention. */
+const GROUP_TOOL_PATTERNS: Record<string, RegExp> = {
+  shell: /(^|_|\.)(Bash|BashOutput|KillBash|KillShell|run_shell_command|list_background_processes|read_background_output|shell|bash)$/i,
+  'file-read': /(^|_|\.)(Read|Grep|Glob|NotebookRead|read_file|read_many_files|list_directory|grep_search|search_file_content|glob|list)$/i,
+  'file-write': /(^|_|\.)(Write|Edit|MultiEdit|NotebookEdit|write_file|replace|save_memory|patch)$/i,
+  web: /(^|_|\.)(WebFetch|WebSearch|web_fetch|google_web_search|webfetch|websearch)$/i,
+};
+
+/**
+ * Assert no tool belonging to `group` was invoked anywhere in the run.
+ *
+ * This is the core M18 e2e assertion: a denied group is unusable for the WHOLE
+ * run — its built-ins are absent from the catalog the model sees, so it cannot
+ * invoke them by name even if it tries.
+ */
+export function assertNoToolFromGroup(events: UnifiedEvent[], group: string): void {
+  const pattern = GROUP_TOOL_PATTERNS[group];
+  const used = events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'tool_use' }> =>
+      e.type === 'tool_use' && pattern.test(e.toolName),
+  );
+  expect(
+    used.map((e) => e.toolName),
+    `a denied \`${group}\` tool was invoked — the group was not actually removed from the catalog`,
+  ).toEqual([]);
+}
+
+/** Assert at least one tool of `group` WAS used — the baseline that proves the
+ *  probe above can fail, and that a non-denied group stays reachable. */
+export function assertToolFromGroupUsed(events: UnifiedEvent[], group: string): void {
+  const pattern = GROUP_TOOL_PATTERNS[group];
+  const used = events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'tool_use' }> =>
+      e.type === 'tool_use' && pattern.test(e.toolName),
+  );
+  expect(
+    used.length,
+    `expected a \`${group}\` tool to be used; tools seen: ${events
+      .filter((e) => e.type === 'tool_use')
+      .map((e) => (e as { toolName: string }).toolName)
+      .join(', ')}`,
+  ).toBeGreaterThanOrEqual(1);
+}
+
+/**
+ * Assert the run was refused before dispatch: exactly one `error` carrying
+ * `AdapterToolPolicyError` at init phase, and NOTHING ELSE ran — no
+ * `adapter_ready`, no `result`.
+ */
+export function assertToolPolicyRefusal(events: UnifiedEvent[], expectUnenforceable?: string[]): void {
+  const errors = events.filter((e): e is Extract<UnifiedEvent, { type: 'error' }> => e.type === 'error');
+  expect(errors.map((e) => e.error.name), 'expected exactly one AdapterToolPolicyError').toEqual([
+    'AdapterToolPolicyError',
+  ]);
+  expect(errors[0].phase).toBe('init');
+  expect(events.some((e) => e.type === 'result'), 'a refused run must not produce a result').toBe(false);
+  expect(
+    events.some((e) => e.type === 'adapter_ready'),
+    'a refused run must not reach adapter_ready — nothing should have been dispatched',
+  ).toBe(false);
+  if (expectUnenforceable) {
+    expect((errors[0].error as unknown as { unenforceable: string[] }).unenforceable).toEqual(
+      expectUnenforceable,
+    );
+  }
+}
+
+/** Assert the one-shot porous-combination warning fired exactly once. */
+export function assertPorousWarning(events: UnifiedEvent[], expected: boolean): void {
+  const warnings = events.filter(
+    (e) => e.type === 'warning' && /not a filesystem boundary/i.test(e.message),
+  );
+  expect(warnings.length, `porous-combination warning count`).toBe(expected ? 1 : 0);
+}
+
 // --- Todo list scenario ---
 
 export const TODO_PROMPT =

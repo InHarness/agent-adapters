@@ -24,6 +24,8 @@
 // (a sandbox must not be re-scoped mid-session).
 
 import { getArchitectureOptions } from './options.js';
+import { resolveDeniedGroups } from './tool-groups.js';
+import type { ToolGroup } from './tool-groups.js';
 
 /** A field that must not change across turns of a resumed session. */
 export interface ResumeFieldConstraint {
@@ -43,6 +45,15 @@ export interface ResumeConfigSnapshot {
   /** Filesystem path scope — frozen for a session's lifetime (see below). */
   allowedPaths?: string[];
   disallowedPaths?: string[];
+  /** Built-in tool gating (M18) — frozen for a session's lifetime (see below). */
+  disallowedToolGroups?: ToolGroup[];
+  /**
+   * Included because it is a PRESET over `disallowedToolGroups`, not a field of
+   * its own: flipping it changes the effective deny-groups, and the check below
+   * compares effective values. That is how a `planMode` flip surfaces as a
+   * violation with no special case.
+   */
+  planMode?: boolean;
 }
 
 // Path-scope fields are top-level (not arch options) and immutable on resume for
@@ -54,6 +65,21 @@ const PATH_SCOPE_IMMUTABLE_REASON =
 const PATH_SCOPE_CONSTRAINTS: ResumeFieldConstraint[] = [
   { path: 'allowedPaths', reason: PATH_SCOPE_IMMUTABLE_REASON },
   { path: 'disallowedPaths', reason: PATH_SCOPE_IMMUTABLE_REASON },
+];
+
+// Tool gating (M18) is immutable for the same reason path scope is, one step
+// further in: path scope bounds WHERE filesystem access happens, tool gating
+// removes WHETHER a tool class exists at all. A resume that quietly hands the
+// shell back is the same class of failure as one that widens the sandbox.
+//
+// The compared value is the EFFECTIVE set (preset ∪ explicit), so flipping
+// `planMode` — which desugars into deny-groups — is a violation through this
+// same field-level check, with no special case for it.
+const TOOL_GATING_IMMUTABLE_REASON =
+  'Built-in tool gating is fixed for a session’s lifetime; a capability gate must not shrink or grow mid-session. Start a new session to change it. (Flipping `planMode` changes this set, because plan mode is a preset over it.)';
+
+const TOOL_GATING_CONSTRAINTS: ResumeFieldConstraint[] = [
+  { path: 'disallowedToolGroups', reason: TOOL_GATING_IMMUTABLE_REASON },
 ];
 
 const MODEL_IMMUTABLE_REASON: Record<string, string> = {
@@ -91,7 +117,8 @@ export function getSessionResumeConstraints(architecture: string): ResumeFieldCo
         o.resumeImmutableReason ??
         `"${o.label}" is fixed once a session has started; changing it requires a new session.`,
     }));
-  return [modelConstraint(architecture), ...PATH_SCOPE_CONSTRAINTS, ...immutableOptions];
+  return [modelConstraint(architecture), ...PATH_SCOPE_CONSTRAINTS,
+    ...TOOL_GATING_CONSTRAINTS, ...immutableOptions];
 }
 
 /**
@@ -106,6 +133,23 @@ function valueAtPath(path: string, snapshot: ResumeConfigSnapshot): unknown {
   if (path === 'model') return snapshot.model;
   if (path === 'allowedPaths') return snapshot.allowedPaths;
   if (path === 'disallowedPaths') return snapshot.disallowedPaths;
+  if (path === 'disallowedToolGroups') {
+    // Compare the EFFECTIVE set (preset ∪ explicit), not the raw field — see
+    // TOOL_GATING_CONSTRAINTS.
+    //
+    // Presence is decided by whether the CONSUMER SAID ANYTHING, not by whether
+    // the resolved set is non-empty. `planMode: false` and
+    // `disallowedToolGroups: []` are statements — they resolve to the empty set,
+    // which must compare UNEQUAL to a previous non-empty one. Were emptiness
+    // treated as absence, turning plan mode off on resume would hand the shell
+    // back silently, which is exactly the failure this constraint exists to
+    // prevent. A snapshot that mentions neither field stays unconstrained, so a
+    // session that never gated tools is unaffected.
+    if (snapshot.disallowedToolGroups === undefined && snapshot.planMode === undefined) {
+      return undefined;
+    }
+    return resolveDeniedGroups(snapshot).groups;
+  }
   if (path.startsWith('architectureConfig.')) {
     return snapshot.architectureConfig?.[path.slice('architectureConfig.'.length)];
   }

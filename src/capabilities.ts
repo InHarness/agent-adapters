@@ -44,16 +44,29 @@ export interface ArchitectureCapabilities {
    * (see {@link probePathScope} and the `adapter_ready` event's `pathScope`).
    */
   pathScope: boolean;
+
+  /**
+   * Does this adapter have ANY built-in tool gating mechanism (M18
+   * `disallowedToolGroups`)?
+   *
+   * A plain bool reporting only whether a mechanism EXISTS — it says nothing
+   * about coverage or strength, and is `true` on an adapter that can enforce
+   * some groups but not others (codex has a sandbox posture and a web-search
+   * toggle, but no `shell` or `file-read` primitive at all). For per-group
+   * enforceability, strength and documented escape surfaces, call
+   * `probeToolGating(architecture, groups)` — synchronously, before dispatch.
+   */
+  toolGating: boolean;
 }
 
 const CAPABILITIES: Record<string, ArchitectureCapabilities> = {
-  'claude-code': { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true },
-  'claude-code-ollama': { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true },
-  'claude-code-minimax': { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true },
-  codex: { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: true },
-  opencode: { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false },
-  'opencode-openrouter': { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false },
-  gemini: { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: true },
+  'claude-code': { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true, toolGating: true },
+  'claude-code-ollama': { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true, toolGating: true },
+  'claude-code-minimax': { midTurnPush: true, imageInput: true, subagentDefinition: true, pathScope: true, toolGating: true },
+  codex: { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: true, toolGating: true },
+  opencode: { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false, toolGating: true },
+  'opencode-openrouter': { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false, toolGating: true },
+  gemini: { midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: true, toolGating: true },
 };
 
 /**
@@ -68,6 +81,7 @@ export function architectureCapabilities(architecture: Architecture): Architectu
       imageInput: false,
       subagentDefinition: false,
       pathScope: false,
+      toolGating: false,
     }
   );
 }

@@ -44,6 +44,7 @@ export {
   AdapterTimeoutError,
   AdapterAbortError,
   AdapterBackgroundHoldExpiredError,
+  AdapterToolPolicyError,
 } from './types.js';
 
 // Adapters
@@ -125,6 +126,11 @@ export {
   detectOsSandbox,
   getClaudeSandboxConfig,
 } from './path-scope.js';
+
+// Built-in tool gating (M18) — deny-groups, the plan-mode preset, and the
+// pre-dispatch strength/escape-surface probe
+export type { ToolGroup, ToolGatingStrength, ToolGatingReport } from './tool-groups.js';
+export { probeToolGating, TOOL_GROUPS, PLAN_MODE_DENY_GROUPS } from './tool-groups.js';
 
 // Subagent definition validation
 export { validateSubagents } from './subagents.js';

@@ -24,6 +24,13 @@ import { checkPeerSdkVersion } from '../sdk-version.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 import { inferMediaType, readImageAsBase64 } from '../images-tempdir.js';
 import { probePathScope } from '../path-scope.js';
+import {
+  checkToolPolicy,
+  resolveDeniedGroups,
+  isPorousCombination,
+  porousCombinationWarning,
+} from '../tool-groups.js';
+import type { ToolGroup } from '../tool-groups.js';
 
 /**
  * Resolve `params.images` into gemini-cli-core `media` content parts — the same
@@ -148,6 +155,47 @@ export function contentPartsToBlocks(parts: Array<Record<string, unknown>>): Con
 
 // --- Adapter ---
 
+// --- Built-in tool gating (M18) ---
+//
+// Gemini excludes tools when the TOOL REGISTRY IS BUILT — before the approval
+// policy ever runs. So a denied tool is never registered, never reaches the
+// model, and an auto-approving `yolo` mode cannot bypass it: there is nothing
+// registered to approve.
+//
+// But `excludeTools` is DENY-ONLY with no allow-list counterpart, so gemini
+// cannot satisfy M18's residual-allow-list invariant: a built-in added by a
+// peer-SDK bump stays available until this table names it. That is why every
+// gemini group is capped at 'soft' in the strength matrix — the gate is real,
+// its coverage is not future-proof.
+//
+// Names come from the SDK's own `*_TOOL_NAME` constants. Note `grep_search` is
+// the current name and `search_file_content` its legacy alias; the registry does
+// expand `TOOL_LEGACY_ALIASES` on the exclude set itself, but both spellings are
+// listed so the deny does not depend on that expansion surviving a bump.
+const GEMINI_TOOL_GROUPS: Record<ToolGroup, string[]> = {
+  // The background-process tools are registered OUTSIDE the enumerated built-in
+  // set, so a shell deny that names only `run_shell_command` leaves the output of
+  // already-started commands readable.
+  shell: ['run_shell_command', 'list_background_processes', 'read_background_output'],
+  'file-read': [
+    'read_file',
+    'read_many_files',
+    'list_directory',
+    'grep_search',
+    'search_file_content',
+    'glob',
+  ],
+  // `replace` is the SDK's EDIT_TOOL_NAME; `save_memory` persists memory, which
+  // M18 classes as a write.
+  'file-write': ['write_file', 'replace', 'save_memory'],
+  web: ['web_fetch', 'google_web_search'],
+};
+
+/** Tool names to exclude for a set of denied groups. */
+export function geminiExcludedTools(deniedGroups: readonly ToolGroup[]): string[] {
+  return deniedGroups.flatMap((g) => GEMINI_TOOL_GROUPS[g]);
+}
+
 export class GeminiAdapter implements RuntimeAdapter {
   architecture = 'gemini' as const;
   private abortFn: (() => Promise<void>) | null = null;
@@ -159,6 +207,30 @@ export class GeminiAdapter implements RuntimeAdapter {
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
+    // Built-in tool gating (M18) — the pre-dispatch gate, before any SDK import.
+    const policyError = checkToolPolicy(this.architecture, params);
+    if (policyError) {
+      yield { type: 'error', error: policyError, phase: 'init' };
+      return;
+    }
+    const { groups: deniedGroups } = resolveDeniedGroups(params);
+
+    if (isPorousCombination(deniedGroups)) {
+      yield { type: 'warning', message: porousCombinationWarning(this.architecture, deniedGroups) };
+    }
+
+    // gemini's approval policy is whole-run (`approvalMode`), with no per-tool
+    // auto-approval primitive to map `autoApproveTools` onto.
+    if (params.autoApproveTools?.length) {
+      yield {
+        type: 'warning',
+        message:
+          'gemini adapter: autoApproveTools is not supported — gemini-cli-core has a whole-run ' +
+          'approvalMode, not a per-tool auto-approval list. The field is ignored; it only ever ' +
+          'auto-approved, so nothing is left unrestricted by dropping it.',
+      };
+    }
+
     const resolvedModel = resolveModel(this.architecture, params.model);
     const apiKey = process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -306,11 +378,11 @@ export class GeminiAdapter implements RuntimeAdapter {
     // model can't even attempt to write/edit/exec — the plan-mode contract is
     // "reads allowed, writes blocked" enforced at the tool-list level (matches
     // the unified contract; see approvalMode comment above).
-    const PLAN_MODE_MUTATING_TOOLS = ['write_file', 'replace', 'run_shell_command', 'save_memory'];
+    // The old hardcoded plan-mode exclusion list is gone — plan mode desugars
+    // into deny-groups and is subsumed by the group mapping above.
     const baseExcluded = params.onUserInput ? [] : ['ask_user'];
-    const planExcluded = params.planMode ? PLAN_MODE_MUTATING_TOOLS : [];
-    const merged = [...baseExcluded, ...planExcluded];
-    const excludeTools = merged.length > 0 ? merged : undefined;
+    const merged = [...baseExcluded, ...geminiExcludedTools(deniedGroups)];
+    const excludeTools = merged.length > 0 ? [...new Set(merged)] : undefined;
 
     // Materialize inline skills. Gemini consumes them programmatically via
     // Config.skills with `body` inline; `location` still has to be a real path

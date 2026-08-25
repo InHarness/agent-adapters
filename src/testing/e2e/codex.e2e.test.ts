@@ -20,6 +20,8 @@ import {
   runResumeScenario,
   RESUME_EXPECTED_NUMBER,
   assertResumeUsageIndependence,
+  assertToolPolicyRefusal,
+  assertPorousWarning,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady } from '../contract.js';
@@ -172,13 +174,17 @@ describe.skipIf(SKIP)('codex e2e', () => {
     }
   });
 
-  describe('plan mode', () => {
-    it('planMode=true blocks file creation (read-only sandbox)', async () => {
+  // Plan mode now desugars into disallowedToolGroups ['file-write','shell'] and
+  // inherits M18's fail-closed posture. Codex has NO shell primitive at all, so
+  // what used to be "a read-only sandbox with a live shell" — plan mode's
+  // contract half-honoured, silently — is now a refusal. That change is the
+  // behavioural half of this release's breaking bump.
+  describe('plan mode (M18 preset — refuses on codex)', () => {
+    it('planMode=true refuses the run before dispatch instead of half-honouring it', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const adapter = createAdapter('codex');
         const events = await collectEvents(
-          adapter.execute({
+          createAdapter('codex').execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
             model: 'gpt-5.5',
@@ -187,25 +193,27 @@ describe.skipIf(SKIP)('codex e2e', () => {
             planMode: true,
           }),
         );
+        assertToolPolicyRefusal(events, ['shell']);
+        // Fail-closed all the way through: nothing ran, so nothing was written.
         assertNoFileCreated(dir, 'notes.txt');
-        expect(events.some((e) => e.type === 'result' || e.type === 'assistant_message')).toBe(true);
       } finally {
         cleanup();
       }
-    });
+    }, 60_000);
 
-    it('planMode=true allows listing files via read-only shell', async () => {
+    // The documented opt-out: pass an explicit empty deny-set instead of the
+    // preset, and the run proceeds exactly as it did before this release.
+    it('an explicit empty disallowedToolGroups is the documented opt-out', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const adapter = createAdapter('codex');
         const events = await collectEvents(
-          adapter.execute({
+          createAdapter('codex').execute({
             prompt: 'List the files in the current directory using ls. Then report what you see.',
             systemPrompt: 'Use the shell tool with `ls` to list files.',
             model: 'gpt-5.5',
             maxTurns: 3,
             cwd: dir,
-            planMode: true,
+            disallowedToolGroups: [],
           }),
         );
         const result = events.find((e) => e.type === 'result') as Extract<UnifiedEvent, { type: 'result' }>;
@@ -213,7 +221,73 @@ describe.skipIf(SKIP)('codex e2e', () => {
       } finally {
         cleanup();
       }
-    });
+    }, 120_000);
+  });
+
+  // --- tool-gating scenario (M18) ---
+  describe('tool-gating (coarse sandbox posture, and two groups it cannot express)', () => {
+    it.each(['shell', 'file-read'] as const)(
+      'refuses `%s` before dispatch — ThreadOptions has no primitive for it',
+      async (group) => {
+        const events = await collectEvents(
+          createAdapter('codex').execute({
+            prompt: 'hello',
+            systemPrompt: 'You are helpful.',
+            model: 'gpt-5.5',
+            disallowedToolGroups: [group],
+          }),
+        );
+        assertToolPolicyRefusal(events, [group]);
+      },
+      60_000,
+    );
+
+    it('refuses the whole run rather than applying the enforceable remainder', async () => {
+      const events = await collectEvents(
+        createAdapter('codex').execute({
+          prompt: 'hello',
+          systemPrompt: 'You are helpful.',
+          model: 'gpt-5.5',
+          // `file-write` IS enforceable here; `shell` is not. No partial application.
+          disallowedToolGroups: ['file-write', 'shell'],
+        }),
+      );
+      assertToolPolicyRefusal(events, ['shell']);
+    }, 60_000);
+
+    it('a denied `file-write` blocks mutation through the read-only sandbox', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('codex').execute({
+            prompt: PLAN_WRITE_PROMPT,
+            systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
+            model: 'gpt-5.5',
+            maxTurns: 3,
+            cwd: dir,
+            disallowedToolGroups: ['file-write'],
+          }),
+        );
+        assertNoFileCreated(dir, 'notes.txt');
+        // Coarse, not a per-tool gate: reads and the shell stay live, and the
+        // run says so.
+        assertPorousWarning(events, true);
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    it('an unknown group refuses the run', async () => {
+      const events = await collectEvents(
+        createAdapter('codex').execute({
+          prompt: 'hello',
+          systemPrompt: 'You are helpful.',
+          model: 'gpt-5.5',
+          disallowedToolGroups: ['netwrok' as 'web'],
+        }),
+      );
+      assertToolPolicyRefusal(events);
+    }, 60_000);
   });
 
   it('no subagent events and subagentTaskId is never populated', async () => {

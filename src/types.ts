@@ -3,6 +3,7 @@
 
 import type { ArchitectureModelMap } from './models.js';
 import type { ResolvedPathScope } from './path-scope.js';
+import type { ToolGroup, ToolGatingStrength } from './tool-groups.js';
 
 // --- Content & Messages ---
 
@@ -622,7 +623,56 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   images?: ImageInput[];
   systemPrompt: string;
   model: A extends keyof ArchitectureModelMap ? ArchitectureModelMap[A] : string;
-  allowedTools?: string[];
+
+  /**
+   * Tool names that may be used WITHOUT an approval prompt.
+   *
+   * **Auto-approves only — it never restricts.** Omitting a tool here does not
+   * make it unavailable; it only means the tool goes through whatever approval
+   * path the adapter normally uses. To remove capability, use
+   * {@link disallowedToolGroups}.
+   *
+   * Renamed from `allowedTools` in 0.9.6: the old name read as a restriction,
+   * was documented as nothing, and was silently ignored by three of four
+   * adapters. There is no alias — the rename is deliberate and breaking.
+   *
+   * An adapter with **no auto-approval primitive** emits exactly one `warning`
+   * event for the run when this field is supplied, instead of ignoring it in
+   * silence. A tool in a group denied by {@link disallowedToolGroups} stays
+   * denied even when named here — a deny always outranks auto-approval.
+   */
+  autoApproveTools?: string[];
+
+  /**
+   * Classes of built-in tool capability this run may not use (M18).
+   *
+   * - **Absent or `[]` → today's behaviour byte for byte.** Backward compatible
+   *   no-op.
+   * - **Deny-only and additive.** Groups derived from a preset (see
+   *   {@link planMode}) and groups named here are UNIONED — a preset can never
+   *   be weakened by omitting its groups. Duplicates collapse; order is
+   *   insignificant.
+   * - **Fail-closed.** A group with no primitive on the target adapter, or an
+   *   unknown group string, refuses the run BEFORE dispatch with
+   *   {@link AdapterToolPolicyError} — never mid-stream, and with no partial
+   *   application of the remaining enforceable groups. Silently dropping an
+   *   unrecognized entry from a security policy would enforce less than was
+   *   asked for.
+   * - **A deny outranks {@link autoApproveTools}** and outranks an M15
+   *   path-scope allow rule; where both land on the same rule surface the deny
+   *   is applied last and is never re-widened.
+   * - **Built-ins only.** An MCP tool is never denied by group — MCP tool names
+   *   are opaque and cannot be reliably classified. A filesystem MCP server
+   *   survives a `file-read` + `file-write` deny; the remedy is to withhold the
+   *   server.
+   * - **Immutable on resume** — a capability gate must not shrink or grow
+   *   mid-session (see {@link findResumeViolations}).
+   *
+   * Call `probeToolGating(architecture, groups)` BEFORE dispatch to learn each
+   * group's enforcement strength and documented escape surfaces; a startup
+   * event arrives too late to decline the run.
+   */
+  disallowedToolGroups?: ToolGroup[];
 
   /**
    * Names of builtin MCP servers to instantiate.
@@ -759,23 +809,28 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   streamingInput?: boolean;
 
   /**
-   * When true, adapter runs in plan-only mode: read-only tools allowed,
-   * writes/edits/shell-mutations blocked. MCP servers listed in `mcpServers`
-   * remain executable — the consumer is responsible for only passing read-only
-   * servers in plan mode.
+   * Plan-only mode: a **preset** that desugars into deny-groups (M18).
    *
-   * Per-adapter mapping:
-   * - claude-code: hides mutating built-ins (Bash, Edit, Write, NotebookEdit)
-   *   from the model's catalog via `tools` + `disallowedTools` and runs under
-   *   `permissionMode: 'bypassPermissions'`. Subagents (Task/Agent) ARE allowed
-   *   in plan mode (read-only research); as in native Claude Code, read-only is
-   *   NOT enforced inside a spawned subagent (it doesn't inherit the parent's
-   *   disallowedTools). See the "Permission model & read-only agents" section in
-   *   `.claude/skills/claude-code-sdk/SKILL.md` for why SDK's
-   *   `permissionMode: 'plan'` is intentionally NOT used here.
-   * - gemini: approvalMode='plan'
-   * - codex: sandboxMode='read-only'
-   * - opencode: no-op with warning
+   * ```
+   * planMode: true   →   disallowedToolGroups: ['file-write', 'shell']
+   * ```
+   *
+   * Reads and web stay available — plan mode must still be able to research.
+   * The preset is **not a weaker mode**: it produces identical deny-groups and
+   * inherits the fail-closed posture, so an adapter that cannot enforce them
+   * **refuses the run** rather than warning. On codex that means `planMode:
+   * true` now refuses outright (it has no `shell` primitive) instead of
+   * silently delivering a read-only sandbox with a live shell.
+   *
+   * Preset-derived groups are UNIONED with {@link disallowedToolGroups}, so
+   * plan mode can be widened but never weakened. The documented opt-out is an
+   * explicit empty `disallowedToolGroups`.
+   *
+   * MCP servers listed in `mcpServers` remain executable — M18 gates built-ins
+   * only, and the consumer is responsible for passing read-only servers.
+   *
+   * There are no per-adapter plan-mode special cases left; every adapter goes
+   * through the deny-group path. See `PLAN_MODE_DENY_GROUPS`.
    */
   planMode?: boolean;
 
@@ -1011,6 +1066,81 @@ export class AdapterBackgroundHoldExpiredError extends AdapterError {
 
   override toJSON(): Record<string, unknown> {
     return { ...super.toJSON(), capMs: this.capMs };
+  }
+}
+
+/**
+ * A requested {@link ToolGroup} cannot be enforced on the target adapter, or an
+ * unknown group string was supplied — so the run was REFUSED before anything
+ * was dispatched.
+ *
+ * WHY THIS IS A REFUSAL, NOT A FAILURE. Every other class in this hierarchy
+ * ends a run that had already started. This one is raised before the adapter
+ * touches its SDK: no process was spawned, no turn was billed, and none of the
+ * enforceable groups were applied on their own. M18 is fail-closed on purpose —
+ * running with a hole in the policy is worse than not running, so there is no
+ * partial application and no silent downgrade to a weaker gate.
+ *
+ * DELIVERY. Like the rest of the hierarchy this arrives as
+ * `{ type: 'error', error, phase: 'init' }` — the iterator never throws
+ * (M01/M13). "Pre-dispatch" describes the moment of decision, not the channel.
+ * A consumer that needs to decline BEFORE calling `execute()` calls the
+ * synchronous `probeToolGating(architecture, groups)` instead.
+ *
+ * Carries the adapter id, the groups that could not be enforced, any unknown
+ * group strings, and the groups that WOULD have been enforceable together with
+ * their strength — so a consumer can tell "wrong adapter for this policy" from
+ * "typo in the policy" without parsing the message. `toJSON` carries all of it
+ * through, so a logged refusal is as actionable as a caught one.
+ */
+export class AdapterToolPolicyError extends AdapterError {
+  /** Requested groups with no primitive on this adapter. */
+  readonly unenforceable: ToolGroup[];
+  /** Entries that are not a known group at all. */
+  readonly unknownGroups: string[];
+  /** Requested groups that could have been enforced, with their strength. */
+  readonly enforceable: Array<{ group: ToolGroup; strength: ToolGatingStrength }>;
+
+  constructor(
+    adapter: string,
+    detail: {
+      unenforceable: ToolGroup[];
+      unknownGroups: string[];
+      enforceable: Array<{ group: ToolGroup; strength: ToolGatingStrength }>;
+    },
+  ) {
+    const parts: string[] = [];
+    if (detail.unenforceable.length > 0) {
+      parts.push(
+        `has no primitive for ${detail.unenforceable.map((g) => `\`${g}\``).join(', ')}`,
+      );
+    }
+    if (detail.unknownGroups.length > 0) {
+      parts.push(
+        `does not recognize ${detail.unknownGroups.map((g) => `\`${g}\``).join(', ')} as a tool group`,
+      );
+    }
+    super(
+      `${adapter} adapter refused the run before dispatch: it ${parts.join(' and ')}. ` +
+        'Tool gating is fail-closed — nothing was dispatched and no other requested group was ' +
+        'applied on its own, because running with a hole in the policy is worse than not running. ' +
+        'Call `probeToolGating()` before dispatch to check enforceability, drop the unenforceable ' +
+        'group, or pick an adapter that supports it.',
+      adapter,
+    );
+    this.name = 'AdapterToolPolicyError';
+    this.unenforceable = detail.unenforceable;
+    this.unknownGroups = detail.unknownGroups;
+    this.enforceable = detail.enforceable;
+  }
+
+  override toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      unenforceable: this.unenforceable,
+      unknownGroups: this.unknownGroups,
+      enforceable: this.enforceable,
+    };
   }
 }
 
