@@ -375,6 +375,52 @@ export const SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT =
   'they finish. When you need a decision from the user and you have a native ask-user / ' +
   'AskUserQuestion / question tool available, you MUST use it instead of guessing.';
 
+// --- Background-task levers (M17) — the two shapes the routing/hold cases need ---
+//
+// Both prompts are deliberately blunt about `run_in_background: true`: each case is
+// about what the ADAPTER does with a backgrounded Bash call, so a model that quietly
+// runs the command synchronously on its own proves nothing either way (the cases
+// report that as INCONCLUSIVE rather than as a pass).
+
+// `claude_disallowBackgroundBash` case. The work itself is trivial on purpose — the
+// point is the routing, not the command. Asking for the output back keeps the model
+// from treating the deny as a dead end: the hook's reason tells it to re-run without
+// the flag, and reporting the marker is how we see that it did.
+export const BACKGROUND_BASH_PROMPT =
+  'Use the Bash tool to run `echo e2e-background-marker`, with the run_in_background ' +
+  'parameter set to true. Then tell me exactly what the command printed. If the tool ' +
+  'refuses to run it in the background, re-run the same command without the ' +
+  'run_in_background parameter and report its output.';
+export const BACKGROUND_BASH_SYSTEM_PROMPT =
+  'You run shell commands with the Bash tool. When asked to run something in the ' +
+  'background, you pass run_in_background: true. Be concise.';
+
+// Hold-cap case — the shape the cap exists for: work that does not settle, while the
+// engine emits only heartbeats (`system/status`, `system/background_tasks_changed`)
+// which deliberately do NOT re-arm the cap.
+//
+// The canonical example in M17 and in the adapter's own notes is `sleep 3600`, and
+// the duration is what makes it canonical: nothing about the run can outlast it. But
+// the cap ABANDONS the task on expiry ("any remaining background task is abandoned",
+// AdapterBackgroundHoldExpiredError) rather than reaping it, so an hour is an hour of
+// orphan on whatever machine ran the suite if the CLI ever fails to clean up after
+// itself. `sleep 180` is chosen to keep the property exact — it outlives the 8s cap
+// AND `collectEvents()`'s 120s budget by a wide margin, so it cannot settle inside any
+// bound this test can observe — while capping the worst-case litter at three minutes.
+//
+// Same "do not wait, do not poll" instruction as BACKGROUND_THEN_QUESTION_PROMPT, and
+// for the same reason: a model that polls inside the turn never leaves the session
+// parked, so no bound is ever under test.
+export const NEVER_SETTLING_BACKGROUND_PROMPT =
+  'Follow these steps exactly. Step 1: use the Bash tool to run `sleep 180` with the ' +
+  'run_in_background parameter set to true. Step 2: immediately end your turn with a ' +
+  'single short sentence saying you started it. Do NOT wait for it, do NOT call ' +
+  'BashOutput, and do NOT poll it — stop your turn while it is still running.';
+export const NEVER_SETTLING_BACKGROUND_SYSTEM_PROMPT =
+  'You start long shell commands in the background with the Bash tool ' +
+  '(run_in_background: true) and you end your turn immediately instead of blocking or ' +
+  'polling — you will be notified when the task completes and can continue then.';
+
 /**
  * Fail if any event carries the engine's closed-control-transport error.
  *
@@ -399,6 +445,52 @@ export function assertNoStreamClosed(events: UnifiedEvent[]): void {
     `expected no "Stream closed" control-transport failure, got ${JSON.stringify(offenders)}\n` +
       `sequence: ${events.map((e) => e.type).join(' → ')}`,
   ).toHaveLength(0);
+}
+
+/**
+ * Assert that a run whose background work never settled was ENDED by the hold cap,
+ * and that it said so.
+ *
+ * Two properties, and both matter (M17, `ac-the-control-channel-hold-is-bounded-a-ta`):
+ *
+ *  - the run ended at all. `collectEvents()` returning is that proof — it drains the
+ *    generator to `done`, so a hold that never let go would surface as its 120s
+ *    rejection instead of as a call to this helper. Keep the configured cap well
+ *    below that, or the harness times out before the bound can be observed.
+ *  - it ended LOUDLY, naming the bound it hit. A run that just stopped, as if the
+ *    backgrounded task had completed, is the failure this pins: the consumer would
+ *    have no way to tell an abandoned `sleep` from a finished one.
+ *
+ * It is an `error`, NOT a warning — see `AdapterBackgroundHoldExpiredError` in
+ * `src/types.ts` for why the terminal-error shape replaced the earlier warning: the
+ * cap ends a session that is still live, and a warning among successful-looking
+ * events was not something a consumer could branch on.
+ */
+export function assertBackgroundHoldExpired(events: UnifiedEvent[], capMs: number): void {
+  const sequence = events.map((e) => e.type).join(' → ');
+  const errors = events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'error' }> => e.type === 'error',
+  );
+  const expired = errors.filter((e) => e.error.name === 'AdapterBackgroundHoldExpiredError');
+  expect(
+    expired.length,
+    `the hold cap must end the run with AdapterBackgroundHoldExpiredError. ` +
+      `Errors seen: ${JSON.stringify(errors.map((e) => ({ name: e.error.name, message: e.error.message })))}\n` +
+      `sequence: ${sequence}`,
+  ).toBeGreaterThanOrEqual(1);
+
+  // The bound has to be IN the message: the whole point of the error over a silent
+  // stop is telling the consumer which cap it can raise.
+  expect(
+    expired[0]!.error.message,
+    `the terminal error must name the configured cap (${capMs}ms)`,
+  ).toContain(String(capMs));
+
+  // Terminal means terminal — the adapter returns straight after yielding it.
+  expect(
+    events[events.length - 1]?.type,
+    `the hold-cap error must be the last event of the run. sequence: ${sequence}`,
+  ).toBe('error');
 }
 
 /**

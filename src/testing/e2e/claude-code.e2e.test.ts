@@ -47,6 +47,12 @@ import {
   SUBAGENTS_THEN_QUESTION_PROMPT,
   SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
   assertNoStreamClosed,
+  BACKGROUND_BASH_PROMPT,
+  BACKGROUND_BASH_SYSTEM_PROMPT,
+  NEVER_SETTLING_BACKGROUND_PROMPT,
+  NEVER_SETTLING_BACKGROUND_SYSTEM_PROMPT,
+  assertNoBackgroundTasksStream,
+  assertBackgroundHoldExpired,
   runUserQuestionScenario,
   assertUserInputRequest,
   TODO_PROMPT,
@@ -776,6 +782,152 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       },
       240_000,
     );
+  });
+
+  // ACCEPTANCE for the two M17 levers that the WAKE_UP_CONFIGS matrix above does not
+  // touch. That matrix documents ONE shape — backgrounded work that later wakes the run
+  // while the control channel is held open — and it rides the AskUserQuestion bridge to
+  // prove the channel survived. Neither case here goes through that bridge, hence its
+  // own block: one turns backgrounding OFF, the other is about work that never wakes
+  // anything at all.
+  //
+  // Both were covered only by mocked unit tests (`claude-code.background-routing.test.ts`,
+  // `claude-code.background-tasks.test.ts`). Mocks pin the adapter's own branching; they
+  // cannot show that the real engine honours the synthesized deny-hook, nor that the cap
+  // fires against a task that genuinely never settles. That is what these add.
+  describe('background tasks (M17 levers — routing off, hold bounded)', () => {
+    // `ac-with-claude-disallowbackgroundbash-true`.
+    //
+    // The lever is a PreToolUse hook denying any Bash call carrying
+    // `run_in_background: true`, with a reason telling the model to re-run without it
+    // (see the hook in src/adapters/claude-code.ts). So the command still runs — just
+    // inside the turn — and the observable consequence is an ABSENCE: nothing about
+    // background tasks reaches the consumer.
+    it('claude_disallowBackgroundBash forces a backgrounded Bash call to run in-turn', async (ctx) => {
+      const adapter = createAdapter('claude-code');
+      const events = await collectEvents(
+        adapter.execute({
+          prompt: BACKGROUND_BASH_PROMPT,
+          systemPrompt: BACKGROUND_BASH_SYSTEM_PROMPT,
+          model: MODEL,
+          maxTurns: 6,
+          architectureConfig: { claude_disallowBackgroundBash: true },
+        }),
+      );
+
+      const sequence = events.map((e) => e.type).join(' → ');
+
+      // Precondition: the model has to have ATTEMPTED backgrounding. A run where it
+      // simply chose to run the command in-turn on its own would satisfy every
+      // assertion below while never reaching the hook — vacuously green, and the
+      // absence it proves would be the model's doing, not the lever's. That is
+      // INCONCLUSIVE, not a regression in the adapter.
+      const attemptedBackgrounding = events.some(
+        (e) =>
+          e.type === 'tool_use' &&
+          e.toolName === 'Bash' &&
+          /"run_in_background"\s*:\s*true/.test(JSON.stringify(e.input)),
+      );
+      if (!attemptedBackgrounding) {
+        console.warn(
+          `[INCONCLUSIVE] claude_disallowBackgroundBash: the model never asked for ` +
+            `run_in_background: true, so the deny-hook was never reached. Sequence: ${sequence}`,
+        );
+        ctx.skip();
+        return;
+      }
+
+      // No `background_task_*` event, no `result.backgroundTasks`, and no complaint
+      // warning either — the same absence contract adapters without backgrounding are
+      // held to, which is exactly what this lever asks claude-code to look like.
+      assertNoBackgroundTasksStream(events);
+
+      // The deny is a redirect, not a dead end: the run still finishes normally.
+      expect(
+        events.some((e) => e.type === 'result'),
+        `the run must still complete — the hook denies backgrounding, not the command. ` +
+          `Sequence: ${sequence}`,
+      ).toBe(true);
+
+      // ...and the command actually RAN, synchronously. Without this the case can go
+      // vacuously green: every assertion above is an absence, so a deny the model
+      // cannot act on — `continue: false`, or a reason that stops telling it to re-run
+      // without the flag — would end in prose, emit no background events, still reach
+      // `result`, and pass. The marker is the positive half of the contract.
+      const marker = 'e2e-background-marker';
+      const synchronousRetry = events.some(
+        (e) =>
+          e.type === 'tool_use' &&
+          e.toolName === 'Bash' &&
+          !/"run_in_background"\s*:\s*true/.test(JSON.stringify(e.input)) &&
+          JSON.stringify(e.input).includes(marker),
+      );
+      const reported = events.some(
+        (e) => e.type === 'assistant_message' && JSON.stringify(e.message.content).includes(marker),
+      );
+      expect(
+        synchronousRetry || reported,
+        `the denied command must be re-run without run_in_background and its output ` +
+          `reported — the hook's reason says so. Sequence: ${sequence}`,
+      ).toBe(true);
+    }, 180_000);
+
+    // `ac-the-control-channel-hold-is-bounded-a-ta`.
+    //
+    // A backgrounded `sleep 3600` never settles, and while the engine babysits it the
+    // only frames are heartbeats — which deliberately do not re-arm the cap (see
+    // isBackgroundProgress in claude-code.background-hold.ts). So the cap is the only
+    // thing that can end this run.
+    //
+    // CAP_MS is chosen against two clocks: comfortably above the option's documented
+    // floor (`min: 5000`, src/options.ts) and far below collectEvents()'s 120s default,
+    // which starts at run start while the cap only arms at the first held `result`. An
+    // equal-or-larger cap would have the harness reject the run before the bound could
+    // surface — the test would then be timing out, not observing a regression.
+    const CAP_MS = 8_000;
+
+    it('claude_backgroundHoldCapMs ends a run whose background work never settles', async (ctx) => {
+      const adapter = createAdapter('claude-code');
+      const events = await collectEvents(
+        adapter.execute({
+          prompt: NEVER_SETTLING_BACKGROUND_PROMPT,
+          systemPrompt: NEVER_SETTLING_BACKGROUND_SYSTEM_PROMPT,
+          model: MODEL,
+          maxTurns: 6,
+          architectureConfig: { claude_backgroundHoldCapMs: CAP_MS },
+        }),
+      );
+
+      const sequence = events.map((e) => e.type).join(' → ');
+
+      // Precondition: the work has to actually be BACKGROUNDED. A synchronous `sleep
+      // 3600` is a different failure (it would be bounded by the harness, not the cap),
+      // and a model that polled it inside the turn never leaves the session parked —
+      // in both cases the hold is never entered and the run proves nothing.
+      const backgrounded = events.some(
+        (e) =>
+          e.type === 'tool_use' &&
+          e.toolName === 'Bash' &&
+          /"run_in_background"\s*:\s*true/.test(JSON.stringify(e.input)),
+      );
+      if (!backgrounded) {
+        console.warn(
+          `[INCONCLUSIVE] claude_backgroundHoldCapMs: the model never dispatched a ` +
+            `run_in_background Bash call, so the hold was never entered. Sequence: ${sequence}`,
+        );
+        ctx.skip();
+        return;
+      }
+
+      assertBackgroundHoldExpired(events, CAP_MS);
+      // DELIBERATELY ABOVE `collectEvents()`'s own 120s default (src/utils.ts). The two
+      // clocks race and vitest's starts earlier — at the test, before the CLI is even
+      // spawned — so an equal budget would always be the one to fire, replacing the
+      // helper's diagnosis with an opaque `Test timed out`. Worse, vitest's timeout does
+      // not abort the stream, so the run would be left going. The regression this case
+      // guards (a heartbeat re-arming the cap) is exactly the one that would hang, so
+      // the harness must be the thing that reports it.
+    }, 180_000);
   });
 
   describe('todo list (TodoWrite → todoList projection)', () => {
