@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { createAdapter } from '../../factory.js';
+import { probeToolGating } from '../../tool-groups.js';
 import { collectEvents } from '../../utils.js';
 import { AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
@@ -33,6 +34,11 @@ import {
   runResumeScenario,
   RESUME_EXPECTED_NUMBER,
   assertResumeUsageIndependence,
+  GATING_SHELL_PROMPT,
+  GATING_SHELL_SYSTEM_PROMPT,
+  GATING_WEB_PROMPT,
+  assertNoToolFromGroup,
+  assertToolPolicyRefusal,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady } from '../contract.js';
@@ -219,8 +225,11 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     }
   });
 
-  describe('plan mode', () => {
-    it('planMode=true blocks file creation (approvalMode=plan)', async () => {
+  // The stale label is gone with the stale mechanism: gemini never used
+  // approvalMode='plan'. Plan mode is the M18 preset, realized through
+  // `excludeTools` at tool-registry build time.
+  describe('plan mode (M18 preset via excludeTools)', () => {
+    it('planMode=true blocks file creation', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
         const adapter = createAdapter('gemini');
@@ -259,6 +268,98 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
         expect(result.output.toLowerCase()).toContain('test seed');
       } finally {
         cleanup();
+      }
+    });
+  });
+
+  // --- tool-gating scenario (M18) ---
+  //
+  // Exclusion happens when the tool registry is built — BEFORE the approval
+  // policy runs — so a denied tool is never registered at all.
+  describe('tool-gating (excludeTools at registry build time)', () => {
+    it('a denied `shell` is unusable for the whole run', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('gemini').execute({
+            prompt: GATING_SHELL_PROMPT,
+            systemPrompt: GATING_SHELL_SYSTEM_PROMPT,
+            model: 'gemini-2.5-flash',
+            maxTurns: 3,
+            cwd: dir,
+            disallowedToolGroups: ['shell'],
+          }),
+        );
+        assertNoToolFromGroup(events, 'shell');
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    // With no `onUserInput` handler the adapter runs approvalMode='yolo', which
+    // auto-approves everything. The deny must still hold — there is nothing
+    // registered to approve.
+    it('the exclusion holds under an auto-approving approval mode', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('gemini').execute({
+            prompt: PLAN_WRITE_PROMPT,
+            systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
+            model: 'gemini-2.5-flash',
+            maxTurns: 3,
+            cwd: dir,
+            // no onUserInput => approvalMode 'yolo'
+            disallowedToolGroups: ['file-write', 'shell'],
+          }),
+        );
+        assertNoToolFromGroup(events, 'file-write');
+        assertNoFileCreated(dir, 'notes.txt');
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    it('a denied `web` is unusable', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('gemini').execute({
+            prompt: GATING_WEB_PROMPT,
+            systemPrompt: 'Answer using your tools where possible.',
+            model: 'gemini-2.5-flash',
+            maxTurns: 3,
+            cwd: dir,
+            disallowedToolGroups: ['web'],
+          }),
+        );
+        assertNoToolFromGroup(events, 'web');
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    it('an unknown group refuses the run before dispatch', async () => {
+      const events = await collectEvents(
+        createAdapter('gemini').execute({
+          prompt: 'hello',
+          systemPrompt: 'You are helpful.',
+          model: 'gemini-2.5-flash',
+          disallowedToolGroups: ['webb' as 'web'],
+        }),
+      );
+      assertToolPolicyRefusal(events);
+    }, 60_000);
+
+    // The documented escape surface: `excludeTools` is deny-only, so gemini
+    // cannot satisfy the residual-allow-list invariant and no group may ever be
+    // reported `hard`. A built-in added by a peer-SDK bump stays available until
+    // the group mapping names it.
+    it('escape surface: deny-only, so no group is ever reported hard', () => {
+      for (const report of probeToolGating('gemini', ['shell', 'file-read', 'file-write', 'web'])) {
+        expect(report.enforceable).toBe(true);
+        expect(report.strength).toBe('soft');
+        expect(report.escapeSurfaces.join(' ')).toMatch(/deny-only|allow-list/i);
       }
     });
   });

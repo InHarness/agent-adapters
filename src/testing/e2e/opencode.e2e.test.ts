@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { createAdapter } from '../../factory.js';
+import { probeToolGating } from '../../tool-groups.js';
 import { collectEvents } from '../../utils.js';
 import { isOpencodeAvailable } from '../../adapters/opencode.js';
 import { AdapterAbortError } from '../../types.js';
@@ -27,6 +28,14 @@ import {
   runResumeScenario,
   RESUME_EXPECTED_NUMBER,
   assertResumeUsageIndependence,
+  createPlanModeTmpDir,
+  assertNoFileCreated,
+  PLAN_WRITE_PROMPT,
+  PLAN_WRITE_SYSTEM_PROMPT,
+  GATING_SHELL_PROMPT,
+  GATING_SHELL_SYSTEM_PROMPT,
+  assertNoToolFromGroup,
+  assertToolPolicyRefusal,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady } from '../contract.js';
@@ -168,13 +177,15 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
     }
   });
 
-  describe('plan mode', () => {
-    it('planMode=true emits warning and runs normally', async () => {
+  // Plan mode was a `console.warn` no-op here; under M18 it desugars into
+  // deny-groups and is GENUINELY ENFORCED, server-side. That is the single
+  // biggest behavioural change in this release for opencode consumers.
+  describe('plan mode (M18 preset — now enforced, not warned about)', () => {
+    it('planMode=true no longer emits the "not natively supported" warning', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
-        const adapter = createAdapter('opencode-openrouter');
         const events = await collectEvents(
-          adapter.execute({
+          createAdapter('opencode-openrouter').execute({
             prompt: SIMPLE_PROMPT,
             systemPrompt: SIMPLE_SYSTEM_PROMPT,
             model: 'claude-sonnet-4',
@@ -183,33 +194,132 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
           }),
         );
         expect(events.some((e) => e.type === 'result')).toBe(true);
-        const planWarns = warnSpy.mock.calls.filter(
-          (c) => typeof c[0] === 'string' && c[0].includes('planMode not natively supported'),
-        );
-        expect(planWarns.length).toBeGreaterThanOrEqual(1);
+        expect(
+          warnSpy.mock.calls.filter(
+            (c) => typeof c[0] === 'string' && c[0].includes('planMode not natively supported'),
+          ),
+          'plan mode is enforced now — the no-op warning must be gone',
+        ).toEqual([]);
       } finally {
         warnSpy.mockRestore();
       }
-    });
+    }, 120_000);
 
-    it('planMode=undefined does not emit warning', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it('planMode=true blocks file creation', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const adapter = createAdapter('opencode-openrouter');
         await collectEvents(
-          adapter.execute({
-            prompt: SIMPLE_PROMPT,
-            systemPrompt: SIMPLE_SYSTEM_PROMPT,
+          createAdapter('opencode-openrouter').execute({
+            prompt: PLAN_WRITE_PROMPT,
+            systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
             model: 'claude-sonnet-4',
-            maxTurns: 1,
+            maxTurns: 3,
+            cwd: dir,
+            planMode: true,
           }),
         );
-        const planWarns = warnSpy.mock.calls.filter(
-          (c) => typeof c[0] === 'string' && c[0].includes('planMode not natively supported'),
-        );
-        expect(planWarns.length).toBe(0);
+        assertNoFileCreated(dir, 'notes.txt');
       } finally {
-        warnSpy.mockRestore();
+        cleanup();
+      }
+    }, 120_000);
+  });
+
+  // --- tool-gating scenario (M18) ---
+  //
+  // OpenCode is the strongest of the four: permission buckets are evaluated
+  // server-side, so a denied tool is REFUSED BEFORE EXECUTION rather than merely
+  // hidden from the model.
+  describe('tool-gating (server-side permission buckets)', () => {
+    it('a denied `shell` is unusable for the whole run', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('opencode-openrouter').execute({
+            prompt: GATING_SHELL_PROMPT,
+            systemPrompt: GATING_SHELL_SYSTEM_PROMPT,
+            model: 'claude-sonnet-4',
+            maxTurns: 3,
+            cwd: dir,
+            disallowedToolGroups: ['shell'],
+          }),
+        );
+        assertNoToolFromGroup(events, 'shell');
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    it('a denied `file-write` blocks mutation', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('opencode-openrouter').execute({
+            prompt: PLAN_WRITE_PROMPT,
+            systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
+            model: 'claude-sonnet-4',
+            maxTurns: 3,
+            cwd: dir,
+            disallowedToolGroups: ['file-write', 'shell'],
+          }),
+        );
+        assertNoToolFromGroup(events, 'file-write');
+        assertNoFileCreated(dir, 'notes.txt');
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
+
+    // The delegation bucket is part of the file-read mapping precisely so this
+    // cannot happen.
+    it('a denied `file-read` cannot be laundered through a subagent', async () => {
+      const { dir, cleanup } = createPlanModeTmpDir();
+      try {
+        const events = await collectEvents(
+          createAdapter('opencode-openrouter').execute({
+            prompt:
+              'Delegate to a subagent if you can: have it read README.md in the current directory ' +
+              'and report its first line verbatim.',
+            systemPrompt: 'Use your tools, including delegation, to answer.',
+            model: 'claude-sonnet-4',
+            maxTurns: 4,
+            cwd: dir,
+            disallowedToolGroups: ['file-read'],
+          }),
+        );
+        assertNoToolFromGroup(events, 'file-read');
+        const result = events.find((e) => e.type === 'result') as
+          | Extract<UnifiedEvent, { type: 'result' }>
+          | undefined;
+        expect(
+          result?.output.toLowerCase().includes('test seed'),
+          'the seed content leaked despite a file-read deny — the delegation bucket did not hold',
+        ).toBe(false);
+      } finally {
+        cleanup();
+      }
+    }, 180_000);
+
+    it('an unknown group refuses the run before dispatch', async () => {
+      const events = await collectEvents(
+        createAdapter('opencode-openrouter').execute({
+          prompt: SIMPLE_PROMPT,
+          systemPrompt: SIMPLE_SYSTEM_PROMPT,
+          model: 'claude-sonnet-4',
+          disallowedToolGroups: ['sehll' as 'shell'],
+        }),
+      );
+      assertToolPolicyRefusal(events);
+    }, 60_000);
+
+    // The documented escape surface: the server's permission schema ends in a
+    // catch-all, so an unknown bucket is accepted and SILENTLY IGNORED. The
+    // adapter may therefore claim `hard` only for buckets verified against the
+    // running server — which is what the unit test pins.
+    it('claims hard strength, which is only sound because the bucket names are verified', () => {
+      for (const report of probeToolGating('opencode-openrouter', ['shell', 'file-read'])) {
+        expect(report.strength).toBe('hard');
+        expect(report.escapeSurfaces).toEqual([]);
       }
     });
   });

@@ -957,7 +957,8 @@ interface RuntimeExecuteParams {
   prompt: string;                              // conversation prompt
   systemPrompt: string;                        // system prompt
   model: string;                               // model alias or full model ID
-  allowedTools?: string[];                     // builtin SDK tools
+  autoApproveTools?: string[];                 // tools usable without an approval prompt (NEVER restricts)
+  disallowedToolGroups?: ToolGroup[];          // built-in capability classes this run may not use — see "Tool gating"
   builtinMCPServers?: string[];                // builtin MCP server names (consumer hint)
   allowedMCPTools?: string[];                  // allowed MCP tools (consumer hint)
   mcpServers?: Record<string, McpServerConfig>; // MCP servers — adapters read this
@@ -973,6 +974,87 @@ interface RuntimeExecuteParams {
 ```
 
 `builtinMCPServers` and `allowedMCPTools` are consumer-level hints — the consumer (e.g. orchestrator) resolves them into concrete `mcpServers` entries before calling the adapter. Adapters only read `mcpServers`.
+
+### Tool gating — `disallowedToolGroups`
+
+Remove whole **classes** of built-in capability from a single run, declared once in
+engine-neutral terms and realized by each adapter with its own SDK primitive.
+
+```ts
+type ToolGroup = 'shell' | 'file-read' | 'file-write' | 'web';
+
+await collectEvents(adapter.execute({
+  prompt: 'Summarise this repo.',
+  systemPrompt: 'You are a code reviewer.',
+  model: 'sonnet-4.6',
+  disallowedToolGroups: ['shell', 'file-write'],
+}));
+```
+
+| group | covers |
+|---|---|
+| `shell` | executing an OS command in any form, including background-process inspection and any general-purpose code-execution tool |
+| `file-read` | reading, listing or searching files |
+| `file-write` | creating, editing or deleting files, and persisting memory |
+| `web` | fetching URLs and web search |
+
+**It is fail-closed.** An adapter with no primitive for a requested group **refuses the
+run before dispatch** — you get a single `{ type: 'error', error: AdapterToolPolicyError,
+phase: 'init' }` and nothing is dispatched. There is no partial application: the
+enforceable groups are *not* applied on their own. An unknown group string refuses too,
+rather than being silently dropped.
+
+Absent or `[]` is a no-op — behaviour is byte-for-byte what it was without the field.
+
+#### Know before you dispatch
+
+Strength is a separate axis from the capability bool. `architectureCapabilities(arch).toolGating`
+only says *some* mechanism exists; call `probeToolGating()` — synchronous, pre-dispatch —
+for the per-group truth:
+
+```ts
+import { probeToolGating } from '@inharness-ai/agent-adapters';
+
+for (const r of probeToolGating('codex', ['shell', 'web'])) {
+  console.log(r.group, r.enforceable, r.strength, r.escapeSurfaces);
+}
+// shell false none []
+// web   true  hard []
+```
+
+- `hard` — enforced outside the model (OS sandbox posture, or a server-side refusal before execution).
+- `soft` — the tool is removed from the model's catalog. A model-behaviour gate, not a sandbox.
+- `none` — no primitive; requesting this group refuses the run.
+
+A group with a documented escape surface is **never** reported `hard` — the probe reports
+`soft` and names the surface.
+
+| adapter | `shell` | `file-read` | `file-write` | `web` | mechanism |
+|---|---|---|---|---|---|
+| claude-code | soft | soft | soft | soft | residual allow-list on `options.tools` + `disallowedTools` backstop |
+| codex | **refuses** | **refuses** | hard (coarse) | hard | `sandboxMode: 'read-only'` + the web-search toggle |
+| opencode | hard | hard | hard | hard | server-side `permission` buckets with a `'*'` default |
+| gemini | soft | soft | soft | soft | `excludeTools`, applied when the tool registry is built |
+
+#### Plan mode is a preset over this
+
+`planMode: true` desugars into `disallowedToolGroups: ['file-write', 'shell']` (reads and
+web stay available — plan mode must still be able to research) and inherits the
+fail-closed posture. Preset and explicit groups are **unioned**, so plan mode can be
+widened but never weakened. The exported constant is `PLAN_MODE_DENY_GROUPS`.
+
+#### Rules worth knowing
+
+- A deny outranks `autoApproveTools`, and outranks an M15 path-scope allow rule.
+- **Built-ins only.** An MCP tool is never denied by group — names are opaque and cannot be
+  reliably classified. A filesystem MCP server survives a `file-read` + `file-write` deny;
+  the remedy is to withhold the server.
+- Denying `file-read`/`file-write` while `shell` stays available emits one `warning`: it is
+  not a filesystem boundary, because the shell reaches the same files.
+- With `shell` denied there is no background-task capability: no `background_task_*` events
+  and `result.backgroundTasks` is never populated.
+- `disallowedToolGroups` is **immutable on resume** — and because plan mode is a preset over
+  it, flipping `planMode` on resume is a violation through the same check.
 
 <!-- anchor: xnf2ezp3 -->
 ### Architecture-specific config
