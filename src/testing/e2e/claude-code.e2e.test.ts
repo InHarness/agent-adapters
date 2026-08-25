@@ -47,6 +47,7 @@ import {
   SUBAGENTS_THEN_QUESTION_PROMPT,
   SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
   assertNoStreamClosed,
+  assertHeldResultContinuation,
   BACKGROUND_BASH_PROMPT,
   BACKGROUND_BASH_SYSTEM_PROMPT,
   NEVER_SETTLING_BACKGROUND_PROMPT,
@@ -606,186 +607,235 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       // No crash — completion event must still be present.
       expect(events.some((e) => e.type === 'result' || e.type === 'error')).toBe(true);
     });
-
-    // ACCEPTANCE for the background-task control-channel hold (M17) and the peer-SDK
-    // wake-up break. This matrix is what reproduced both defects before the fix; it is
-    // now the guard that they stay fixed.
-    //
-    // Before the fix, measured on sonnet-4.6 (`bash` = a `run_in_background` Bash task):
-    //
-    //   work shape        | prompt path | 0.3.153                  | 0.3.210
-    //   backgrounded bash | one-shot    | FLAKY — Stream closed    | FAIL — wake-up lost
-    //                     |             |   on 1 of 3 runs         |   entirely, no ask
-    //   backgrounded bash | streaming   | FLAKY — Stream closed    | pass (1 run)
-    //                     |             |   on 1 of 2 runs         |
-    //   subagents         | one-shot    | FLAKY — Stream closed    | not run
-    //                     |             |   on 1 run, 1 inconclusive |
-    //   subagents         | streaming   | inconclusive (1 run)     | not run
-    //
-    // The failing shape, verbatim, three times per run — the reported symptom:
-    //
-    //   tool_result isError: "Tool permission request failed: Error: Stream closed"
-    //
-    // Confirmed against the engine's own debug log (`DEBUG_CLAUDE_AGENT_SDK=1`, written
-    // to ~/.claude/debug/latest): the CLI is spawned with `--permission-prompt-tool
-    // stdio`, so permission requests ride stdio; after the turn's `result` the request
-    // cannot be sent and the CLI denies locally in ~4ms —
-    // `executePermissionRequestHooks called for tool: AskUserQuestion` immediately
-    // followed by `AskUserQuestion tool permission denied`, with no host round-trip.
-    // The model then retries twice more and falls back to prose.
-    //
-    // Two closers reached the same `transport.endInput()`, which is why every cell above
-    // could reproduce: the adapter closed the channel at `result` (streaming path), and
-    // the SDK closed stdin itself on a string prompt (`isSingleUserTurn`, one-shot path
-    // — "First result received for single-turn query, closing stdin"). The fix removes
-    // both: every run rides the input channel, and the channel outlives a `result` that
-    // still has tracked work in flight.
-    //
-    // BECAUSE THE BUG WAS TIMING-DEPENDENT (~1 run in 2–3), a single green run is weak
-    // evidence. Re-run each cell several times when validating a change here.
-    //
-    // "Inconclusive" means the model dispatched the work but the engine completed it
-    // inside the turn, so the session was never held open and there was no post-`result`
-    // control request to lose. Those runs are skipped, not counted either way.
-    //
-    // See spec/modules/M17-background-tasks.md and spec/adapters/A01-claude-code.md.
-    const WAKE_UP_CONFIGS = [
-      {
-        shape: 'backgrounded bash',
-        promptPath: 'one-shot',
-        streamingInput: false,
-        prompt: BACKGROUND_THEN_QUESTION_PROMPT,
-        systemPrompt: BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
-      },
-      {
-        shape: 'backgrounded bash',
-        promptPath: 'streaming',
-        streamingInput: true,
-        prompt: BACKGROUND_THEN_QUESTION_PROMPT,
-        systemPrompt: BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
-      },
-      {
-        shape: 'subagents',
-        promptPath: 'one-shot',
-        streamingInput: false,
-        prompt: SUBAGENTS_THEN_QUESTION_PROMPT,
-        systemPrompt: SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
-      },
-      {
-        shape: 'subagents',
-        promptPath: 'streaming',
-        streamingInput: true,
-        prompt: SUBAGENTS_THEN_QUESTION_PROMPT,
-        systemPrompt: SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
-      },
-    ] as const;
-
-    // `it.for`, not `it.each`: only `for` passes the TestContext as the second
-    // argument, and this matrix needs `ctx.skip()` to report an inconclusive run as
-    // skipped rather than silently green. Under `each` the context is undefined and
-    // the skip path throws.
-    it.for(WAKE_UP_CONFIGS)(
-      'AskUserQuestion reaches the handler after $shape settle [$promptPath]',
-      async (cfg, ctx) => {
-        const adapter = createAdapter('claude-code');
-        const { events, handlerCalls } = await runUserQuestionScenario(adapter, {
-          prompt: cfg.prompt,
-          systemPrompt: cfg.systemPrompt,
-          model: MODEL,
-          maxTurns: 12,
-          ...(cfg.streamingInput ? { streamingInput: true } : {}),
-          mockAnswer: 'banana',
-        });
-
-        const sequence = events.map((e) => e.type).join(' → ');
-
-        // Precondition 1: the model really did dispatch backgroundable work of the
-        // requested shape. Otherwise the engine has nothing to hold the session for.
-        const dispatched =
-          cfg.shape === 'backgrounded bash'
-            ? events.some(
-                (e) =>
-                  e.type === 'tool_use' &&
-                  e.toolName === 'Bash' &&
-                  /"run_in_background"\s*:\s*true/.test(JSON.stringify(e.input)),
-              )
-            : events.some((e) => e.type === 'subagent_started') ||
-              events.some((e) => e.type === 'tool_use' && /^(Task|Agent)$/.test(e.toolName));
-        expect(
-          dispatched,
-          `model did not dispatch ${cfg.shape} — precondition unmet. Sequence: ${sequence}`,
-        ).toBe(true);
-
-        // Precondition 2 — what actually makes a run meaningful: the engine held the
-        // session open past the turn's `result` and woke the model when the work settled.
-        // The wake-up surfaces as the task_notification projection, now split by
-        // `task_type`: `background_task_completed` for backgrounded shell work,
-        // `subagent_completed` for real subagents (M17/M06). No wake-up ⇒ no
-        // post-`result` control request ⇒ the run proves nothing either way, so report it
-        // as INCONCLUSIVE rather than as a pass or a failure.
-        //
-        // This is what the two `subagents` rows do in practice: the model dispatches
-        // three subagents, but they complete inside the turn, so the session is never
-        // held open. Reproducing the reported shape (three subagents settling AFTER the
-        // turn ends) would need the engine to background them, which these prompts do
-        // not achieve on sonnet-4.6.
-        if (!events.some((e) => e.type === 'subagent_completed' || e.type === 'background_task_completed')) {
-          console.warn(
-            `[INCONCLUSIVE] ${cfg.shape} / ${cfg.promptPath}: no task notification — the ` +
-              `session was never held open past \`result\`. Sequence: ${sequence}`,
-          );
-          ctx.skip();
-          return;
-        }
-
-        // The actual regression: the control transport must still be alive.
-        assertNoStreamClosed(events);
-
-        // M17 routing: backgrounded shell work is not a subagent. This is the half of
-        // the module that removes the "[sub …] ✓ stopped" mislabelling consumers saw
-        // for plain `sleep` commands.
-        if (cfg.shape === 'backgrounded bash') {
-          expect(
-            events.some((e) => e.type === 'background_task_completed'),
-            `a backgrounded shell task must settle on background_task_* (M17), not subagent_*. ` +
-              `Sequence: ${sequence}`,
-          ).toBe(true);
-        }
-        expect(
-          handlerCalls,
-          `onUserInput should fire after ${cfg.shape} settle. Sequence: ${sequence}`,
-        ).toBeGreaterThanOrEqual(1);
-        assertUserInputRequest(events, 'model-tool');
-        expect(events.some((e) => e.type === 'result')).toBe(true);
-
-        // The hold must be SILENT on a run that worked. Only the hard cap warns, and
-        // reaching it here would mean the run was truncated — either mid-turn (the
-        // `Stream closed` defect, re-created by the safety net) or with work still
-        // unsettled. A run that got its answer and reached `result` did neither.
-        // This also pins the regression where the grace window's expiry warned on the
-        // happy path: every task-touching run ended with a false data-loss banner
-        // claiming "Anything the model was told to do after the task did not run".
-        expect(
-          events.filter((e) => e.type === 'warning' && /background work/i.test(e.message)),
-          `a healthy ${cfg.shape} run must end without a hold-bound warning. Sequence: ${sequence}`,
-        ).toEqual([]);
-
-        // The in-flight signal names background work only — never a subagent (M17).
-        for (const r of events.filter((e) => e.type === 'result')) {
-          for (const t of ('backgroundTasks' in r ? (r.backgroundTasks ?? []) : [])) {
-            expect(
-              t.taskType,
-              `result.backgroundTasks must not carry a subagent (got ${t.taskType})`,
-            ).not.toMatch(/agent/i);
-          }
-        }
-      },
-      240_000,
-    );
   });
 
-  // ACCEPTANCE for the two M17 levers that the WAKE_UP_CONFIGS matrix above does not
-  // touch. That matrix documents ONE shape — backgrounded work that later wakes the run
+  // ACCEPTANCE for the `background-tasks` scenario (M17): engine-backgrounded work that
+  // outlives the turn, observed end-to-end over the 2×2 wake-up matrix — {backgrounded
+  // bash, subagents} × {one-shot, streaming}.
+  //
+  // The AskUserQuestion bridge is the VEHICLE, not the subject: a post-`result` control
+  // request is the only way to show from the outside that the channel is still live
+  // across the hold. The two shapes this matrix does not cover — backgrounding turned
+  // off, and work that never wakes anything — live in the M17-levers block below.
+  describe(
+    'background-tasks (wake-up matrix — {backgrounded bash, subagents} × {one-shot, streaming})',
+    () => {
+      // The matrix is also the regression guard for the two defects it originally
+      // reproduced: the background-task control-channel hold (M17) and the peer-SDK
+      // wake-up break.
+      //
+      // Before the fix, measured on sonnet-4.6 (`bash` = a `run_in_background` Bash task):
+      //
+      //   work shape        | prompt path | 0.3.153                  | 0.3.210
+      //   backgrounded bash | one-shot    | FLAKY — Stream closed    | FAIL — wake-up lost
+      //                     |             |   on 1 of 3 runs         |   entirely, no ask
+      //   backgrounded bash | streaming   | FLAKY — Stream closed    | pass (1 run)
+      //                     |             |   on 1 of 2 runs         |
+      //   subagents         | one-shot    | FLAKY — Stream closed    | not run
+      //                     |             |   on 1 run, 1 inconclusive |
+      //   subagents         | streaming   | inconclusive (1 run)     | not run
+      //
+      // The failing shape, verbatim, three times per run — the reported symptom:
+      //
+      //   tool_result isError: "Tool permission request failed: Error: Stream closed"
+      //
+      // Confirmed against the engine's own debug log (`DEBUG_CLAUDE_AGENT_SDK=1`, written
+      // to ~/.claude/debug/latest): the CLI is spawned with `--permission-prompt-tool
+      // stdio`, so permission requests ride stdio; after the turn's `result` the request
+      // cannot be sent and the CLI denies locally in ~4ms —
+      // `executePermissionRequestHooks called for tool: AskUserQuestion` immediately
+      // followed by `AskUserQuestion tool permission denied`, with no host round-trip.
+      // The model then retries twice more and falls back to prose.
+      //
+      // Two closers reached the same `transport.endInput()`, which is why every cell above
+      // could reproduce: the adapter closed the channel at `result` (streaming path), and
+      // the SDK closed stdin itself on a string prompt (`isSingleUserTurn`, one-shot path
+      // — "First result received for single-turn query, closing stdin"). The fix removes
+      // both: every run rides the input channel, and the channel outlives a `result` that
+      // still has tracked work in flight.
+      //
+      // BECAUSE THE BUG WAS TIMING-DEPENDENT (~1 run in 2–3), a single green run is weak
+      // evidence. Re-run each cell several times when validating a change here.
+      //
+      // "Inconclusive" means the model dispatched the work but the engine completed it
+      // inside the turn, so the session was never held open and there was no post-`result`
+      // control request to lose. Those runs are skipped, not counted either way.
+      //
+      // See spec/modules/M17-background-tasks.md and spec/adapters/A01-claude-code.md.
+      const WAKE_UP_CONFIGS = [
+        {
+          shape: 'backgrounded bash',
+          promptPath: 'one-shot',
+          streamingInput: false,
+          prompt: BACKGROUND_THEN_QUESTION_PROMPT,
+          systemPrompt: BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
+        },
+        {
+          shape: 'backgrounded bash',
+          promptPath: 'streaming',
+          streamingInput: true,
+          prompt: BACKGROUND_THEN_QUESTION_PROMPT,
+          systemPrompt: BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT,
+        },
+        {
+          shape: 'subagents',
+          promptPath: 'one-shot',
+          streamingInput: false,
+          prompt: SUBAGENTS_THEN_QUESTION_PROMPT,
+          systemPrompt: SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
+        },
+        {
+          shape: 'subagents',
+          promptPath: 'streaming',
+          streamingInput: true,
+          prompt: SUBAGENTS_THEN_QUESTION_PROMPT,
+          systemPrompt: SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
+        },
+      ] as const;
+
+      // `it.for`, not `it.each`: only `for` passes the TestContext as the second
+      // argument, and this matrix needs `ctx.skip()` to report an inconclusive run as
+      // skipped rather than silently green. Under `each` the context is undefined and
+      // the skip path throws.
+      it.for(WAKE_UP_CONFIGS)(
+        'background-tasks: $shape settles after the turn and the run continues [$promptPath]',
+        async (cfg, ctx) => {
+          const adapter = createAdapter('claude-code');
+          const { events, handlerCalls } = await runUserQuestionScenario(adapter, {
+            prompt: cfg.prompt,
+            systemPrompt: cfg.systemPrompt,
+            model: MODEL,
+            maxTurns: 12,
+            ...(cfg.streamingInput ? { streamingInput: true } : {}),
+            mockAnswer: 'banana',
+          });
+
+          const sequence = events.map((e) => e.type).join(' → ');
+
+          // Precondition 1: the model really did dispatch backgroundable work of the
+          // requested shape. Otherwise the engine has nothing to hold the session for.
+          const dispatched =
+            cfg.shape === 'backgrounded bash'
+              ? events.some(
+                  (e) =>
+                    e.type === 'tool_use' &&
+                    e.toolName === 'Bash' &&
+                    /"run_in_background"\s*:\s*true/.test(JSON.stringify(e.input)),
+                )
+              : events.some((e) => e.type === 'subagent_started') ||
+                events.some((e) => e.type === 'tool_use' && /^(Task|Agent)$/.test(e.toolName));
+          expect(
+            dispatched,
+            `model did not dispatch ${cfg.shape} — precondition unmet. Sequence: ${sequence}`,
+          ).toBe(true);
+
+          // Precondition 2 — what actually makes a run meaningful: the engine held the
+          // session open past the turn's `result` and woke the model when the work settled.
+          // The wake-up surfaces as the task_notification projection, now split by
+          // `task_type`: `background_task_completed` for backgrounded shell work,
+          // `subagent_completed` for real subagents (M17/M06). No wake-up ⇒ no
+          // post-`result` control request ⇒ the run proves nothing either way, so report it
+          // as INCONCLUSIVE rather than as a pass or a failure.
+          //
+          // The settlement's POSITION is the precondition, not its mere presence — a
+          // settlement inside the turn is the same non-event as no settlement at all.
+          //
+          // This is what the two `subagents` rows do in practice, and it is now measured
+          // rather than assumed: on sonnet-4.6 the model dispatches three subagents and all
+          // three `subagent_completed` events land BEFORE the turn's first `result`, so the
+          // work never outlives the turn and the session is never held open. Reproducing
+          // the reported shape (three subagents settling AFTER the turn ends) would need
+          // the engine to background them, which these prompts do not achieve on that
+          // model — so both rows report INCONCLUSIVE and skip. They are not dead: the day
+          // the engine backgrounds a subagent dispatch, they activate on their own.
+          const firstResultIdx = events.findIndex((e) => e.type === 'result');
+          const settledAfterResult =
+            firstResultIdx >= 0 &&
+            events.some(
+              (e, i) =>
+                i > firstResultIdx &&
+                (e.type === 'subagent_completed' || e.type === 'background_task_completed'),
+            );
+          if (!settledAfterResult) {
+            console.warn(
+              `[INCONCLUSIVE] ${cfg.shape} / ${cfg.promptPath}: no task notification after the ` +
+                `turn's first \`result\` — the session was never held open past it. ` +
+                `Sequence: ${sequence}`,
+            );
+            ctx.skip();
+            return;
+          }
+
+          // The scenario's defining property, and the one nothing measured until now: the
+          // first `result` was NOT the end of the run. `result.backgroundTasks` promises
+          // exactly this — a non-empty list means "not end-of-run" — so a stream that
+          // stopped there would break the documented contract while still looking healthy.
+          assertHeldResultContinuation(events);
+
+          // The actual regression: the control transport must still be alive.
+          assertNoStreamClosed(events);
+
+          // M17 routing: backgrounded shell work is not a subagent. This is the half of
+          // the module that removes the "[sub …] ✓ stopped" mislabelling consumers saw
+          // for plain `sleep` commands.
+          if (cfg.shape === 'backgrounded bash') {
+            expect(
+              events.some((e) => e.type === 'background_task_completed'),
+              `a backgrounded shell task must settle on background_task_* (M17), not subagent_*. ` +
+                `Sequence: ${sequence}`,
+            ).toBe(true);
+          }
+          expect(
+            handlerCalls,
+            `onUserInput should fire after ${cfg.shape} settle. Sequence: ${sequence}`,
+          ).toBeGreaterThanOrEqual(1);
+          assertUserInputRequest(events, 'model-tool');
+          expect(events.some((e) => e.type === 'result')).toBe(true);
+
+          // The hold must be SILENT on a run that worked, and there are now two ways for it
+          // not to be — one historical, one live.
+          //
+          // Historical: the grace window's expiry once warned on the happy path, so every
+          // task-touching run ended with a false data-loss banner claiming "Anything the
+          // model was told to do after the task did not run". No `warning` is emitted on
+          // this path at all any more, which makes the check below cheap insurance against
+          // a regression back to a warning rather than the thing that bites today.
+          expect(
+            events.filter((e) => e.type === 'warning' && /background work/i.test(e.message)),
+            `a healthy ${cfg.shape} run must end without a hold-bound warning. Sequence: ${sequence}`,
+          ).toEqual([]);
+
+          // Live: the bound now ENDS the run with a typed terminal error instead
+          // (`AdapterBackgroundHoldExpiredError`, see `assertBackgroundHoldExpired`).
+          // Reaching it here would mean the run was truncated — either mid-turn (the
+          // `Stream closed` defect, re-created by the safety net) or with work still
+          // unsettled. A run that got its answer and reached `result` did neither, so the
+          // cap firing on THIS run is a failure, not a bound doing its job.
+          expect(
+            events
+              .filter((e) => e.type === 'error')
+              .map((e) => e.error.name)
+              .filter((n) => n === 'AdapterBackgroundHoldExpiredError'),
+            `a healthy ${cfg.shape} run must not hit the hold cap. Sequence: ${sequence}`,
+          ).toEqual([]);
+
+          // The in-flight signal names background work only — never a subagent (M17).
+          for (const r of events.filter((e) => e.type === 'result')) {
+            for (const t of ('backgroundTasks' in r ? (r.backgroundTasks ?? []) : [])) {
+              expect(
+                t.taskType,
+                `result.backgroundTasks must not carry a subagent (got ${t.taskType})`,
+              ).not.toMatch(/agent/i);
+            }
+          }
+        },
+        240_000,
+      );
+    },
+  );
+
+  // ACCEPTANCE for the two M17 levers that the `background-tasks` matrix above does not
+  // touch. That scenario documents ONE shape — backgrounded work that later wakes the run
   // while the control channel is held open — and it rides the AskUserQuestion bridge to
   // prove the channel survived. Neither case here goes through that bridge, hence its
   // own block: one turns backgrounding OFF, the other is about work that never wakes
@@ -874,10 +924,10 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
 
     // `ac-the-control-channel-hold-is-bounded-a-ta`.
     //
-    // A backgrounded `sleep 3600` never settles, and while the engine babysits it the
-    // only frames are heartbeats — which deliberately do not re-arm the cap (see
-    // isBackgroundProgress in claude-code.background-hold.ts). So the cap is the only
-    // thing that can end this run.
+    // A backgrounded `sleep 180` outlives every bound this case can observe, and while
+    // the engine babysits it the only frames are heartbeats — which deliberately do not
+    // re-arm the cap (see isBackgroundProgress in claude-code.background-hold.ts). So the
+    // cap is the only thing that can end this run.
     //
     // CAP_MS is chosen against two clocks: comfortably above the option's documented
     // floor (`min: 5000`, src/options.ts) and far below collectEvents()'s 120s default,

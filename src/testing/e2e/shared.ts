@@ -448,6 +448,70 @@ export function assertNoStreamClosed(events: UnifiedEvent[]): void {
 }
 
 /**
+ * Assert that a held `result` was not the end of the run (M17, the `background-tasks`
+ * scenario).
+ *
+ * This is the property that separates "the engine backgrounded the work" from "the
+ * adapter reported the turn and walked away". `result.backgroundTasks` states it as a
+ * contract — "When non-empty, **this `result` is not end-of-run** … Consumers must
+ * iterate `execute()` to `done`" (`src/types.ts`) — and nothing measured it live until
+ * now: the wake-up matrix asserted that a settlement happened and that a `result`
+ * existed, but never that one came after the other.
+ *
+ * The shape it pins, in order:
+ *
+ *   … → result → (background_task_completed | subagent_completed) → … → result → done
+ *
+ * The settlement has to be the COMPLETION event, never the task's `tool_result`: a
+ * backgrounded Bash call gets its `tool_result` straight away (the engine acknowledges
+ * the dispatch, not the work), so asserting on that would pass on a run the engine never
+ * held open at all. The completion arrives on the task channel, after the turn.
+ *
+ * `done` is not an event — it is the generator returning. Reaching this helper is that
+ * proof, since the caller has already drained the stream; what is left to check is that
+ * it ended cleanly rather than on a terminal error.
+ */
+export function assertHeldResultContinuation(events: UnifiedEvent[]): void {
+  const sequence = events.map((e) => e.type).join(' → ');
+  const resultIdx = events.flatMap((e, i) => (e.type === 'result' ? [i] : []));
+
+  expect(
+    resultIdx.length,
+    `expected at least one \`result\`. sequence: ${sequence}`,
+  ).toBeGreaterThanOrEqual(1);
+
+  const first = resultIdx[0]!;
+  expect(
+    first < events.length - 1,
+    `the first \`result\` must not be the last event — the engine held the session open ` +
+      `for background work, so the run continues past it. sequence: ${sequence}`,
+  ).toBe(true);
+
+  const settledIdx = events.findIndex(
+    (e, i) =>
+      i > first && (e.type === 'background_task_completed' || e.type === 'subagent_completed'),
+  );
+  expect(
+    settledIdx,
+    `the wake-up must arrive AFTER the first \`result\`, as a task completion event — a ` +
+      `task's \`tool_result\` acknowledges the dispatch, not the settlement. ` +
+      `sequence: ${sequence}`,
+  ).toBeGreaterThan(first);
+
+  const continuation = resultIdx.find((i) => i > settledIdx);
+  expect(
+    continuation,
+    `the settlement must be followed by a continuation turn and a further \`result\` ` +
+      `before the run ends. sequence: ${sequence}`,
+  ).toBeDefined();
+
+  expect(
+    events[events.length - 1]?.type,
+    `the run must reach \`done\` cleanly, not end on a terminal error. sequence: ${sequence}`,
+  ).not.toBe('error');
+}
+
+/**
  * Assert that a run whose background work never settled was ENDED by the hold cap,
  * and that it said so.
  *
