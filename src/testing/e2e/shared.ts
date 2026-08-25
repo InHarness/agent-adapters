@@ -452,11 +452,23 @@ export function assertNoStreamClosed(events: UnifiedEvent[]): void {
  * scenario).
  *
  * This is the property that separates "the engine backgrounded the work" from "the
- * adapter reported the turn and walked away". `result.backgroundTasks` states it as a
- * contract — "When non-empty, **this `result` is not end-of-run** … Consumers must
- * iterate `execute()` to `done`" (`src/types.ts`) — and nothing measured it live until
- * now: the wake-up matrix asserted that a settlement happened and that a `result`
- * existed, but never that one came after the other.
+ * adapter reported the turn and walked away". Nothing measured it live until now: the
+ * wake-up matrix asserted that a settlement happened and that a `result` existed, but
+ * never that one came after the other.
+ *
+ * Where the promise comes from differs by shape, and only one of the two is a written
+ * contract:
+ *
+ *   - BACKGROUND TASKS — `result.backgroundTasks` states it outright: "When non-empty,
+ *     **this `result` is not end-of-run** … Consumers must iterate `execute()` to
+ *     `done`" (`src/types.ts`). Breaking the shape below breaks that contract.
+ *   - SUBAGENTS — no such field: a subagent is deliberately NEVER listed in
+ *     `result.backgroundTasks` (`src/types.ts`, "**Never a subagent**"). The engine
+ *     backgrounding a subagent dispatch is a shape we have not yet observed, and if it
+ *     ever elects not to resume afterwards, that is the ordinary grace-path ending, not
+ *     a violation. Should a subagent row start reaching this helper and fail here, read
+ *     it as "the contract does not cover this shape yet" and take it to the spec —
+ *     do not treat it as an adapter defect.
  *
  * The shape it pins, in order:
  *
@@ -498,17 +510,20 @@ export function assertHeldResultContinuation(events: UnifiedEvent[]): void {
       `sequence: ${sequence}`,
   ).toBeGreaterThan(first);
 
+  // Ordered before the continuation check on purpose: a run that died on a terminal
+  // error has no continuation `result` either, so the continuation message would fire
+  // first and report a missing wake-up on a run that actually crashed.
+  expect(
+    events[events.length - 1]?.type,
+    `the run must reach \`done\` cleanly, not end on a terminal error. sequence: ${sequence}`,
+  ).not.toBe('error');
+
   const continuation = resultIdx.find((i) => i > settledIdx);
   expect(
     continuation,
     `the settlement must be followed by a continuation turn and a further \`result\` ` +
       `before the run ends. sequence: ${sequence}`,
   ).toBeDefined();
-
-  expect(
-    events[events.length - 1]?.type,
-    `the run must reach \`done\` cleanly, not end on a terminal error. sequence: ${sequence}`,
-  ).not.toBe('error');
 }
 
 /**

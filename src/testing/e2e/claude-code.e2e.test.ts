@@ -766,6 +766,38 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
             return;
           }
 
+          // The hold must be SILENT on a run that worked, and there are now two ways for it
+          // not to be — one historical, one live.
+          //
+          // Historical: the grace window's expiry once warned on the happy path, so every
+          // task-touching run ended with a false data-loss banner claiming "Anything the
+          // model was told to do after the task did not run". No `warning` is emitted on
+          // this path at all any more, which makes the check below cheap insurance against
+          // a regression back to a warning rather than the thing that bites today.
+          expect(
+            events.filter((e) => e.type === 'warning' && /background work/i.test(e.message)),
+            `a healthy ${cfg.shape} run must end without a hold-bound warning. Sequence: ${sequence}`,
+          ).toEqual([]);
+
+          // Live: the bound now ENDS the run with a typed terminal error instead
+          // (`AdapterBackgroundHoldExpiredError`, see `assertBackgroundHoldExpired`).
+          // Reaching it here would mean the run was truncated — either mid-turn (the
+          // `Stream closed` defect, re-created by the safety net) or with work still
+          // unsettled. A run that got its answer and reached `result` did neither, so the
+          // cap firing on THIS run is a failure, not a bound doing its job.
+          //
+          // This has to precede `assertHeldResultContinuation` to say anything: a capped
+          // run is truncated, so it has no continuation `result` either, and the generic
+          // "the settlement must be followed by a continuation turn" would fire first and
+          // bury the specific cause under a symptom.
+          expect(
+            events
+              .filter((e) => e.type === 'error')
+              .map((e) => e.error.name)
+              .filter((n) => n === 'AdapterBackgroundHoldExpiredError'),
+            `a healthy ${cfg.shape} run must not hit the hold cap. Sequence: ${sequence}`,
+          ).toEqual([]);
+
           // The scenario's defining property, and the one nothing measured until now: the
           // first `result` was NOT the end of the run. `result.backgroundTasks` promises
           // exactly this — a non-empty list means "not end-of-run" — so a stream that
@@ -791,33 +823,6 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
           ).toBeGreaterThanOrEqual(1);
           assertUserInputRequest(events, 'model-tool');
           expect(events.some((e) => e.type === 'result')).toBe(true);
-
-          // The hold must be SILENT on a run that worked, and there are now two ways for it
-          // not to be — one historical, one live.
-          //
-          // Historical: the grace window's expiry once warned on the happy path, so every
-          // task-touching run ended with a false data-loss banner claiming "Anything the
-          // model was told to do after the task did not run". No `warning` is emitted on
-          // this path at all any more, which makes the check below cheap insurance against
-          // a regression back to a warning rather than the thing that bites today.
-          expect(
-            events.filter((e) => e.type === 'warning' && /background work/i.test(e.message)),
-            `a healthy ${cfg.shape} run must end without a hold-bound warning. Sequence: ${sequence}`,
-          ).toEqual([]);
-
-          // Live: the bound now ENDS the run with a typed terminal error instead
-          // (`AdapterBackgroundHoldExpiredError`, see `assertBackgroundHoldExpired`).
-          // Reaching it here would mean the run was truncated — either mid-turn (the
-          // `Stream closed` defect, re-created by the safety net) or with work still
-          // unsettled. A run that got its answer and reached `result` did neither, so the
-          // cap firing on THIS run is a failure, not a bound doing its job.
-          expect(
-            events
-              .filter((e) => e.type === 'error')
-              .map((e) => e.error.name)
-              .filter((n) => n === 'AdapterBackgroundHoldExpiredError'),
-            `a healthy ${cfg.shape} run must not hit the hold cap. Sequence: ${sequence}`,
-          ).toEqual([]);
 
           // The in-flight signal names background work only — never a subagent (M17).
           for (const r of events.filter((e) => e.type === 'result')) {
