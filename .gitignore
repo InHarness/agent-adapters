@@ -1,4 +1,5 @@
 node_modules/
+node_modules
 dist/
 *.tsbuildinfo
 .env
@@ -8,7 +9,9 @@ dist/
 .claude/skills/release-process/
 
 # claude4spec (auto-added)
+.claude4spec/mcp.json
 *.deprecated
 # /claude4spec (auto-added)
+
 .DS_Store
 PLAN-*.md
