@@ -356,6 +356,25 @@ export const BACKGROUND_THEN_QUESTION_SYSTEM_PROMPT =
   'a native ask-user / AskUserQuestion / question tool available, you MUST use it instead of ' +
   'guessing.';
 
+// The subagent variant of the same shape. The reported failure log showed THREE
+// concurrent subagents settling immediately before the ask, which is a different
+// engine path from a backgrounded Bash task: `task_type` is a subagent rather than a
+// shell, and several notifications land at once.
+export const SUBAGENTS_THEN_QUESTION_PROMPT =
+  'Follow these steps exactly. Step 1: spawn three subagents in parallel, one per item, each ' +
+  'asked to reply with just one word: the first with "alpha", the second with "beta", the third ' +
+  'with "gamma". Step 2: immediately end your turn with a single short sentence saying you ' +
+  'dispatched them. Do NOT wait for them and do NOT summarise their answers yet — stop your turn ' +
+  'while they are still running. Step 3: later, when the subagents have reported back, you MUST ' +
+  'then use your ask-user question tool to ask the user to pick exactly one fruit from this list: ' +
+  'apple, banana, cherry. Do not guess. After the user answers, reply with exactly one word — the ' +
+  'chosen fruit.';
+export const SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT =
+  'You delegate independent work to subagents with the Task tool and let them run in the ' +
+  'background — you end your turn immediately instead of blocking, and you will be notified when ' +
+  'they finish. When you need a decision from the user and you have a native ask-user / ' +
+  'AskUserQuestion / question tool available, you MUST use it instead of guessing.';
+
 // --- Background-task levers (M17) — the two shapes the routing/hold cases need ---
 //
 // Both prompts are deliberately blunt about `run_in_background: true`: each case is
@@ -376,14 +395,24 @@ export const BACKGROUND_BASH_SYSTEM_PROMPT =
   'You run shell commands with the Bash tool. When asked to run something in the ' +
   'background, you pass run_in_background: true. Be concise.';
 
-// Hold-cap case. `sleep 3600` is the shape the cap exists for: it never settles, and
-// while the engine babysits it it emits only heartbeats (`system/status`,
-// `system/background_tasks_changed`) — which deliberately do NOT re-arm the cap. The
-// same "do not wait, do not poll" instruction as BACKGROUND_THEN_QUESTION_PROMPT, and
+// Hold-cap case — the shape the cap exists for: work that does not settle, while the
+// engine emits only heartbeats (`system/status`, `system/background_tasks_changed`)
+// which deliberately do NOT re-arm the cap.
+//
+// The canonical example in M17 and in the adapter's own notes is `sleep 3600`, and
+// the duration is what makes it canonical: nothing about the run can outlast it. But
+// the cap ABANDONS the task on expiry ("any remaining background task is abandoned",
+// AdapterBackgroundHoldExpiredError) rather than reaping it, so an hour is an hour of
+// orphan on whatever machine ran the suite if the CLI ever fails to clean up after
+// itself. `sleep 180` is chosen to keep the property exact — it outlives the 8s cap
+// AND `collectEvents()`'s 120s budget by a wide margin, so it cannot settle inside any
+// bound this test can observe — while capping the worst-case litter at three minutes.
+//
+// Same "do not wait, do not poll" instruction as BACKGROUND_THEN_QUESTION_PROMPT, and
 // for the same reason: a model that polls inside the turn never leaves the session
 // parked, so no bound is ever under test.
 export const NEVER_SETTLING_BACKGROUND_PROMPT =
-  'Follow these steps exactly. Step 1: use the Bash tool to run `sleep 3600` with the ' +
+  'Follow these steps exactly. Step 1: use the Bash tool to run `sleep 180` with the ' +
   'run_in_background parameter set to true. Step 2: immediately end your turn with a ' +
   'single short sentence saying you started it. Do NOT wait for it, do NOT call ' +
   'BashOutput, and do NOT poll it — stop your turn while it is still running.';
@@ -391,25 +420,6 @@ export const NEVER_SETTLING_BACKGROUND_SYSTEM_PROMPT =
   'You start long shell commands in the background with the Bash tool ' +
   '(run_in_background: true) and you end your turn immediately instead of blocking or ' +
   'polling — you will be notified when the task completes and can continue then.';
-
-// The subagent variant of the same shape. The reported failure log showed THREE
-// concurrent subagents settling immediately before the ask, which is a different
-// engine path from a backgrounded Bash task: `task_type` is a subagent rather than a
-// shell, and several notifications land at once.
-export const SUBAGENTS_THEN_QUESTION_PROMPT =
-  'Follow these steps exactly. Step 1: spawn three subagents in parallel, one per item, each ' +
-  'asked to reply with just one word: the first with "alpha", the second with "beta", the third ' +
-  'with "gamma". Step 2: immediately end your turn with a single short sentence saying you ' +
-  'dispatched them. Do NOT wait for them and do NOT summarise their answers yet — stop your turn ' +
-  'while they are still running. Step 3: later, when the subagents have reported back, you MUST ' +
-  'then use your ask-user question tool to ask the user to pick exactly one fruit from this list: ' +
-  'apple, banana, cherry. Do not guess. After the user answers, reply with exactly one word — the ' +
-  'chosen fruit.';
-export const SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT =
-  'You delegate independent work to subagents with the Task tool and let them run in the ' +
-  'background — you end your turn immediately instead of blocking, and you will be notified when ' +
-  'they finish. When you need a decision from the user and you have a native ask-user / ' +
-  'AskUserQuestion / question tool available, you MUST use it instead of guessing.';
 
 /**
  * Fail if any event carries the engine's closed-control-transport error.
@@ -449,7 +459,7 @@ export function assertNoStreamClosed(events: UnifiedEvent[]): void {
  *    below that, or the harness times out before the bound can be observed.
  *  - it ended LOUDLY, naming the bound it hit. A run that just stopped, as if the
  *    backgrounded task had completed, is the failure this pins: the consumer would
- *    have no way to tell an abandoned `sleep 3600` from a finished one.
+ *    have no way to tell an abandoned `sleep` from a finished one.
  *
  * It is an `error`, NOT a warning — see `AdapterBackgroundHoldExpiredError` in
  * `src/types.ts` for why the terminal-error shape replaced the earlier warning: the

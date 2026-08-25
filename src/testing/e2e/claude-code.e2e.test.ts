@@ -848,6 +848,28 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
         `the run must still complete — the hook denies backgrounding, not the command. ` +
           `Sequence: ${sequence}`,
       ).toBe(true);
+
+      // ...and the command actually RAN, synchronously. Without this the case can go
+      // vacuously green: every assertion above is an absence, so a deny the model
+      // cannot act on — `continue: false`, or a reason that stops telling it to re-run
+      // without the flag — would end in prose, emit no background events, still reach
+      // `result`, and pass. The marker is the positive half of the contract.
+      const marker = 'e2e-background-marker';
+      const synchronousRetry = events.some(
+        (e) =>
+          e.type === 'tool_use' &&
+          e.toolName === 'Bash' &&
+          !/"run_in_background"\s*:\s*true/.test(JSON.stringify(e.input)) &&
+          JSON.stringify(e.input).includes(marker),
+      );
+      const reported = events.some(
+        (e) => e.type === 'assistant_message' && JSON.stringify(e.message.content).includes(marker),
+      );
+      expect(
+        synchronousRetry || reported,
+        `the denied command must be re-run without run_in_background and its output ` +
+          `reported — the hook's reason says so. Sequence: ${sequence}`,
+      ).toBe(true);
     }, 180_000);
 
     // `ac-the-control-channel-hold-is-bounded-a-ta`.
@@ -898,7 +920,14 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       }
 
       assertBackgroundHoldExpired(events, CAP_MS);
-    }, 120_000);
+      // DELIBERATELY ABOVE `collectEvents()`'s own 120s default (src/utils.ts). The two
+      // clocks race and vitest's starts earlier — at the test, before the CLI is even
+      // spawned — so an equal budget would always be the one to fire, replacing the
+      // helper's diagnosis with an opaque `Test timed out`. Worse, vitest's timeout does
+      // not abort the stream, so the run would be left going. The regression this case
+      // guards (a heartbeat re-arming the cap) is exactly the one that would hang, so
+      // the harness must be the thing that reports it.
+    }, 180_000);
   });
 
   describe('todo list (TodoWrite → todoList projection)', () => {
