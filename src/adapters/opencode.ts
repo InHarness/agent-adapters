@@ -26,6 +26,13 @@ import { checkPeerSdkVersion } from '../sdk-version.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 import { createImageWorkspace, inferMediaType, type ImageWorkspace } from '../images-tempdir.js';
 import { probePathScope } from '../path-scope.js';
+import {
+  checkToolPolicy,
+  resolveDeniedGroups,
+  isPorousCombination,
+  porousCombinationWarning,
+} from '../tool-groups.js';
+import type { ToolGroup } from '../tool-groups.js';
 import { execSync } from 'node:child_process';
 import { basename, isAbsolute, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -85,6 +92,56 @@ function getAvailablePort(): number {
 
 // --- Adapter ---
 
+// --- Built-in tool gating (M18) ---
+//
+// OpenCode is the strongest of the four adapters here: `permission` buckets are
+// evaluated SERVER-SIDE, so a denied tool is refused before it executes rather
+// than merely hidden from the model. The adapter therefore stops asserting a
+// blanket allow and derives the buckets from the run's deny-groups, defaulting
+// the remainder through the '*' wildcard.
+//
+// BUCKET NAMES ARE VERIFIED AGAINST THE RUNNING SERVER, and that verification is
+// load-bearing: the server's permission schema ends in a catch-all, so an
+// unknown or mistyped bucket is ACCEPTED AND SILENTLY IGNORED with no validation
+// error. A typo here would not fail — it would quietly enforce nothing. The SDK
+// does not bundle the server, so the peer pin, the resolved SDK and the
+// installed binary can be three different versions; `hard` strength may only be
+// claimed for buckets confirmed against the binary actually running. The names
+// below are confirmed against opencode 1.4.6, whose own read-only agent preset
+// is `{"*":"deny", grep, glob, list, bash, webfetch, websearch, codesearch,
+// read, external_directory}`.
+//
+// Note the SDK's TypeScript type for `permission` admits only a subset of these
+// (edit / bash / webfetch / doom_loop / external_directory), so the derived map
+// is cast on the way out. That gap between the typed surface and the server's
+// real vocabulary IS the escape surface described above.
+const OPENCODE_PERMISSION_BUCKETS: Record<ToolGroup, string[]> = {
+  shell: ['bash'],
+  // The DELEGATION bucket is deliberately part of file-read: without it a
+  // subagent launders exactly the reads the parent just denied.
+  'file-read': ['read', 'list', 'grep', 'glob', 'codesearch', 'task'],
+  'file-write': ['edit', 'write', 'patch'],
+  web: ['webfetch', 'websearch'],
+};
+
+/**
+ * Derive the server-side permission map for a run.
+ *
+ * Returns the pre-M18 blanket allow when nothing is denied, so an ungated run is
+ * byte-for-byte what it was before. Otherwise: `'*': 'allow'` as the default,
+ * with every bucket of every denied group set to `'deny'`.
+ */
+export function buildOpencodePermissions(
+  deniedGroups: readonly ToolGroup[],
+): Record<string, string> {
+  if (deniedGroups.length === 0) return { edit: 'allow', bash: 'allow' };
+  const permission: Record<string, string> = { '*': 'allow' };
+  for (const group of deniedGroups) {
+    for (const bucket of OPENCODE_PERMISSION_BUCKETS[group]) permission[bucket] = 'deny';
+  }
+  return permission;
+}
+
 export class OpencodeAdapter implements RuntimeAdapter {
   architecture = 'opencode' as const;
   private abortController: AbortController | null = null;
@@ -113,8 +170,29 @@ export class OpencodeAdapter implements RuntimeAdapter {
       return;
     }
 
-    if (params.planMode) {
-      console.warn('[agent-adapters] opencode: planMode not natively supported — ignored');
+    // Built-in tool gating (M18). Plan mode is no longer a logged no-op here: it
+    // desugars into deny-groups and is now genuinely enforced server-side.
+    const policyError = checkToolPolicy(this.architecture, params);
+    if (policyError) {
+      yield { type: 'error', error: policyError, phase: 'init' };
+      return;
+    }
+    const { groups: deniedGroups } = resolveDeniedGroups(params);
+
+    if (isPorousCombination(deniedGroups)) {
+      yield { type: 'warning', message: porousCombinationWarning(this.architecture, deniedGroups) };
+    }
+
+    // OpenCode's permission buckets are ask/allow/deny for a whole tool class —
+    // there is no per-tool-NAME auto-approval primitive to map this onto.
+    if (params.autoApproveTools?.length) {
+      yield {
+        type: 'warning',
+        message:
+          'opencode adapter: autoApproveTools is not supported — OpenCode permissions are per tool ' +
+          'CLASS (bucket), not per tool name. The field is ignored; it only ever auto-approved, so ' +
+          'nothing is left unrestricted by dropping it.',
+      };
     }
 
     // OpenCode has a native markdown-based agent concept, but the SDK exposes no
@@ -250,7 +328,9 @@ export class OpencodeAdapter implements RuntimeAdapter {
             model: modelString,
             temperature: config.opencode_temperature as number | undefined,
             top_p: config.opencode_topP as number | undefined,
-            permission: { edit: 'allow', bash: 'allow' },
+            // Cast: the SDK's typed `permission` shape admits only a subset of
+            // the buckets the server actually consumes (see the table above).
+            permission: buildOpencodePermissions(deniedGroups) as Record<string, 'ask' | 'allow' | 'deny'>,
           },
         },
       };

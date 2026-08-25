@@ -31,6 +31,12 @@ import { subtractUsage } from '../usage.js';
 import { materializeSkills, type MaterializedSkills, type MirroredSkills } from '../skills-tempdir.js';
 import { createImageWorkspace, type ImageWorkspace } from '../images-tempdir.js';
 import { probePathScope } from '../path-scope.js';
+import {
+  checkToolPolicy,
+  resolveDeniedGroups,
+  isPorousCombination,
+  porousCombinationWarning,
+} from '../tool-groups.js';
 
 /**
  * Build the Codex `Input`. With no images this is just the prompt string (the
@@ -142,6 +148,24 @@ export class CodexAdapter implements RuntimeAdapter {
     // no subagent concept. See .claude/skills/codex-sdk/SKILL.md:73.
     this.abortController = new AbortController();
 
+    // Built-in tool gating (M18) — the pre-dispatch gate, before anything
+    // touches the SDK. Codex is the fail-closed exception to this adapter's
+    // usual warn-and-degrade posture: `ThreadOptions` has no shell toggle and
+    // no per-tool primitive, and the permission-profile family that could
+    // express read-denial is incompatible with the sandbox posture and
+    // unreachable through config passthrough (nested keys are flattened into
+    // dotted paths by raw concatenation without quoting). So `shell` and
+    // `file-read` REFUSE the run rather than run with a hole in the policy —
+    // and `planMode: true`, which desugars into ['file-write','shell'],
+    // therefore refuses here too instead of silently delivering a read-only
+    // sandbox with a live shell.
+    const policyError = checkToolPolicy('codex', params);
+    if (policyError) {
+      yield { type: 'error', error: policyError, phase: 'init' };
+      return;
+    }
+    const { groups: deniedGroups } = resolveDeniedGroups(params);
+
     // Merge provider-resolved config with user-supplied config
     const config = { ...this._providerConfig, ...params.architectureConfig };
 
@@ -175,9 +199,18 @@ export class CodexAdapter implements RuntimeAdapter {
       };
     }
 
-    const sandboxMode = params.planMode
-      ? 'read-only'
-      : ((config.codex_sandboxMode as string) ?? 'workspace-write');
+    // Three inputs land on this ONE field, so it is computed once and assigned
+    // once — never assigned twice and then overwritten. They compose by
+    // NARROWEST WINS: the M18 `file-write` deny (or a consumer's explicit
+    // 'read-only') beats the default 'workspace-write'. `planMode` is no longer
+    // read here at all; it desugars into deny-groups upstream, which is what
+    // `deniedGroups` already carries.
+    //
+    // 'read-only' is an OS sandbox posture, so it is HARD but COARSE: it blocks
+    // writes even from the shell, but reads and the shell itself stay live.
+    // That coarseness is what the porous-combination warning below announces.
+    const requestedSandbox = (config.codex_sandboxMode as string) ?? 'workspace-write';
+    const sandboxMode = deniedGroups.includes('file-write') ? 'read-only' : requestedSandbox;
 
     const codexOptions: Record<string, unknown> = {};
     if (apiKey) {
@@ -239,6 +272,31 @@ export class CodexAdapter implements RuntimeAdapter {
       };
     }
 
+    // `web` maps onto the SDK's web-search toggle. Both keys are set: the mode
+    // is the current control and the boolean is the older one, and a run must
+    // not depend on which of the two the resolved CLI honours.
+    const webDenied = deniedGroups.includes('web');
+
+    // Denying reads or writes while the shell stays live is not a filesystem
+    // boundary. On codex a `file-write` deny is an OS posture rather than a
+    // tool gate, but the shell is still there and the statement still holds.
+    if (isPorousCombination(deniedGroups)) {
+      yield { type: 'warning', message: porousCombinationWarning('codex', deniedGroups) };
+    }
+
+    // Codex has no auto-approval primitive (`approvalPolicy` is whole-run and
+    // pinned to 'never'), so the field cannot be honoured — say so once rather
+    // than ignoring it in silence.
+    if (params.autoApproveTools?.length) {
+      yield {
+        type: 'warning',
+        message:
+          'codex adapter: autoApproveTools is not supported — the Codex SDK has no per-tool ' +
+          'auto-approval primitive (approvalPolicy is whole-run). The field is ignored; note it ' +
+          'only ever auto-approved, so nothing is left unrestricted by dropping it.',
+      };
+    }
+
     // Materialize inline skills BEFORE thread start so codex CLI's first scan
     // of <cwd>/.agents/skills/ picks them up. The Codex SDK has no programmatic
     // skills API; we mirror under uuid-prefixed dirs and remove only what we
@@ -266,6 +324,7 @@ export class CodexAdapter implements RuntimeAdapter {
         | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
         | undefined,
       ...(additionalDirectories.length ? { additionalDirectories } : {}),
+      ...(webDenied ? { webSearchMode: 'disabled' as const, webSearchEnabled: false } : {}),
     };
 
     yield {

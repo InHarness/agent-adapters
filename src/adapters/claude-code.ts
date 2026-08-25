@@ -42,6 +42,13 @@ import { ensureUsableStdin } from '../stdin-guard.js';
 import { validateSubagents } from '../subagents.js';
 import { probePathScope, getClaudeSandboxConfig } from '../path-scope.js';
 import {
+  checkToolPolicy,
+  resolveDeniedGroups,
+  isPorousCombination,
+  porousCombinationWarning,
+} from '../tool-groups.js';
+import type { ToolGroup } from '../tool-groups.js';
+import {
   createTaskRegistry,
   createBackgroundHold,
   projectBackgroundTasks,
@@ -61,28 +68,40 @@ export type {
   McpServerInstance,
 } from '../mcp.js';
 
-// --- Plan-mode tool filters ---
+// --- Built-in tool gating (M18) ---
 //
-// planMode: true maps to a restricted-visibility config (Option B per the
-// claude-code-sdk skill's "Permission model & read-only agents" section),
-// NOT to SDK's permissionMode: 'plan' (which would also block the MCP tools
-// a consumer deliberately wired up in params.mcpServers).
+// The consumer declares deny-GROUPS; this table is the only place claude-code's
+// SDK tool identifiers are mapped onto them. Groups are engine-neutral, the
+// identifiers are not — the mapping always runs group → identifiers, never the
+// reverse.
 //
-// The adapter hides mutating built-ins from the model's catalog via
-// `tools` + `disallowedTools`, and leaves MCP servers (consumer-curated) free
-// to execute under permissionMode: 'bypassPermissions'.
+// DENY-SHAPED OUTSIDE, ALLOW-SHAPED INSIDE. The adapter derives a RESIDUAL
+// ALLOW-LIST on `options.tools` from the non-denied groups and sets
+// `options.disallowedTools` only as a backstop. That ordering matters: a bare
+// deny enumeration is fail-OPEN on the next built-in Anthropic ships, whereas an
+// allow-list blocks a tool this library has never heard of. This is the M18
+// residual-allow-list invariant, and it is asserted on the shape handed to the
+// SDK, not merely on today's tool set.
 //
-// When the SDK gains per-MCP-tool filtering at the options level, revisit —
-// see the TODO in .claude/skills/claude-code-sdk/SKILL.md.
-// Task-tracking tool family: TodoWrite (legacy, full-list-replace) plus the
-// per-item CRUD tools newer Claude models ship instead (accumulated into a
-// running snapshot — see mergeTaskToolInputIntoSnapshot below). Shared by the
-// plan-mode allowlist and the assistant-message projection matcher so the two
-// can never drift apart on a future rename — the same discipline already
-// applied to the Task → Agent rename below. TaskCreate/TaskGet/TaskUpdate/
-// TaskList are confirmed real tools with a fully-specified schema in
-// `@anthropic-ai/claude-agent-sdk`'s `sdk-tools.d.ts` (TaskCreateInput etc.) —
-// this is not speculative.
+// The deny rides `options.tools` + `options.disallowedTools` and NEVER the
+// `settings.permissions.allow`/`deny` surface, because that surface is shared
+// with M15 soft path-scope and with `autoApproveTools` and could therefore be
+// re-widened by them. SDK `permissionMode: 'plan'` is still avoided for the
+// original reason: it would also defer consumer-curated MCP tools, which M18
+// explicitly does not gate.
+//
+// Every group here is 'soft' — this removes tools from the model's catalog,
+// which is a model-behaviour gate, not a sandbox. See src/tool-groups.ts.
+
+/** Task-tracking tool family: TodoWrite (legacy, full-list-replace) plus the
+ *  per-item CRUD tools newer Claude models ship instead (accumulated into a
+ *  running snapshot — see mergeTaskToolInputIntoSnapshot below). Shared by the
+ *  residual allow-list and the assistant-message projection matcher so the two
+ *  can never drift apart on a future rename — the same discipline applied to the
+ *  Task → Agent rename below. TaskCreate/TaskGet/TaskUpdate/TaskList are
+ *  confirmed real tools with a fully-specified schema in
+ *  `@anthropic-ai/claude-agent-sdk`'s `sdk-tools.d.ts` (TaskCreateInput etc.) —
+ *  this is not speculative. */
 export const CLAUDE_CODE_TASK_TRACKING_TOOLS: string[] = [
   'TodoWrite',
   'TaskCreate',
@@ -91,44 +110,112 @@ export const CLAUDE_CODE_TASK_TRACKING_TOOLS: string[] = [
   'TaskList',
 ];
 
-export const CLAUDE_CODE_READONLY_BUILTINS: string[] = [
-  'Read',
-  'Grep',
-  'Glob',
-  'WebFetch',
-  'WebSearch',
+/**
+ * Built-ins belonging to each gated group. Renamed/relocated built-ins list
+ * EVERY spelling: a deny that names only one of two live aliases silently fails
+ * to fire, and on the allow-list side an unlisted alias silently disappears.
+ */
+export const CLAUDE_CODE_TOOL_GROUPS: Record<ToolGroup, string[]> = {
+  // A background-process inspection tool IS shell — it reads the output of an
+  // OS command. `KillBash` was renamed `KillShell`; both are named.
+  shell: ['Bash', 'BashOutput', 'KillBash', 'KillShell'],
+  'file-read': ['Read', 'Grep', 'Glob', 'NotebookRead'],
+  // `save_memory`-equivalent persistence counts as a write.
+  'file-write': ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'],
+  web: ['WebFetch', 'WebSearch'],
+};
+
+/**
+ * Built-ins that belong to no gated group and stay available whatever is denied:
+ * task tracking, tool discovery, asking the user, and delegation.
+ *
+ * `Skill` is NOT here — it is conditional. A skill routinely instructs the model
+ * to run shell commands, so leaving the tool available under a `shell` deny
+ * reopens the group through the front door; it is dropped in that one case and
+ * kept otherwise (without it, inline skills materialized as a local plugin can
+ * never be opened — the SDK reports "No such tool available: Skill").
+ *
+ * `Task`/`Agent`: the tool was renamed Task→Agent (Claude Code v2.1.63); the SDK
+ * emits 'Agent' in tool_use blocks but the system:init tools list still uses
+ * 'Task', so both names must be present to expose it across SDK versions.
+ * Delegation stays available under a deny because the run's denies are
+ * propagated into every subagent definition (see buildSubagentTools below) —
+ * without that propagation "deny the shell" would mean "deny the shell until the
+ * model delegates".
+ *
+ * `ToolSearch` is presumed to be the discovery gate future models will use to
+ * find deferred built-ins, including the TaskCreate/TaskUpdate family. It does
+ * not appear anywhere in the pinned SDK today — this entry is precautionary.
+ * Whitelisting a tool name the SDK doesn't recognize is harmless.
+ */
+export const CLAUDE_CODE_UNGATED_BUILTINS: string[] = [
   ...CLAUDE_CODE_TASK_TRACKING_TOOLS,
-  // ToolSearch is presumed to be the discovery gate future models will use to
-  // find deferred built-ins, including the TaskCreate/TaskUpdate family above.
-  // Unlike those Task* names (confirmed in sdk-tools.d.ts, see above),
-  // ToolSearch does not appear anywhere in the pinned SDK
-  // (@anthropic-ai/claude-agent-sdk) today — this entry is precautionary and
-  // unverified. Whitelisting a tool name the SDK doesn't recognize is
-  // harmless, so keeping it costs nothing while guarding against the case
-  // where it does ship and gates those tools' discoverability in plan mode.
   'ToolSearch',
   'AskUserQuestion',
-  // Skill only loads a skill's body into context (read-only). Without it on the
-  // plan-mode whitelist, inline skills materialized as a local plugin can never
-  // be opened — the SDK reports "No such tool available: Skill". Any mutating
-  // action a skill suggests is still gated by CLAUDE_CODE_MUTATING_BUILTINS.
-  'Skill',
-  // Subagent spawning is allowed in plan mode (read-only research, exploration).
-  // We do NOT enforce read-only INSIDE a spawned subagent — a subagent doesn't
-  // inherit the parent's disallowedTools, so a built-in general-purpose subagent
-  // can still mutate. This matches native Claude Code plan-mode behaviour.
-  // The tool was renamed Task→Agent (Claude Code v2.1.63): the SDK emits 'Agent'
-  // in tool_use blocks but the system:init tools list still uses 'Task', so both
-  // names must be whitelisted to expose it across SDK versions.
   'Task',
   'Agent',
 ];
-export const CLAUDE_CODE_MUTATING_BUILTINS: string[] = [
-  'Bash',
-  'Edit',
-  'Write',
-  'NotebookEdit',
-];
+
+/** Every built-in this library knows about. */
+export function claudeCodeKnownBuiltins(): string[] {
+  return [
+    ...CLAUDE_CODE_UNGATED_BUILTINS,
+    'Skill',
+    ...Object.values(CLAUDE_CODE_TOOL_GROUPS).flat(),
+  ];
+}
+
+/**
+ * The residual allow-list + its deny backstop for a set of denied groups.
+ *
+ * Returns `undefined` when nothing is denied — the caller must then leave
+ * `options.tools`/`options.disallowedTools` unset entirely, so a run with no
+ * gating is byte-for-byte identical to the pre-M18 behaviour.
+ */
+export function buildClaudeCodeToolPolicy(
+  deniedGroups: readonly ToolGroup[],
+): { allow: string[]; deny: string[] } | undefined {
+  if (deniedGroups.length === 0) return undefined;
+  const denied = new Set(deniedGroups);
+
+  const deny = deniedGroups.flatMap((g) => CLAUDE_CODE_TOOL_GROUPS[g]);
+  const allow = [
+    ...CLAUDE_CODE_UNGATED_BUILTINS,
+    // A skill is a shell-shaped instruction channel; suppress it with the shell.
+    ...(denied.has('shell') ? [] : ['Skill']),
+    ...(Object.keys(CLAUDE_CODE_TOOL_GROUPS) as ToolGroup[])
+      .filter((g) => !denied.has(g))
+      .flatMap((g) => CLAUDE_CODE_TOOL_GROUPS[g]),
+  ];
+  return { allow, deny };
+}
+
+/**
+ * Intersect one subagent definition's toolset with the run's effective policy.
+ *
+ * `tools` (the definition's own allow-list) is narrowed to what the run still
+ * permits; when the definition names none, it inherits the run's residual
+ * allow-list rather than the SDK's full default. `disallowedTools` unions the
+ * run's denied built-ins on top of the definition's own, as a backstop matching
+ * the parent run's shape.
+ *
+ * Returns the definition's fields unchanged when the run denies nothing.
+ */
+export function subagentToolPolicy(
+  agent: { tools?: string[]; disallowedTools?: string[] },
+  toolPolicy: { allow: string[]; deny: string[] } | undefined,
+): { tools?: string[]; disallowedTools?: string[] } {
+  if (!toolPolicy) {
+    return {
+      ...(agent.tools ? { tools: agent.tools } : {}),
+      ...(agent.disallowedTools ? { disallowedTools: agent.disallowedTools } : {}),
+    };
+  }
+  const allowed = new Set(toolPolicy.allow);
+  const tools = agent.tools ? agent.tools.filter((t) => allowed.has(t)) : toolPolicy.allow;
+  const disallowedTools = [...new Set([...(agent.disallowedTools ?? []), ...toolPolicy.deny])];
+  return { tools, disallowedTools };
+}
 
 // --- Debug logging ---
 
@@ -670,6 +757,26 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
   }
 
   private async *runSession(params: RuntimeExecuteParams, run: RunContext): AsyncIterable<UnifiedEvent> {
+    // Built-in tool gating (M18) — the pre-dispatch gate. Runs before model
+    // resolution and before anything touches the SDK: fail-closed means nothing
+    // is dispatched, not that the run is torn down after starting. Delivered as
+    // an `error` event, never a throw (M01/M13: the iterator never throws).
+    const policyError = checkToolPolicy(this.architecture, params);
+    if (policyError) {
+      this.forgetRun(run);
+      yield { type: 'error', error: policyError, phase: 'init' };
+      return;
+    }
+    const { groups: deniedGroups } = resolveDeniedGroups(params);
+    const toolPolicy = buildClaudeCodeToolPolicy(deniedGroups);
+    const shellDenied = deniedGroups.includes('shell');
+
+    // Denying reads or writes while the shell stays live is not a filesystem
+    // boundary — say so once, and let the run proceed.
+    if (isPorousCombination(deniedGroups)) {
+      yield { type: 'warning', message: porousCombinationWarning(this.architecture, deniedGroups) };
+    }
+
     let resolvedModel: string;
     try {
       resolvedModel = resolveModel(this.architecture, params.model);
@@ -697,26 +804,36 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       model: resolvedModel,
       systemPrompt: params.systemPrompt,
       maxTurns: params.maxTurns,
-      // planMode: true → hide mutating built-ins, leave MCP untouched (see
-      // CLAUDE_CODE_READONLY_BUILTINS above). We deliberately do NOT set
-      // permissionMode: 'plan' because it would also block consumer-curated
-      // MCP tools, contradicting the RuntimeExecuteParams.planMode contract.
+      // We deliberately do NOT set permissionMode: 'plan' — it would also block
+      // consumer-curated MCP tools, which M18 explicitly does not gate. Tool
+      // gating rides `tools`/`disallowedTools` instead (see below).
       permissionMode: softScope ? 'dontAsk' : 'bypassPermissions',
       ...(softScope ? {} : { allowDangerouslySkipPermissions: true }),
       cwd: params.cwd ?? process.cwd(),
       includePartialMessages: true,
     };
 
-    if (params.planMode) {
-      options.tools = CLAUDE_CODE_READONLY_BUILTINS;
-      options.disallowedTools = CLAUDE_CODE_MUTATING_BUILTINS;
+    // Built-in tool gating (M18). `toolPolicy` is undefined when nothing is
+    // denied, and both fields are then left unset so the run is byte-for-byte
+    // what it was before this feature existed.
+    if (toolPolicy) {
+      options.tools = toolPolicy.allow;
+      options.disallowedTools = toolPolicy.deny;
     }
 
     // Programmatically-defined subagents → SDK Options.agents (Record<name, AgentDefinition>).
-    // The Agent/Task tool is already whitelisted (incl. plan mode), so defined
-    // agents are invocable without further tool wiring. The subagent `model` is
-    // passed through verbatim — the SDK resolves aliases ('sonnet'/'opus'/...) —
-    // so unified model IDs are NOT re-resolved here.
+    // The Agent/Task tool stays available under a deny, so defined agents are
+    // invocable without further tool wiring. The subagent `model` is passed
+    // through verbatim — the SDK resolves aliases ('sonnet'/'opus'/...) — so
+    // unified model IDs are NOT re-resolved here.
+    //
+    // M18 PROPAGATION IS MANDATORY. A subagent does not natively inherit the
+    // parent's denies, so without this "deny the shell" would mean "deny the
+    // shell until the model delegates". A definition may narrow its own toolset
+    // but may never widen past the run's effective policy — the intersection
+    // wins, SILENTLY: a definition naming a tool from a denied group is not an
+    // error and does not fail the run, including definitions authored before
+    // tool gating existed.
     if (params.subagents?.length) {
       validateSubagents(params.subagents);
       options.agents = Object.fromEntries(
@@ -725,8 +842,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           {
             description: a.description,
             prompt: a.prompt,
-            ...(a.tools ? { tools: a.tools } : {}),
-            ...(a.disallowedTools ? { disallowedTools: a.disallowedTools } : {}),
+            ...subagentToolPolicy(a, toolPolicy),
             ...(a.model ? { model: a.model } : {}),
             ...(a.skills ? { skills: a.skills } : {}),
             ...(a.maxTurns != null ? { maxTurns: a.maxTurns } : {}),
@@ -816,9 +932,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       (options as Record<string, unknown>).mcpServers = sdkServers;
     }
 
-    // Allowed tools
-    if (params.allowedTools) {
-      options.allowedTools = params.allowedTools;
+    // Auto-approval. A deny always outranks it: a tool in a denied group stays
+    // denied even when the consumer named it here, so denied names are stripped
+    // rather than passed through to the SDK's permission allow-list.
+    if (params.autoApproveTools?.length) {
+      const denied = new Set(toolPolicy?.deny ?? []);
+      options.allowedTools = params.autoApproveTools.filter((t) => !denied.has(t));
     }
 
     // Session resumption
@@ -848,10 +967,27 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // Soft gate only. Under the hard OS sandbox (below) the kernel enforces, so we
       // leave that path untouched rather than layering model-visible rules onto it.
       if (softScope) {
-        const fsRules = (p: string) => [`Read(${p}/**)`, `Edit(${p}/**)`, `Write(${p}/**)`];
+        // The M18 deny is applied LAST on this shared rule surface and is never
+        // re-widened by a path-scope allow rule: a tool in a denied group gets
+        // no allow rule generated for it at all. (`options.disallowedTools`
+        // already removes it from the catalog; this keeps the two surfaces from
+        // contradicting each other, which is exactly why the deny does not ride
+        // `permissions.allow`/`deny` itself.)
+        const deniedGroupSet = new Set(deniedGroups);
+        const fsRules = (p: string) =>
+          [
+            ...(deniedGroupSet.has('file-read') ? [] : [`Read(${p}/**)`]),
+            ...(deniedGroupSet.has('file-write') ? [] : [`Edit(${p}/**)`, `Write(${p}/**)`]),
+          ];
         const ceiling = [params.cwd ?? process.cwd(), ...pathScope.allowed];
         const allow = ceiling.flatMap(fsRules);
-        const deny = pathScope.disallowed.flatMap(fsRules);
+        // Deny rules stay complete regardless — a carve-out must still be denied
+        // for a group that is otherwise allowed.
+        const deny = pathScope.disallowed.flatMap((p) => [
+          `Read(${p}/**)`,
+          `Edit(${p}/**)`,
+          `Write(${p}/**)`,
+        ]);
         options.settings = { permissions: { allow, deny } } as Options['settings'];
       }
 
@@ -1707,7 +1843,13 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const toolUseId = (e.tool_use_id as string) ?? '';
               const description = (e.description as string) ?? '';
               const kind = tasks.start(taskId, e.task_type, description);
-              if (kind.isBackground) {
+              if (kind.isBackground && shellDenied) {
+                // A background task IS a shell task, and this run has no shell.
+                // M18 says the capability is simply OFF — a skip, not a
+                // degradation to report — so nothing is emitted for it, exactly
+                // as on an adapter whose SDK cannot background work at all.
+                // Falling through to the subagent branch would mislabel it.
+              } else if (kind.isBackground) {
                 yield {
                   type: 'background_task_started',
                   taskId,
@@ -1722,7 +1864,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
               const kind = tasks.kind(taskId);
-              if (kind?.isBackground) {
+              if (kind?.isBackground && shellDenied) {
+                // See task_started above — background capability is off.
+              } else if (kind?.isBackground) {
                 yield {
                   type: 'background_task_progress',
                   taskId,
@@ -1744,7 +1888,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const taskId = e.task_id as string;
               const kind = tasks.kind(taskId);
               tasks.settle(taskId);
-              if (kind?.isBackground) {
+              if (kind?.isBackground && shellDenied) {
+                // See task_started above — background capability is off.
+              } else if (kind?.isBackground) {
                 yield {
                   type: 'background_task_completed',
                   taskId,
@@ -1799,12 +1945,17 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             // The union of that and our own tracking, filtered to background work only,
             // is `projectBackgroundTasks()` — see its JSDoc for why a subagent must
             // never appear here even though it does hold the session.
-            const backgroundTasks = projectBackgroundTasks(tasks, [
-              ...(Array.isArray(resultEvent.background_tasks)
-                ? (resultEvent.background_tasks as Record<string, unknown>[])
-                : []),
-              ...(stopHookReported ?? []),
-            ]);
+            // With `shell` denied the run has no background-task capability at
+            // all, so the field is never populated — the same silence as the
+            // suppressed `background_task_*` events above.
+            const backgroundTasks = shellDenied
+              ? []
+              : projectBackgroundTasks(tasks, [
+                  ...(Array.isArray(resultEvent.background_tasks)
+                    ? (resultEvent.background_tasks as Record<string, unknown>[])
+                    : []),
+                  ...(stopHookReported ?? []),
+                ]);
 
             if (resultEvent.subtype === 'success') {
               const claudeUsage = normalizeClaudeUsage(resultEvent.usage) ?? { inputTokens: 0, outputTokens: 0 };
