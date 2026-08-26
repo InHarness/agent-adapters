@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.185Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-planmode-true-desugars-into-the-deny",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "text": "planMode: true desugars into the deny-groups ['file-write','shell'] and inherits fail-closed, so an adapter that cannot enforce them refuses the run instead of warning; the documented opt-out is an explicit empty disallowedToolGroups.",
+  "title": "planMode: true desugars into the deny-groups ['file-write','shell'] and inherits fail-closed, so an adapter that cannot enforce them refuses the run instead of warning; the documented opt-out is an ex",
+  "updatedAt": "2026-08-25T12:03:20.185Z",
+  "verifies": []
+}

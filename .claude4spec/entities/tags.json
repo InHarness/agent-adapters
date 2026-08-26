@@ -256,5 +256,17 @@
     "description": "Edge-case acceptance criteria for M17 — Background & long-running tasks",
     "name": "m17-edge",
     "slug": "m17-edge"
+  },
+  {
+    "color": "#5d7ea2",
+    "description": "Acceptance criteria for M18 — Built-in tool gating (deny-groups)",
+    "name": "m18",
+    "slug": "m18"
+  },
+  {
+    "color": "#b6553c",
+    "description": "Edge-case acceptance criteria for M18 — Built-in tool gating",
+    "name": "m18-edge",
+    "slug": "m18-edge"
   }
 ]

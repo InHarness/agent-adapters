@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-07-15T11:54:55.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-mcp-elicitation-bridges-elicitation-req",
   "status": "active",
   "tags": [
     "m04"
   ],
   "text": "MCP elicitation bridges the SDK's elicitation_request / onElicitation to user_input_request, and the handler's answer reaches the model.",
+  "title": "MCP elicitation bridges the SDK's elicitation_request / onElicitation to user_input_request, and the handler's answer reaches the model.",
+  "updatedAt": "2026-07-15T11:54:55.000Z",
   "verifies": []
 }

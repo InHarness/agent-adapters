@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:27.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-getsessionresumeconstraints-architecture",
   "status": "active",
   "tags": [
     "m07"
   ],
   "text": "getSessionResumeConstraints(architecture) reports which session fields are immutable on resume.",
+  "title": "getSessionResumeConstraints(architecture) reports which session fields are immutable on resume.",
+  "updatedAt": "2026-06-29T13:11:27.000Z",
   "verifies": []
 }

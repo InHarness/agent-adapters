@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:21:34.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-the-gemini-adapter-supports-stdio-sse",
   "status": "active",
   "tags": [
     "a04"
   ],
   "text": "The gemini adapter supports stdio, SSE, and HTTP MCP transports via MCPServerConfig, while in-process sdk servers are skipped.",
+  "title": "The gemini adapter supports stdio, SSE, and HTTP MCP transports via MCPServerConfig, while in-process sdk servers are skipped.",
+  "updatedAt": "2026-06-29T13:21:34.000Z",
   "verifies": []
 }

@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.210Z",
+  "description": null,
+  "kind": "edge-case",
+  "payloadVersion": 2,
+  "slug": "ac-on-claude-code-denying-file-read-whil",
+  "status": "active",
+  "tags": [
+    "m18-edge"
+  ],
+  "text": "On claude-code, denying file-read while shell is allowed leaves search reachable through the shell, so the group is reported soft with that escape surface named rather than as an enforced boundary.",
+  "title": "On claude-code, denying file-read while shell is allowed leaves search reachable through the shell, so the group is reported soft with that escape surface named rather than as an enforced boundary.",
+  "updatedAt": "2026-08-25T12:03:20.210Z",
+  "verifies": []
+}

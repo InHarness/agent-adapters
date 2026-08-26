@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:20:54.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-the-codex-adapter-reports-per-run-usage",
   "status": "active",
   "tags": [
     "a02"
   ],
   "text": "The codex adapter reports per-run usage as current minus prior (subtractUsage) from cumulative session totals, with prior resolved as params.priorUsage then a per-threadId LRU (cap 256) then {0,0}.",
+  "title": "The codex adapter reports per-run usage as current minus prior (subtractUsage) from cumulative session totals, with prior resolved as params.priorUsage then a per-threadId LRU (cap 256) then {0,0}.",
+  "updatedAt": "2026-06-29T13:20:54.000Z",
   "verifies": []
 }

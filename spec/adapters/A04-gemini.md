@@ -29,11 +29,12 @@ Wraps `@google/gemini-cli-core` (optional peer dependency, loaded lazily inside 
 <!-- anchor: s7prl2pn -->
 ## Capability support & degradation (L2)
 
-`architectureCapabilities('gemini')` = `{ midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false }`.
+`architectureCapabilities('gemini')` = `{ midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false, toolGating: true }`.
 
 - **MCP (M04)** — M04 owns the matrix; gemini supports **stdio, SSE, and HTTP** transports (via `MCPServerConfig`). In-process `sdk` servers are skipped.
 - **Subagents (M06)** — `subagents` (definition) ignored with a one-shot `warning`; the lifecycle of Gemini's own thread-bearing tool calls is still observed and synthesized.
 - **Mid-turn (M11)** — `midTurnPush: false`; one `sendStream` per run.
+- **Tool gating (M18)** — `toolGating: true` for all four groups, at `soft` strength: exclusion happens in the tool registry, so a denied tool is never registered and never reaches the model — but there is no OS or server-side enforcement behind it. Consumption mechanics below; matrix in M18 (<section_ref anchor="1yllld10"/>).
 - **Path-scope (M15)** — currently `pathScope: false`; `allowedPaths` / `disallowedPaths` degrade to a one-shot `warning`. Whether the SDK's `targetDir` / include-directories can express a soft path gate is **to be verified** (M15 matrix; <index> Open question #5b) — if confirmed, this flips to a soft, capability-true mapping.
 
 <!-- anchor: oirynpg7 -->
@@ -47,7 +48,7 @@ Wraps `@google/gemini-cli-core` (optional peer dependency, loaded lazily inside 
 - **Resume (M07)** — locates the prior session file through the SDK's `~/.gemini/projects.json` slug→temp-dir mapping and calls `resumeChat` (never `initialize`, which would overwrite the on-disk session); a missing or unreadable prior file degrades to a `warning` and a fresh start.
 - **Usage (M08)** — accumulated from `usage` events; when Gemini 2.5's implicit thinking omits `candidatesTokenCount` (output reported as 0), output tokens are **estimated** from produced text length (~4 chars/token).
 - **User input (M11/contract)** — `ask_user` is bridged over gemini-cli's `messageBus`: the adapter subscribes to `TOOL_CALLS_UPDATE`, normalizes awaiting-approval `ask_user` calls to `user_input_request`, and replies on `TOOL_CONFIRMATION_RESPONSE`. This requires `approvalMode: 'default'` + `interactive: true` (set when `onUserInput` is wired); `yolo` skips the confirmation flow entirely.
-- **plan mode** — enforced at the tool-list level via `excludeTools` (removes `write_file`, `replace`, `run_shell_command`, `save_memory`); the SDK's own `approvalMode: 'plan'` is avoided because it would make the model defer even reads.
+- **Tool gating (M18)** — enforced at the tool-list level via `excludeTools`, which is applied when the tool registry is built, **before** the approval policy runs. Two consequences worth stating: an auto-approving mode (`yolo`) does **not** bypass an exclusion, since there is no registered tool left to approve; and the SDK's own `approvalMode: 'plan'` is deliberately avoided, because it makes the model defer even reads. Group→identifier mapping is canon in M18 (<section_ref anchor="1yllld10"/>); two mapping hazards live here — the `shell` group must also exclude the **background-process** tools, which are registered outside the enumerated built-in set and survive an exclusion aimed at the shell tool alone, and a rename that left a legacy alias resolvable means a deny must name **both** spellings or it does not fire. `excludeTools` is a **deny-only** primitive with no allow-list counterpart, which is why this adapter is capped at `soft` and cannot satisfy M18's residual-allow-list invariant: a built-in a future SDK adds is allowed until the mapping is updated (L7).
 
 <!-- anchor: qhpv1am5 -->
 ## Auth model (L6)
@@ -58,6 +59,12 @@ Wraps `@google/gemini-cli-core` (optional peer dependency, loaded lazily inside 
 ## SDK compatibility & schema drift (L7)
 
 - **Supported peer-SDK range** — `@google/gemini-cli-core` `>=0.38.0 <0.39.0` (the 0.38 line verified in CI; dev-pinned `^0.38.0`). The final bound is a semver decision in the release brief (M12), narrowing today's over-wide `>=0.38.0` peer entry. gemini-cli-core is the fastest-moving peer, so the narrow range matters most here.
+- **Verified-pin log** —
+
+  | date | dev-pin | verified by | findings |
+  | --- | --- | --- | --- |
+  | 2026-07-28 | `^0.38.0` | CI e2e baseline | `none recorded retroactively` — log seed, stating the pin the suite has been running against rather than a fresh measurement. Because this is the fastest-moving peer, expect this log to grow faster than the others'. |
+
 - **Version gate (HARD)** — at init the adapter reads the installed SDK version and `satisfies` it against the range; a mismatch **emits** `error` `phase:'init'` (`AdapterInitError`, "installed X, requires Y"), non-suppressible. This runs alongside the existing check for missing SDK exports (which already fails init).
 - **Version-acquisition mechanism** — resolve the installed `@google/gemini-cli-core` `package.json` `version`; fall back to the nearest resolvable manifest if the `exports` map hides `package.json`.
 - **Availability probe** — the lazy `import('@google/gemini-cli-core')` inside `execute()` surfaces absence as `AdapterInitError`; the version gate runs immediately after a successful import.
@@ -73,6 +80,9 @@ Wraps `@google/gemini-cli-core` (optional peer dependency, loaded lazily inside 
 - In-process `sdk` MCP servers are skipped; stdio / SSE / HTTP are mapped.
 - `ask_user` under `approvalMode: 'yolo'` never fires (the policy auto-allows, so no confirmation bus message is published).
 - `timeoutMs` / `abort()` → `agent_end` `reason: 'aborted'` → `AdapterTimeoutError` / `AdapterAbortError` (runtime phase).
+- `shell` denied → the background-process tools are excluded alongside the shell tool. Excluding only the shell tool leaves them registered and the group is not actually denied — the escape surface M18 records for this adapter (<section_ref anchor="1yllld10"/>).
+- A denied group under `approvalMode: 'yolo'` → still denied. Exclusion precedes the policy engine, so the auto-approving mode has nothing to auto-approve.
+- A new built-in ships in a peer-SDK bump → it is **available** until the group mapping names it, because `excludeTools` is deny-only. Fail-open by construction, bounded only by the L7 drift discipline — stated here so it is never mistaken for the allow-list guarantee A01 and A03 provide.
 - `allowedPaths` / `disallowedPaths` supplied → one-shot `warning` (path-scope unverified on this SDK); the run proceeds unscoped. <todo comment="Verify whether gemini-cli-core targetDir/include-directories can enforce a path gate; if so, set pathScope: true (soft) and map natively"/>
 
 <!-- anchor: 7y3bfakm -->

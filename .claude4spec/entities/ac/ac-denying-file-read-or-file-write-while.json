@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.180Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-denying-file-read-or-file-write-while",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "text": "Denying file-read or file-write while shell stays allowed emits exactly one warning event for the run, stating that the combination is not a filesystem boundary; the run still proceeds.",
+  "title": "Denying file-read or file-write while shell stays allowed emits exactly one warning event for the run, stating that the combination is not a filesystem boundary; the run still proceeds.",
+  "updatedAt": "2026-08-25T12:03:20.180Z",
+  "verifies": []
+}

@@ -28,7 +28,7 @@ Developers resuming a session can learn, without running anything, which run par
 ## Configuration & Extensibility (L3)
 
 - Source of truth: the `resumeImmutable` flag per `ArchOption` plus the always-immutable `model`. Generation-only knobs (temperature, top-p) stay mutable.
-- **Designated `RuntimeExecuteParams` fields are also immutable.** Some always-immutable fields live on `RuntimeExecuteParams` rather than on `ArchOption` — notably M15's `allowedPaths` / `disallowedPaths` (a sandbox must not change mid-session). The mechanism is extended so `findResumeViolations` checks this designated set in addition to `ArchOption` keys; changing either path-scope field on a resumed run is reported as a violation.
+- **Designated `RuntimeExecuteParams` fields are also immutable.** Some always-immutable fields live on `RuntimeExecuteParams` rather than on `ArchOption` — notably M15's `allowedPaths` / `disallowedPaths` (a sandbox must not change mid-session) and M18's `disallowedToolGroups` (a capability gate must not shrink or grow mid-session — a resume that quietly hands the shell back is the same class of failure as one that widens the sandbox). The mechanism is extended so `findResumeViolations` checks this designated set in addition to `ArchOption` keys; changing any of these fields on a resumed run is reported as a violation. Because M18's presets desugar into the same field, a resume that flips `planMode` is a violation by the same rule, with no special case.
 - **Resume support matrix** (canonical home — adapters link here):
 
 | Behavior | claude-code | codex | gemini | opencode |

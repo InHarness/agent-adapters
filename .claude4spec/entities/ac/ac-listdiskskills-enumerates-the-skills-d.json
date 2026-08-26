@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:17.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-listdiskskills-enumerates-the-skills-d",
   "status": "active",
   "tags": [
     "m05"
   ],
   "text": "listDiskSkills() enumerates the skills discovered under the configured search directories.",
+  "title": "listDiskSkills() enumerates the skills discovered under the configured search directories.",
+  "updatedAt": "2026-06-29T13:11:17.000Z",
   "verifies": []
 }

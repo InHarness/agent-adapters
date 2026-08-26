@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:04.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-a-provider-backed-architecture-missing-i",
   "status": "active",
   "tags": [
     "m03"
   ],
   "text": "A provider-backed architecture missing its required credential surfaces an AdapterInitError in the init phase.",
+  "title": "A provider-backed architecture missing its required credential surfaces an AdapterInitError in the init phase.",
+  "updatedAt": "2026-06-29T13:11:04.000Z",
   "verifies": []
 }

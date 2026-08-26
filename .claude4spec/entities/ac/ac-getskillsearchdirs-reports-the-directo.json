@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:18.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-getskillsearchdirs-reports-the-directo",
   "status": "active",
   "tags": [
     "m05"
   ],
   "text": "getSkillSearchDirs() reports the directories scanned for disk skills.",
+  "title": "getSkillSearchDirs() reports the directories scanned for disk skills.",
+  "updatedAt": "2026-06-29T13:11:18.000Z",
   "verifies": []
 }

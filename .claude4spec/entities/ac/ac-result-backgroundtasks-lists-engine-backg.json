@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-07-27T19:30:47.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-result-backgroundtasks-lists-engine-backg",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m17"
   ],
   "text": "result.backgroundTasks lists engine-backgrounded work only and never a subagent: with an in-flight subagent and an in-flight shell task, only the shell task is reported, and with an in-flight subagent alone the signal is absent rather than empty. Entries supplied by the engine are classified through the same task-kind mapping that routes the event families, so a friendly 'subagent' label is dropped and 'local_bash' is normalized to 'shell'.",
+  "title": "result.backgroundTasks lists engine-backgrounded work only and never a subagent: with an in-flight subagent and an in-flight shell task, only the shell task is reported, and with an in-flight subagent",
+  "updatedAt": "2026-07-27T19:30:47.000Z",
   "verifies": []
 }

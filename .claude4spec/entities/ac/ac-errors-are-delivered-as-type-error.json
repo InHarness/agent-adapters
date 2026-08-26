@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:12:14.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-errors-are-delivered-as-type-error",
   "status": "active",
   "tags": [
     "m13"
   ],
   "text": "Errors are delivered as { type:'error', error } events and the iterator never throws out of the stream.",
+  "title": "Errors are delivered as { type:'error', error } events and the iterator never throws out of the stream.",
+  "updatedAt": "2026-06-29T13:12:14.000Z",
   "verifies": []
 }

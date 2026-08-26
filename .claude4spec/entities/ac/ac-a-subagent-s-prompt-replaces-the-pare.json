@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-26T15:08:28.510Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-a-subagent-s-prompt-replaces-the-pare",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "text": "A subagent's prompt replaces the parent run's system prompt rather than extending it.",
+  "title": "A subagent's prompt replaces the parent run's system prompt rather than extending it.",
+  "updatedAt": "2026-08-26T15:08:28.510Z",
+  "verifies": []
+}

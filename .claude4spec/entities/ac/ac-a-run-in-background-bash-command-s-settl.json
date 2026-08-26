@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-07-24T09:32:36.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-a-run-in-background-bash-command-s-settl",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m17"
   ],
   "text": "A run_in_background Bash command's settlement surfaces as background_task_completed with the taskId from its background_task_started, the settlement status, and the outputFile tail target — never as subagent_completed.",
+  "title": "A run_in_background Bash command's settlement surfaces as background_task_completed with the taskId from its background_task_started, the settlement status, and the outputFile tail target — never as s",
+  "updatedAt": "2026-07-24T09:32:36.000Z",
   "verifies": []
 }

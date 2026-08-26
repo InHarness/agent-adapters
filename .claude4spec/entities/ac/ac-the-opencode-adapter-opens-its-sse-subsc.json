@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:21:12.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-the-opencode-adapter-opens-its-sse-subsc",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "a03-edge"
   ],
   "text": "The opencode adapter opens its SSE subscription before promptAsync so the first events of the run are not missed.",
+  "title": "The opencode adapter opens its SSE subscription before promptAsync so the first events of the run are not missed.",
+  "updatedAt": "2026-06-29T13:21:12.000Z",
   "verifies": []
 }

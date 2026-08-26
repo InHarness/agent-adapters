@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.212Z",
+  "description": null,
+  "kind": "edge-case",
+  "payloadVersion": 2,
+  "slug": "ac-on-claude-code-a-spawned-subagent-doe",
+  "status": "active",
+  "tags": [
+    "m18-edge"
+  ],
+  "text": "On claude-code, a spawned subagent does not natively inherit the parent's tool denies, so the shell group is reported soft with the subagent escape surface until the deny is propagated into every subagent definition.",
+  "title": "On claude-code, a spawned subagent does not natively inherit the parent's tool denies, so the shell group is reported soft with the subagent escape surface until the deny is propagated into every suba",
+  "updatedAt": "2026-08-25T12:03:20.212Z",
+  "verifies": []
+}

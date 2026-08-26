@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:12:24.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-the-sdkconfig-carried-by-adapter-ready-i",
   "status": "active",
   "tags": [
     "m14"
   ],
   "text": "The sdkConfig carried by adapter_ready is passed through redactSecrets before the event is emitted.",
+  "title": "The sdkConfig carried by adapter_ready is passed through redactSecrets before the event is emitted.",
+  "updatedAt": "2026-06-29T13:12:24.000Z",
   "verifies": []
 }

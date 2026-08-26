@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.189Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-disallowedtoolgroups-is-immutable-on",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "text": "disallowedToolGroups is immutable on resume; findResumeViolations reports any change to it — including one caused by flipping planMode — before a resumed run starts.",
+  "title": "disallowedToolGroups is immutable on resume; findResumeViolations reports any change to it — including one caused by flipping planMode — before a resumed run starts.",
+  "updatedAt": "2026-08-25T12:03:20.189Z",
+  "verifies": []
+}

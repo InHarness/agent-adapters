@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T14:44:27.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-an-adapter-lacking-path-scope-support-o",
   "status": "active",
   "tags": [
     "m15"
   ],
   "text": "An adapter lacking path-scope support (opencode) emits a one-shot warning and runs the operation unscoped, never throwing for \"unsupported\".",
+  "title": "An adapter lacking path-scope support (opencode) emits a one-shot warning and runs the operation unscoped, never throwing for \"unsupported\".",
+  "updatedAt": "2026-06-29T14:44:27.000Z",
   "verifies": []
 }

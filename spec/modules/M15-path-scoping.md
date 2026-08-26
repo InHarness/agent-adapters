@@ -10,6 +10,9 @@ Consumers building a hard filesystem sandbox around an agent (e.g. C4S's *Agent 
 
 M15 owns the two optional `RuntimeExecuteParams` fields, their precedence and normalization semantics, the per-adapter support matrix with its strength/expressiveness gradation, and the degradation contract — including the security-critical case where the *declared* gate strength can silently weaken at runtime. It is deliberately **FS-only**: non-path policies (network, specific-tool gating, rate limits) are out of scope and belong to a future generic tool-permission hook — a sibling that composes with M15, not a competitor (see <index> Open questions).
 
+
+**The declared scope binds every agent in the run, spawned helpers included.** A subagent may hold a *different* toolset than the run that spawned it — specialisation is the point of delegating — but it may never reach a path the run cannot reach; a confinement that ends where delegation begins is not a confinement. The reasoning and the mechanism are M06's, applied one surface over (<section_ref anchor="6fh6yq89"/>): the subagent envelope has no field that could express a scope, so there is nothing to narrow and nothing to widen. Read the invariant as *a subagent's reach equals the run's* — a run that declares neither field has no ceiling to pass on.
+
 <!-- anchor: xtryst7i -->
 ## Dependencies
 
@@ -20,6 +23,7 @@ M15 owns the two optional `RuntimeExecuteParams` fields, their precedence and no
 | L3 | Path-scope fields are immutable on resume — extends M07's resume mechanism to designated `RuntimeExecuteParams` fields. |
 | L4 | Additive type exports; absent fields preserve today's behavior. Semver **minor**. |
 | M01 | `RuntimeExecuteParams` type home; `architectureCapabilities` gains the `pathScope` bool (flat-flag mechanism unchanged). |
+| M06 | A subagent's reach equals the run's declared scope — the subagent envelope has no field that could narrow or widen it. |
 | M07 | Resume immutability — path-scope fields must not change mid-session; `findResumeViolations` is extended to cover them. |
 
 <!-- anchor: j4a1hr2q -->
@@ -44,12 +48,13 @@ Contract semantics (stated explicitly — ambiguity here is a security hole):
 
 - **Capability flag.** `architectureCapabilities(arch).pathScope: boolean` — a plain bool, consistent with the existing flat-flag mechanism owned by M01/L2, advertising only whether the adapter honors the fields at all. The mechanism and the warn/skip/synthesize taxonomy are unchanged; M15 adds exactly one flag.
 - **Strength signal (separate from the bool).** Because one bool cannot express *how hard* the gate is, M15 owns a separate per-adapter descriptor along three axes: gate **strength** (hard, OS-enforced / soft, model-visible / none), **expressiveness** (deny-expressible fine-grained vs allow-list-only), and **config-discovery containment** — whether the bounded run also cuts off *ambient* config/skill discovery (global settings, `~/.claude`-style home tiers) that could otherwise re-widen the agent's reach outside the declared scope. Hard-bounding a filesystem is incomplete if the agent can still load global configuration or skills from outside it; a real confinement severs that channel too. This is M15-owned data (one-home rule), deliberately kept out of the flat capability map so the L2 mechanism stays a bool taxonomy. The *mechanism* by which each adapter severs discovery is adapter-specific and lives in that adapter's file (e.g. A01's setting-source narrowing), not here.
+- **Composition with M18 tool gating (not orthogonal).** M15 bounds *where* the filesystem may be touched; M18 (<section_ref anchor="4j6f86yq"/>) removes *whether* a class of built-in exists for the run at all. The clean split holds as a description of intent, not as a description of mechanism: on claude-code, soft path-scope is realized through a default-deny permission mode whose allow-rules name the file built-ins only, so enabling path-scope already withholds shell and web — M15 is *already* gating tools there. Where the two land on the same rule surface, an M18 deny is applied last and is never re-widened by an M15-generated allow rule (nor by `autoApproveTools`); the per-adapter mechanics and the rule that an M18 deny never rides the settings permission surface are canon in M18 (<section_ref anchor="1yllld10"/>). The two modules also degrade differently on purpose — M15 warns, M18 refuses pre-dispatch — so a run declaring both can be refused by its M18 half where its M15 half would only have warned.
 - **Expressiveness ⇒ confinement obligation.** A deny-expressible adapter MUST use its expressiveness to realize allow-confinement (bound to `cwd ∪ allowedPaths`), not merely to publish a deny-list. If an adapter can only realize a deny-list under a given mode, that is an explicit expressiveness limitation the consumer must be able to read from this matrix — never a silent "scoped" claim.
 
 | Adapter | `pathScope` | Strength | Expressiveness | Native mapping |
 | --- | :---: | --- | --- | --- |
 | **claude-code (A01)** | ✅ | soft default; **hard-capable** (OS sandbox opt-in) | deny-expressible → allow-confinement | Soft: default-deny permission mode + allow-rules for `cwd ∪ allowedPaths` and deny-rules for `disallowedPaths` (confinement, not a bare deny-list). Hard: opt-in `sandbox.enabled` flips to OS-syscall enforcement (`allowWrite`/`denyWrite`/`denyRead` plus managed allow-read confinement for reads). Bounded runs also narrow config/skill discovery. Mechanics in A01 (<section_ref anchor="sw3cwrsm"/>). |
-| **codex (A02)** | ✅ | hard (OS), coarse | allow-only | `allowedPaths` → `sandboxMode: 'workspace-write'` + `additionalDirectories` (writable roots); full block → `'read-only'`. Already allow-only confinement, so it satisfies the tightened contract. Must **compose** with any existing `codex_sandboxMode` / `additionalDirectories` and plan mode (narrow, never overwrite). |
+| **codex (A02)** | ✅ | hard (OS), coarse | allow-only | `allowedPaths` → `sandboxMode: 'workspace-write'` + `additionalDirectories` (writable roots); full block → `'read-only'`. Already allow-only confinement, so it satisfies the tightened contract. Must **compose** with any existing `codex_sandboxMode` / `additionalDirectories` and with an M18 `file-write` deny — all three land on the one `sandboxMode` field, so the narrowest wins and the field is never assigned twice. |
 | **opencode (A03)** | ❌ | none | — | no per-call path sandbox; fields → one-shot `warning`, operations run normally (unchanged by the tightened contract). |
 | **gemini (A04)** | ⚠️ to verify | soft (if any) | — | possibly `targetDir` / include-directories; if it cannot honor the fields → `warning` like opencode. |
 
@@ -59,6 +64,9 @@ Contract semantics (stated explicitly — ambiguity here is a security hole):
   1. **unsupported → warn.** An adapter with `pathScope: false` (opencode) emits a one-shot `warning`; operations proceed normally. Never an "unsupported" throw.
   2. **hard→soft → warn.** An adapter that can only offer a soft gate on the host (e.g. claude-code without an OS sandbox available) emits a `warning` so the consumer knows the gate is model-visible, not OS-enforced.
 - **Static capability vs host-dependent strength (security-critical).** `architectureCapabilities` is static per-architecture, but claude-code's hard gate depends on bubblewrap (Linux) / seatbelt (macOS) being present on the host *at runtime*. So the static signal is at most **hard-capable**, never a runtime guarantee of "hard". A consumer building a security sandbox MUST obtain runtime confirmation (a probe / startup event) **before** dispatch — an ephemeral post-hoc `warning` is insufficient for a security gate. M15 therefore separates the *declared* (static) capability from a *runtime-confirmed* strength signal surfaced ahead of the run.
+
+
+- **Delegation does not widen the scope — and the two enforcement paths hold that by different machinery.** ⚠️ *Verification pending on the soft path.* On the **hard** path the OS sandbox confines the whole process at the syscall level, and a helper agent spawned inside that process cannot be outside it. On the **soft** path the confinement rides the session's permission rules, which the SDK scopes to the *session* rather than to one agent, plus the single per-agent override that could re-open them (`AgentDefinition.permissionMode`) never being set by this library — the mechanism, and why it is deliberate, is M06's (<section_ref anchor="6fh6yq89"/>). A consumer should know which of the two it is relying on, because only one of them is a sandbox. The soft path is asserted from the adapter's construction and **not yet measured against a live model**; the e2e leg that measures it is in the M12 catalog (<section_ref anchor="xe2ecat1"/>) and its adapter status in <section_ref anchor="a01e2ecv"/>. This marker comes off when that leg is green. Inheritance transfers the boundary, not its strength: a subagent under a soft scope inherits a *soft* scope, with every caveat `soft` already carries above.
 
 <!-- anchor: 04yb4iiw -->
 ## Configuration & Extensibility (L3)
@@ -82,13 +90,16 @@ The two fields and the `pathScope` capability are additive; absent fields preser
 - Ambient config/skill discovery under a bounded run → global home-tier config and skills (e.g. `~/.claude`) are no longer auto-loaded, so the agent cannot re-widen its scope via ambient configuration; the containment mechanism is adapter-specific (see the adapter file).
 - Relative path input → normalized against `cwd` before mapping (not rejected).
 - MCP file tools → the OS sandbox covers child processes; permission rules cover built-ins (`Read`/`Edit`). Files touched by MCP tools outside the built-ins may fall outside the soft gate — a documented boundary the consumer must account for.
-- Composes with `planMode` → both narrow (planMode hides mutating built-ins; path-scope bounds the FS of the allowed tools); they sum, never cancel.
+- Composes with `planMode` → `planMode` is no longer an adapter-local read-only preset: it desugars into M18 deny-groups (`file-write`, `shell`), so this is the M18 composition case, not a special one. The two still sum and never cancel — M18 decides which classes of built-in exist for the run, M15 bounds the filesystem reach of whatever survives — but a path-scope allow-rule can never re-admit a tool M18 denied.
+- Path-scope on claude-code with no M18 deny declared → shell and web are nonetheless withheld, because the default-deny permission mode pre-approves only the file built-ins. This is a real capability reduction the consumer did not ask for by name; it is documented here rather than discovered at runtime.
+
+- A run under soft path-scope delegates to a subagent whose definition names `Read` → the subagent's read is evaluated against the same allow/deny rules as the parent's, so a path outside `cwd ∪ allowedPaths` is refused for the subagent exactly as it is for the parent.
 
 <!-- anchor: ffwhq41t -->
 ## Acceptance criteria
 
 These verify the precedence/normalization semantics, the hard vs soft gate strength (including the host-dependent degradation), the allow-only limitation on codex, and backward compatibility when the fields are absent.
 
-Real-model proof: the e2e `path-scope` scenario (reads/writes confined to `cwd ∪ allowedPaths`; a path outside scope blocked) and the related `plan-mode` scenario exercise this against a live model — scenario catalog in M12 (<section_ref anchor="xe2ecat1"/>); per-adapter coverage in the adapter files (<section_ref anchor="a01e2ecv"/>).
+Real-model proof: the e2e `path-scope` scenario (reads/writes confined to `cwd ∪ allowedPaths`; a path outside scope blocked) and the `os sandbox degrade` scenario exercise this against a live model — scenario catalog in M12 (<section_ref anchor="xe2ecat1"/>); per-adapter coverage in the adapter files (<section_ref anchor="a01e2ecv"/>). The `plan-mode` and `tool-gating` scenarios prove M18, not this module.
 
 <tagged_list type="ac" tags="m15"/>

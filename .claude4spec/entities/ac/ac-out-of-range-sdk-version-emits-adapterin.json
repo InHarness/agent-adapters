@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-07-15T11:54:55.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-out-of-range-sdk-version-emits-adapterin",
   "status": "active",
   "tags": [
     "m13"
   ],
   "text": "Installing the claude-agent-sdk outside the declared peer range emits an init-phase AdapterInitError naming installed X requires Y, non-suppressible (intended behavior; the version gate is not yet implemented in code).",
+  "title": "Installing the claude-agent-sdk outside the declared peer range emits an init-phase AdapterInitError naming installed X requires Y, non-suppressible (intended behavior; the version gate is not yet imp",
+  "updatedAt": "2026-07-15T11:54:55.000Z",
   "verifies": []
 }

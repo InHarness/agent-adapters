@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-07-24T09:32:36.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-the-claude-code-adapter-captures-task-ty",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m17"
   ],
   "text": "The claude-code adapter captures task_type on task_started into a per-task map and routes later task_progress / task_notification for that task_id accordingly: 'shell' / 'monitor' / 'workflow' to background_task_*, subagent kinds to subagent_*; unknown or absent task_type defaults to the subagent path.",
+  "title": "The claude-code adapter captures task_type on task_started into a per-task map and routes later task_progress / task_notification for that task_id accordingly: 'shell' / 'monitor' / 'workflow' to back",
+  "updatedAt": "2026-07-24T09:32:36.000Z",
   "verifies": []
 }

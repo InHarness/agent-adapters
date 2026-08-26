@@ -1,12 +1,16 @@
 {
+  "createdAt": "2026-07-24T09:32:37.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-with-claude-disallowbackgroundbash-true",
   "status": "active",
   "tags": [
     "a01",
     "m17"
   ],
-  "text": "With claude_disallowBackgroundBash: true, a Bash call requesting run_in_background is denied by the synthesized PreToolUse hook and the command runs synchronously inside the turn — no background_task_* events are emitted and result carries no in-flight signal.",
+  "text": "With `claude_disallowBackgroundBash: true`, a Bash call requesting `run_in_background: true` is denied by the synthesized `PreToolUse` hook and the command runs synchronously inside the turn — no `background_task_*` events are emitted and `result` carries no in-flight signal. **Conclusiveness precondition:** this is an absence-shaped criterion, so it is evidence only on a run where the model *actually attempted* `run_in_background: true`. A run in which the model chose to execute the command synchronously of its own accord satisfies every absence assertion vacuously — the absence is then the model's doing, not the lever's. A transcript showing no such attempt makes the run INCONCLUSIVE, not passing.",
+  "title": "With claude_disallowBackgroundBash: true, a Bash call attempting run_in_background is denied and runs synchronously — conclusive only on a run where the model actually attempted it",
+  "updatedAt": "2026-08-25T09:49:17.436Z",
   "verifies": []
 }

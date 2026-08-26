@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:10:59.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-an-adaptive-thinking-only-model-ignores",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m02-edge"
   ],
   "text": "An ADAPTIVE_THINKING_ONLY model ignores an explicit thinking-budget setting rather than raising an error.",
+  "title": "An ADAPTIVE_THINKING_ONLY model ignores an explicit thinking-budget setting rather than raising an error.",
+  "updatedAt": "2026-06-29T13:10:59.000Z",
   "verifies": []
 }

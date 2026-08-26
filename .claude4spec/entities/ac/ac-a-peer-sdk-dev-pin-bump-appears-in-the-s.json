@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-07-28T15:29:05.000Z",
+  "description": "Observable on any bump: the release brief carrying the devDependencies change cites an already-edited L7 section whose new log row reads 'pending verification'. A brief that bumps the pin without a preceding spec edit fails this criterion; so does a shipped bump whose pending row was never completed with the e2e findings.",
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-a-peer-sdk-dev-pin-bump-appears-in-the-s",
+  "status": "active",
+  "tags": [
+    "m12"
+  ],
+  "text": "A peer-SDK dev-pin bump appears in the spec — the L7 pin plus a Verified-pin-log row — before the matching devDependencies change ships in a release brief.",
+  "title": "A peer-SDK dev-pin bump appears in the spec — the L7 pin plus a Verified-pin-log row — before the matching devDependencies change ships in a release brief.",
+  "updatedAt": "2026-07-28T15:29:05.000Z",
+  "verifies": []
+}

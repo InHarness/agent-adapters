@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:21.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-subagent-lifecycle-is-observable-via-sub",
   "status": "active",
   "tags": [
     "m06"
   ],
   "text": "Subagent lifecycle is observable via subagent_started, subagent_progress, and subagent_completed events.",
+  "title": "Subagent lifecycle is observable via subagent_started, subagent_progress, and subagent_completed events.",
+  "updatedAt": "2026-06-29T13:11:21.000Z",
   "verifies": []
 }

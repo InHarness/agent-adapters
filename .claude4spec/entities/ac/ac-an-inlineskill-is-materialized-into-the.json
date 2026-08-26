@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:16.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-an-inlineskill-is-materialized-into-the",
   "status": "active",
   "tags": [
     "m05"
   ],
   "text": "An InlineSkill is materialized into the form each adapter accepts, per the skill delivery matrix.",
+  "title": "An InlineSkill is materialized into the form each adapter accepts, per the skill delivery matrix.",
+  "updatedAt": "2026-06-29T13:11:16.000Z",
   "verifies": []
 }

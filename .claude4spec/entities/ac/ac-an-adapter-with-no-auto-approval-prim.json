@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.207Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-an-adapter-with-no-auto-approval-prim",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "text": "An adapter with no auto-approval primitive emits a one-shot warning when autoApproveTools is supplied, instead of ignoring the field silently.",
+  "title": "An adapter with no auto-approval primitive emits a one-shot warning when autoApproveTools is supplied, instead of ignoring the field silently.",
+  "updatedAt": "2026-08-25T12:03:20.207Z",
+  "verifies": []
+}

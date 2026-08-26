@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-07-24T09:32:37.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-a-background-task-settling-during-the-mo",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m17-edge"
   ],
   "text": "A background task settling during the model's continuation turn is serialized by the engine: background_task_completed precedes the run's final result in stream order.",
+  "title": "A background task settling during the model's continuation turn is serialized by the engine: background_task_completed precedes the run's final result in stream order.",
+  "updatedAt": "2026-07-24T09:32:37.000Z",
   "verifies": []
 }

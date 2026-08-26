@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T14:44:37.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-a-relative-path-in-allowedpaths-disallow",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m15-edge"
   ],
   "text": "A relative path in allowedPaths/disallowedPaths is normalized against cwd before mapping (not rejected), and path-scope composes additively with planMode (both narrow).",
+  "title": "A relative path in allowedPaths/disallowedPaths is normalized against cwd before mapping (not rejected), and path-scope composes additively with planMode (both narrow).",
+  "updatedAt": "2026-06-29T14:44:37.000Z",
   "verifies": []
 }

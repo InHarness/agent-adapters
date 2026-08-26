@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:11:31.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-an-adapter-without-resume-support-return",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m07-edge"
   ],
   "text": "An adapter without resume support returns a documented degraded result from the constraints query rather than crashing.",
+  "title": "An adapter without resume support returns a documented degraded result from the constraints query rather than crashing.",
+  "updatedAt": "2026-06-29T13:11:31.000Z",
   "verifies": []
 }

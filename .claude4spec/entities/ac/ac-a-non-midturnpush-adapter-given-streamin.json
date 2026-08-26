@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:12:03.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-a-non-midturnpush-adapter-given-streamin",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m11-edge"
   ],
   "text": "A non-midTurnPush adapter given streamingInput true behaves as one-shot, and the capability is discoverable so UIs can gate the affordance.",
+  "title": "A non-midTurnPush adapter given streamingInput true behaves as one-shot, and the capability is discoverable so UIs can gate the affordance.",
+  "updatedAt": "2026-06-29T13:12:03.000Z",
   "verifies": []
 }

@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:49.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-imageinput-attaches-an-image-uniformly-a",
   "status": "active",
   "tags": [
     "m10"
   ],
   "text": "ImageInput attaches an image uniformly and is materialized per adapter into base64, a URL, or a file path.",
+  "title": "ImageInput attaches an image uniformly and is materialized per adapter into base64, a URL, or a file path.",
+  "updatedAt": "2026-06-29T13:11:49.000Z",
   "verifies": []
 }

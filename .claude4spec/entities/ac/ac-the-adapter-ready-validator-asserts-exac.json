@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:12:06.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-the-adapter-ready-validator-asserts-exac",
   "status": "active",
   "tags": [
     "m12"
   ],
   "text": "The adapter_ready validator asserts exactly one adapter_ready event emitted as the first non-warning event.",
+  "title": "The adapter_ready validator asserts exactly one adapter_ready event emitted as the first non-warning event.",
+  "updatedAt": "2026-06-29T13:12:06.000Z",
   "verifies": []
 }

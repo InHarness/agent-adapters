@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:10:04.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-every-adapter-normalizes-its-sdk-output",
   "status": "active",
   "tags": [
     "m01"
   ],
   "text": "Every adapter normalizes its SDK output into the UnifiedEvent taxonomy; no raw SDK event shape reaches the consumer.",
+  "title": "Every adapter normalizes its SDK output into the UnifiedEvent taxonomy; no raw SDK event shape reaches the consumer.",
+  "updatedAt": "2026-06-29T13:10:04.000Z",
   "verifies": []
 }

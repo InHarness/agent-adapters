@@ -1,12 +1,16 @@
 {
+  "createdAt": "2026-07-27T14:46:51.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-the-control-channel-hold-is-bounded-a-ta",
   "status": "active",
   "tags": [
     "m17",
     "m17-edge"
   ],
-  "text": "The control-channel hold is bounded: a background task that never settles, with the engine silent past the adapter's hard cap, ends the run rather than hanging it, and the truncation is announced with a warning event naming the bound.",
+  "text": "The control-channel hold is bounded, and the cap's expiry is a **terminal error, not a warning**: when a background task never settles and the engine stays silent past the adapter's hard cap, the run ENDS rather than hanging — the adapter interrupts and aborts the session, and the last event on the stream is `{ type: 'error' }` carrying `AdapterBackgroundHoldExpiredError`. That error is distinguishable from `AdapterAbortError` and `AdapterTimeoutError` both by class and by its `name` (which survives serialization), carries the cap that was hit as a field, and repeats that cap plus the `claude_backgroundHoldCapMs` lever in its message. Nothing follows it, and no `warning` about the hold is emitted on any path — the warning-and-carry-on shape is the defect this bound was fixed to remove, because a warning among successful-looking empty tool results is not something a consumer can branch on.",
+  "title": "The control-channel hold is bounded: background work stalled past the hard cap ends the run with a terminal, typed error naming the bound — never with a warning",
+  "updatedAt": "2026-08-25T09:49:17.421Z",
   "verifies": []
 }

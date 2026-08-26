@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:12:09.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-an-adapter-omitting-a-required-event-mak",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m12-edge"
   ],
   "text": "An adapter omitting a required event makes ContractResult fail the relevant assertion with a specific message; the suite does not silently pass.",
+  "title": "An adapter omitting a required event makes ContractResult fail the relevant assertion with a specific message; the suite does not silently pass.",
+  "updatedAt": "2026-06-29T13:12:09.000Z",
   "verifies": []
 }

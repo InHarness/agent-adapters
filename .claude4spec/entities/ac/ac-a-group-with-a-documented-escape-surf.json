@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.177Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-a-group-with-a-documented-escape-surf",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "text": "A group with a documented escape surface is never reported with strength 'hard' — the probe reports 'soft' and names the surface.",
+  "title": "A group with a documented escape surface is never reported with strength 'hard' — the probe reports 'soft' and names the surface.",
+  "updatedAt": "2026-08-25T12:03:20.177Z",
+  "verifies": []
+}

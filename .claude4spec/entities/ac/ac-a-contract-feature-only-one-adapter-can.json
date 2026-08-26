@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:12:10.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-a-contract-feature-only-one-adapter-can",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m12-edge"
   ],
   "text": "A contract feature only one adapter can emit must be documented in the type JSDoc and degrade in the others, or conformance flags the gap.",
+  "title": "A contract feature only one adapter can emit must be documented in the type JSDoc and degrade in the others, or conformance flags the gap.",
+  "updatedAt": "2026-06-29T13:12:10.000Z",
   "verifies": []
 }

@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:12:08.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-e2e-tests-skip-rather-than-fail-when-the",
   "status": "active",
   "tags": [
     "m12"
   ],
   "text": "e2e tests skip rather than fail when the SDK's credentials are absent, keeping the contract suite green without secrets.",
+  "title": "e2e tests skip rather than fail when the SDK's credentials are absent, keeping the contract suite green without secrets.",
+  "updatedAt": "2026-06-29T13:12:08.000Z",
   "verifies": []
 }

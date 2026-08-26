@@ -1,0 +1,40 @@
+{
+  "createdAt": "2026-08-25T08:36:37.483Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-claude-code-e2e-background-tasks-scenario",
+  "status": "active",
+  "tags": [
+    "m17"
+  ],
+  "text": "The claude-code e2e background-task scenario runs a wake-up matrix — {backgrounded bash, subagents} × {one-shot, streaming} — against a live model and asserts, in every cell, that task frames route to the right event family, that the run does not end at the first `result` but continues through the completion event and a continuation turn to `done`, that the control channel survives the held `result`, and that a healthy run ends **silently**: the hold cap is never hit — no `AdapterBackgroundHoldExpiredError` and no terminal `error` event, the run's last event being its `result` — with the absence of any hold-bound `warning` kept beside it only as a regression guard against the warning-and-carry-on shape this bound replaced.",
+  "title": "The claude-code e2e background-tasks scenario runs a wake-up matrix over {backgrounded bash, subagents} × {one-shot, streaming} and asserts routing, push resume, the hold, and silence.",
+  "updatedAt": "2026-08-25T14:11:22.871Z",
+  "verifies": [
+    {
+      "slug": "ac-a-result-event-emitted-while-background",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-a-run-in-background-bash-command-s-settl",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-a-task-touching-run-whose-work-has-settl",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-result-backgroundtasks-lists-engine-backg",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-the-claude-code-adapter-captures-task-ty",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-the-input-control-channel-stays-open-acr",
+      "type": "ac"
+    }
+  ]
+}

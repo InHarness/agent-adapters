@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.175Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-probetoolgating-arch-requestedgroups",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "text": "probeToolGating(arch, requestedGroups) returns, synchronously and before dispatch, one { group, enforceable, strength, escapeSurfaces } record per requested group, so a consumer can decline the run rather than learn from a post-hoc warning.",
+  "title": "probeToolGating(arch, requestedGroups) returns, synchronously and before dispatch, one { group, enforceable, strength, escapeSurfaces } record per requested group, so a consumer can decline the run ra",
+  "updatedAt": "2026-08-25T12:03:20.175Z",
+  "verifies": []
+}

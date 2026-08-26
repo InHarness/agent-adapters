@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:11:47.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-a-streaming-input-run-that-yields-multip",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m09-edge"
   ],
   "text": "A streaming-input run that yields multiple result events has all of them returned by collectors in order.",
+  "title": "A streaming-input run that yields multiple result events has all of them returned by collectors in order.",
+  "updatedAt": "2026-06-29T13:11:47.000Z",
   "verifies": []
 }

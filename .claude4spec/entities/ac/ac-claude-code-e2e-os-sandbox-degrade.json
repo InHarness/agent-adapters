@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-07-15T11:55:13.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-claude-code-e2e-os-sandbox-degrade",
   "status": "active",
   "tags": [
@@ -8,6 +10,8 @@
     "m15-edge"
   ],
   "text": "With the OS sandbox requested on a host without bubblewrap or seatbelt, path-scope degrades hard to soft with a warning.",
+  "title": "With the OS sandbox requested on a host without bubblewrap or seatbelt, path-scope degrades hard to soft with a warning.",
+  "updatedAt": "2026-07-15T11:55:13.000Z",
   "verifies": [
     {
       "slug": "ac-on-a-host-without-an-os-sandbox-a-hard",

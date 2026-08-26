@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:11:20.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-an-inline-skill-whose-name-collides-with",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m05-edge"
   ],
   "text": "An inline skill whose name collides with a disk skill resolves by documented precedence, with no duplicate injection.",
+  "title": "An inline skill whose name collides with a disk skill resolves by documented precedence, with no duplicate injection.",
+  "updatedAt": "2026-06-29T13:11:20.000Z",
   "verifies": []
 }

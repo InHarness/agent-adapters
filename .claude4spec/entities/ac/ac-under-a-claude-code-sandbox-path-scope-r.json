@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-07-05T15:09:30.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-under-a-claude-code-sandbox-path-scope-r",
   "status": "active",
   "tags": [
     "m05"
   ],
   "text": "Under a claude-code sandbox/path-scope run, global disk-skill discovery (~/.claude/skills) is not auto-loaded, while inline (plugin-based) skill delivery still materializes and reaches the agent.",
+  "title": "Under a claude-code sandbox/path-scope run, global disk-skill discovery (~/.claude/skills) is not auto-loaded, while inline (plugin-based) skill delivery still materializes and reaches the agent.",
+  "updatedAt": "2026-07-05T15:09:30.000Z",
   "verifies": []
 }

@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:42.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-observestream-stream-observer-dispatch",
   "status": "active",
   "tags": [
     "m09"
   ],
   "text": "observeStream(stream, observer) dispatches each event to its typed callback.",
+  "title": "observeStream(stream, observer) dispatches each event to its typed callback.",
+  "updatedAt": "2026-06-29T13:11:42.000Z",
   "verifies": []
 }

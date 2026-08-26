@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-07-27T19:30:47.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-takeuntilresult-honours-the-in-flight-sig",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m17"
   ],
   "text": "The library's own stream helpers honour the in-flight signal: takeUntilResult() passes a result carrying a non-empty backgroundTasks list and stops only at the terminal one, so a consumer using it observes the background_task_completed and the continuation turn rather than the bug the signal exists to prevent.",
+  "title": "The library's own stream helpers honour the in-flight signal: takeUntilResult() passes a result carrying a non-empty backgroundTasks list and stops only at the terminal one, so a consumer using it obs",
+  "updatedAt": "2026-07-27T19:30:47.000Z",
   "verifies": []
 }

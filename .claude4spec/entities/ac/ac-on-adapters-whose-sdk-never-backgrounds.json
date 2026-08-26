@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-07-24T09:32:36.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-on-adapters-whose-sdk-never-backgrounds",
   "status": "active",
   "tags": [
     "m17"
   ],
   "text": "On adapters whose SDK never backgrounds work, no background_task_* event is ever emitted and result never carries a backgroundTasks signal — an absence, not an error or warning.",
+  "title": "On adapters whose SDK never backgrounds work, no background_task_* event is ever emitted and result never carries a backgroundTasks signal — an absence, not an error or warning.",
+  "updatedAt": "2026-07-24T09:32:36.000Z",
   "verifies": []
 }

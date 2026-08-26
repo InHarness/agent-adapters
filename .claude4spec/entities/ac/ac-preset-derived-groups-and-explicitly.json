@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.183Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-preset-derived-groups-and-explicitly",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "text": "Preset-derived groups and explicitly requested groups are unioned: a preset can never be weakened by omitting its groups from disallowedToolGroups, and naming the same group twice applies it once.",
+  "title": "Preset-derived groups and explicitly requested groups are unioned: a preset can never be weakened by omitting its groups from disallowedToolGroups, and naming the same group twice applies it once.",
+  "updatedAt": "2026-08-25T12:03:20.183Z",
+  "verifies": []
+}

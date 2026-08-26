@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T14:44:23.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-architecturecapabilities-arch-pathscope",
   "status": "active",
   "tags": [
     "m15"
   ],
   "text": "architectureCapabilities(arch).pathScope advertises whether an adapter honors allowedPaths/disallowedPaths at all.",
+  "title": "architectureCapabilities(arch).pathScope advertises whether an adapter honors allowedPaths/disallowedPaths at all.",
+  "updatedAt": "2026-06-29T14:44:23.000Z",
   "verifies": []
 }

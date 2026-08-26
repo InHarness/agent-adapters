@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.168Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-a-denied-toolgroup-is-unusable-for-th",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "text": "A denied ToolGroup is unusable for the whole run on every adapter that can enforce it: its built-in tools are absent from the catalog the model sees, and the model cannot invoke them by name.",
+  "title": "A denied ToolGroup is unusable for the whole run on every adapter that can enforce it: its built-in tools are absent from the catalog the model sees, and the model cannot invoke them by name.",
+  "updatedAt": "2026-08-25T12:03:20.168Z",
+  "verifies": []
+}

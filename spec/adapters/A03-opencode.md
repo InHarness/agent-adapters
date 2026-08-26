@@ -32,12 +32,12 @@ A `tool` part whose name is `task` is treated as a **subagent**: it is reported 
 <!-- anchor: rqfg83d2 -->
 ## Capability support & degradation (L2)
 
-`architectureCapabilities('opencode')` = `{ midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false }`.
+`architectureCapabilities('opencode')` = `{ midTurnPush: false, imageInput: true, subagentDefinition: false, pathScope: false, toolGating: true }`.
 
 - **MCP (M04)** — M04 owns the matrix; opencode supports the **stdio transport only**. SSE / HTTP / in-process `sdk` servers are dropped from the config (`skip` degradation), without a per-server warning.
 - **Subagents (M06)** — `subagents` ignored with a one-shot `warning` (no per-call definition API); the lifecycle of OpenCode's own `task` tool is still observed.
 - **Mid-turn (M11)** — `midTurnPush: false`; one prompt per session, no `pushMessage`.
-- **plan mode** — not natively supported; logged as a `console.warn` and ignored.
+- **Tool gating (M18)** — `toolGating: true`, and the **strongest** of the four: the server refuses a denied tool before execution, so all four groups are `hard` rather than model-visible. Consumption mechanics below; matrix and strengths in M18 (<section_ref anchor="1yllld10"/>). The plan-mode preset is enforced here rather than ignored — a behavioral change from the console-warn no-op, called out in M12's semver note (<section_ref anchor="agvf1tok"/>).
 - **Path-scope (M15)** — `pathScope: false`; no per-call path sandbox is exposed by the local server. `allowedPaths` / `disallowedPaths` → a one-shot `warning` and operations run normally (M15 owns the matrix).
 
 <!-- anchor: 3iaufx4q -->
@@ -50,6 +50,10 @@ A `tool` part whose name is `task` is treated as a **subagent**: it is reported 
 - **Resume (M07)** — `session.get` for `resumeSessionId` (a miss → `AdapterInitError`) vs. `session.create`.
 - **Usage (M08)** — accumulated from each `step-finish` frame's `tokens.input` / `tokens.output`; `contextSize` = input + output.
 - **User input (M11/contract)** — the v2 client opens a parallel SSE subscription just for `question.asked`, normalizes it to `user_input_request`, and replies via `question.reply` / `question.reject`. Both clients share the one server and port.
+- **Tool gating (M18)** — realized through the server's `permission` buckets, which refuse a call before it executes. Three adapter-side rules:
+  - *Stop asserting a blanket allow.* The adapter must not send an unconditional `permission: { edit: 'allow', bash: 'allow' }`; it derives the bucket map from the requested deny-groups and defaults the remainder through the `'*'` wildcard — the residual-allow-list shape M18 requires (<section_ref anchor="4j6f86yq"/>), which is what makes a not-yet-known bucket blocked rather than allowed.
+  - *`file-read` is a set, not a key.* Denying reads means denying every read-bearing bucket at once — the file, listing, search and language-service buckets, plus the delegation bucket, or the run launders its reads through a subagent. Expressed as a wildcard deny plus an explicit allow-list, not as a hand-maintained deny enumeration.
+  - *Confirmed buckets only.* The server's permission schema ends in a catch-all, so an unknown or mistyped bucket name is accepted and **silently ignored** — no validation error, no signal. The adapter therefore claims `hard` only for buckets it has confirmed against the running server, and L7's version-skew note is what keeps that claim honest. The deprecated `tools` toggle map is not used.
 
 <!-- anchor: 8yp085fj -->
 ## Auth model (L6)
@@ -60,6 +64,12 @@ A `tool` part whose name is `task` is treated as a **subagent**: it is reported 
 ## SDK compatibility & schema drift (L7)
 
 - **Supported peer-SDK range** — `@opencode-ai/sdk` `>=1.4.0 <2.0.0` (the 1.4 line verified in CI; dev-pinned `^1.4.6`, plus the additive `@opencode-ai/sdk/v2/client`). The final bound is a semver decision in the release brief (M12), narrowing today's over-wide `>=1.4.0` peer entry.
+- **Verified-pin log** —
+
+  | date | dev-pin | verified by | findings |
+  | --- | --- | --- | --- |
+  | 2026-07-28 | `^1.4.6` | CI e2e baseline | `none recorded retroactively` — log seed, stating the pin the suite has been running against rather than a fresh measurement. |
+
 - **Version gate (HARD)** — at init the adapter reads the installed SDK version and `satisfies` it against the range; a mismatch **emits** `error` `phase:'init'` (`AdapterInitError`, "installed X, requires Y"), non-suppressible. This is separate from the `opencode` CLI-on-PATH probe below — an out-of-range SDK and a missing binary are distinct faults.
 - **Version-acquisition mechanism** — resolve the installed `@opencode-ai/sdk` `package.json` `version`; fall back to the nearest resolvable manifest if the `exports` map hides `package.json`. The local `opencode` **binary** version is a separate axis — the adapter drives a spawned server, so a compatible SDK and an incompatible CLI can coexist.
 - **Availability probe** — two probes: `isOpencodeAvailable()` (`which opencode`) gates on the CLI binary before construction, and the lazy `import('@opencode-ai/sdk')` (with `/v2/client`) surfaces a missing SDK as `AdapterInitError`.
@@ -74,7 +84,9 @@ A `tool` part whose name is `task` is treated as a **subagent**: it is reported 
 - v2 `question.asked` subscription fails → a `warning` is emitted and the run continues on the authoritative v1 stream with user-input disabled for that session.
 - `timeoutMs` / `abort()` → `AdapterTimeoutError` / `AdapterAbortError` (runtime phase); the spawned server is always closed in `finally`.
 - `resumeSessionId` not found on the server → `AdapterInitError` (init phase).
-- `allowedPaths` / `disallowedPaths` supplied → one-shot `warning`; the run proceeds unscoped (no silent pretense of a sandbox).
+- `allowedPaths` / `disallowedPaths` supplied → one-shot `warning`; the run proceeds unscoped (no silent pretense of a sandbox). Note the asymmetry with tool gating on this adapter: paths cannot be confined at all, yet a denied tool group is refused server-side — so `['file-read','file-write']` is the only way to bound the filesystem here, and it bounds it to nothing rather than to a scope.
+- `planMode: true` → enforced, not ignored: the preset denies `file-write` and `shell`, and the corresponding buckets are set to deny. Consumers relying on the old no-op opt out with an explicit empty `disallowedToolGroups`.
+- The running server is older than the bucket a deny needs → the bucket is accepted and ignored with no error, so the deny is a silent no-op. This is why the adapter reports `hard` only for confirmed buckets and why the SDK/binary version skew is an L7 concern rather than a footnote.
 
 <!-- anchor: 7mnbcmgm -->
 ## Acceptance criteria

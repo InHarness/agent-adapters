@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:44.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-collectevents-stream-drains-the-stream",
   "status": "active",
   "tags": [
     "m09"
   ],
   "text": "collectEvents(stream) drains the stream into an array of UnifiedEvent.",
+  "title": "collectEvents(stream) drains the stream into an array of UnifiedEvent.",
+  "updatedAt": "2026-06-29T13:11:44.000Z",
   "verifies": []
 }

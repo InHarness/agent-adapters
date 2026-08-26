@@ -1,12 +1,16 @@
 {
+  "createdAt": "2026-07-27T19:30:47.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-a-task-touching-run-whose-work-has-settl",
   "status": "active",
   "tags": [
     "m17",
     "m17-edge"
   ],
-  "text": "A run whose tracked work has all settled and whose engine then goes quiet ends on the grace window and emits NO warning event: settled work plus a quiet engine is the normal end of a task-touching run, not a truncation.",
+  "text": "A run whose tracked work has all settled and whose engine then goes quiet ends on the grace window **silently**: it emits no `warning` and no `error` about the hold, and its last event is its `result`. Settled work plus a quiet engine is the normal end of a task-touching run, not a truncation — announcing it would fire on the happy path of every run that so much as spawned a subagent. This is the grace bound's half of the asymmetry: only the hard cap, which can expire only with work genuinely unsettled and the engine still alive, ends the run with a terminal error.",
+  "title": "A run whose tracked work has all settled and whose engine then goes quiet ends on the grace window silently — no warning and no error; its last event is its result",
+  "updatedAt": "2026-08-25T09:49:17.433Z",
   "verifies": []
 }

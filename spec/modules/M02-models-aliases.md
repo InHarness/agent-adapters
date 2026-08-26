@@ -49,7 +49,7 @@ The **adaptive-only?** column is a view of the `ADAPTIVE_THINKING_ONLY` class (s
 | `opus-4.5` | `claude-opus-4-5-20251101` | 200,000 | — |
 | `haiku-4.5` | `claude-haiku-4-5-20251001` | 200,000 | — |
 
-`sonnet-5` (Anthropic API id `claude-sonnet-5`, 1M window, max output 128k) supports adaptive thinking only — extended/fixed-budget thinking is unavailable — so it joins the adaptive-only class alongside `opus-4.8`. `opus-5` (Anthropic API id `claude-opus-5`, 1M window, max output 128k) is likewise adaptive-only, joining the same class alongside `sonnet-5` and `opus-4.8`.
+`sonnet-5` (Anthropic API id `claude-sonnet-5`, 1M window) supports adaptive thinking only — extended/fixed-budget thinking is unavailable — so it joins the adaptive-only class alongside `opus-4.8`. `opus-5` (Anthropic API id `claude-opus-5`, 1M window) is likewise adaptive-only, joining the same class alongside `sonnet-5` and `opus-4.8`.
 
 <!-- anchor: jq7y9jh0 -->
 ### codex models
@@ -77,6 +77,7 @@ Aliases are ordered by popularity (most-used first). A `—` window means the si
 | `step-3.5-flash` | `stepfun/step-3.5-flash` | — |
 | `ling-2.6-1t-free` | `inclusionai/ling-2.6-1t:free` | — |
 | `minimax-m2.7` | `minimax/minimax-m2.7` | — |
+| `claude-sonnet-5` | `anthropic/claude-sonnet-5` | 1,000,000 |
 | `claude-sonnet-4.6` | `anthropic/claude-sonnet-4.6` | 200,000 |
 | `hy3-preview-free` | `tencent/hy3-preview:free` | — |
 | `gemini-2.5-flash` | `google/gemini-2.5-flash` | 1,048,576 |

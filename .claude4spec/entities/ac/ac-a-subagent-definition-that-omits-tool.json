@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-26T15:08:28.503Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-a-subagent-definition-that-omits-tool",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "text": "A subagent definition that omits tools inherits the run's residual allow-list, not the SDK's full default toolset.",
+  "title": "A subagent definition that omits tools inherits the run's residual allow-list, not the SDK's full default toolset.",
+  "updatedAt": "2026-08-26T15:08:28.503Z",
+  "verifies": []
+}

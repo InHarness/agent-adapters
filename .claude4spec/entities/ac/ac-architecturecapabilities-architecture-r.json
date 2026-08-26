@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:10:05.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-architecturecapabilities-architecture-r",
   "status": "active",
   "tags": [
     "m01"
   ],
   "text": "architectureCapabilities(architecture) returns a capability map for any registered architecture.",
+  "title": "architectureCapabilities(architecture) returns a capability map for any registered architecture.",
+  "updatedAt": "2026-06-29T13:10:05.000Z",
   "verifies": []
 }

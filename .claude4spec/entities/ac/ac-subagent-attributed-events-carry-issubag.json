@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:24.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-subagent-attributed-events-carry-issubag",
   "status": "active",
   "tags": [
     "m06"
   ],
   "text": "Subagent-attributed events carry isSubagent and subagentTaskId so the stream can be partitioned by subagent.",
+  "title": "Subagent-attributed events carry isSubagent and subagentTaskId so the stream can be partitioned by subagent.",
+  "updatedAt": "2026-06-29T13:11:24.000Z",
   "verifies": []
 }

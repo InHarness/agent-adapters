@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:30.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-issessionfieldmutable-architecture-fiel",
   "status": "active",
   "tags": [
     "m07"
   ],
   "text": "isSessionFieldMutable(architecture, field) answers per-field mutability for a resumed session.",
+  "title": "isSessionFieldMutable(architecture, field) answers per-field mutability for a resumed session.",
+  "updatedAt": "2026-06-29T13:11:30.000Z",
   "verifies": []
 }

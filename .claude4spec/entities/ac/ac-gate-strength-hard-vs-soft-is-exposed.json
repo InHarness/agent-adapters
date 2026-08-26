@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T14:44:30.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-gate-strength-hard-vs-soft-is-exposed",
   "status": "active",
   "tags": [
     "m15"
   ],
   "text": "Gate strength (hard vs soft) is exposed as a signal separate from the pathScope bool and is confirmable before dispatch, not only via a post-hoc warning.",
+  "title": "Gate strength (hard vs soft) is exposed as a signal separate from the pathScope bool and is confirmable before dispatch, not only via a post-hoc warning.",
+  "updatedAt": "2026-06-29T14:44:30.000Z",
   "verifies": []
 }

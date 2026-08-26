@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:21:14.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-for-opencode-a-resumesessionid-not-foun",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "a03-edge"
   ],
   "text": "For opencode, a resumeSessionId not found on the server yields AdapterInitError, timeoutMs/abort() yield AdapterTimeoutError/AdapterAbortError (runtime phase), and the spawned server is always closed in finally.",
+  "title": "For opencode, a resumeSessionId not found on the server yields AdapterInitError, timeoutMs/abort() yield AdapterTimeoutError/AdapterAbortError (runtime phase), and the spawned server is always closed ",
+  "updatedAt": "2026-06-29T13:21:14.000Z",
   "verifies": []
 }

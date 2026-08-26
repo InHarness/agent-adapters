@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-25T12:03:20.178Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-on-an-adapter-with-an-allow-list-prim",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "text": "On an adapter with an allow-list primitive, a built-in the library has never heard of is blocked rather than allowed: what the adapter sends the SDK is a residual allow-list, not only a deny enumeration.",
+  "title": "On an adapter with an allow-list primitive, a built-in the library has never heard of is blocked rather than allowed: what the adapter sends the SDK is a residual allow-list, not only a deny enumerati",
+  "updatedAt": "2026-08-25T12:03:20.178Z",
+  "verifies": []
+}

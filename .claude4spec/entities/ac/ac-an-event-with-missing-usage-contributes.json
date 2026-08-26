@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:11:41.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-an-event-with-missing-usage-contributes",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m08-edge"
   ],
   "text": "An event with missing usage contributes zero to the run total, never NaN.",
+  "title": "An event with missing usage contributes zero to the run total, never NaN.",
+  "updatedAt": "2026-06-29T13:11:41.000Z",
   "verifies": []
 }

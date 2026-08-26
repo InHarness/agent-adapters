@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:10:01.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-createadapter-architecture-params-retu",
   "status": "active",
   "tags": [
     "m01"
   ],
   "text": "createAdapter(architecture, params) returns a RuntimeAdapter whose execute() yields an AsyncIterable<UnifiedEvent>.",
+  "title": "createAdapter(architecture, params) returns a RuntimeAdapter whose execute() yields an AsyncIterable<UnifiedEvent>.",
+  "updatedAt": "2026-06-29T13:10:01.000Z",
   "verifies": []
 }

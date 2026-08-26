@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:11:51.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-the-image-support-matrix-is-the-source-o",
   "status": "active",
   "tags": [
     "m10"
   ],
   "text": "The image support matrix is the source of truth for each adapter's accepted image form.",
+  "title": "The image support matrix is the source of truth for each adapter's accepted image form.",
+  "updatedAt": "2026-06-29T13:11:51.000Z",
   "verifies": []
 }

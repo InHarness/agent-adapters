@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:11:01.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-a-model-with-no-known-context-window-fal",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m02-edge"
   ],
   "text": "A model with no known context window falls back to a documented default for accounting rather than producing NaN.",
+  "title": "A model with no known context window falls back to a documented default for accounting rather than producing NaN.",
+  "updatedAt": "2026-06-29T13:11:01.000Z",
   "verifies": []
 }

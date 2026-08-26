@@ -1,6 +1,8 @@
 {
+  "createdAt": "2026-06-29T13:11:47.000Z",
   "description": null,
   "kind": "edge-case",
+  "payloadVersion": 2,
   "slug": "ac-a-stream-terminating-with-an-error-event",
   "status": "active",
   "tags": [
@@ -8,5 +10,7 @@
     "m09-edge"
   ],
   "text": "A stream terminating with an error event is delivered to observers and included by collectors; consumption never throws.",
+  "title": "A stream terminating with an error event is delivered to observers and included by collectors; consumption never throws.",
+  "updatedAt": "2026-06-29T13:11:47.000Z",
   "verifies": []
 }

@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:20:38.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-the-claude-code-adapter-both-defines-sub",
   "status": "active",
   "tags": [
     "a01"
   ],
   "text": "The claude-code adapter both defines subagents (mapping params.subagents to Options.agents) and observes their lifecycle events on the unified stream.",
+  "title": "The claude-code adapter both defines subagents (mapping params.subagents to Options.agents) and observes their lifecycle events on the unified stream.",
+  "updatedAt": "2026-06-29T13:20:38.000Z",
   "verifies": []
 }

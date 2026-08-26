@@ -18,6 +18,8 @@ Developers can describe MCP servers and in-process tools once (`createMcpServer`
 | L4 | Exports `createMcpServer`, `mcpTool`, `McpServerConfig` from the package root and the `./mcp` subpath. |
 | L7 | Declares the `@modelcontextprotocol/sdk` peer-SDK range + hard version gate (no adapter owns this peer). |
 | M01 | `mcpServers` is a `RuntimeExecuteParams` field; adapters read it. |
+| M06 | A subagent carries no MCP config of its own; it inherits the run's servers, filtered by its own toolset. |
+| M18 | Scope boundary — tool gating covers built-ins only; MCP tools are deliberately **not** gated by it. |
 
 <!-- anchor: bswjwsmn -->
 ## Unified Contract (L1)
@@ -39,6 +41,12 @@ Degradation rules:
 - **opencode** — non-stdio transports (SSE/HTTP) are unsupported → **warn** and skip the unsupported entries; stdio entries pass through.
 - **claude-code / gemini** — full pass-through across their listed transports.
 
+
+**MCP tools are outside M18's tool gating — stated, not implied.** M18's deny-groups (<section_ref anchor="4j6f86yq"/>) are defined over each SDK's *built-in* toolset, because that is the set whose composition the library can know and keep current. A consumer's MCP servers are the consumer's own surface: the library sees opaque tool names it cannot classify as "shell" or "file-read" without guessing, and guessing wrong in either direction is worse than declining — a false negative advertises a boundary that does not exist, a false positive breaks a working server. So an MCP tool is never denied by group, and a run with every group denied can still call every MCP tool it was given. The control a consumer has here is the one it already has: do not pass the server. This is also why the plan-mode preset was built on `tools` / `disallowedTools` rather than the SDK's own plan permission mode on claude-code — that mode would have frozen curated MCP tools too.
+
+
+**A subagent carries no MCP configuration of its own.** It sees the run's servers narrowed by its own toolset, which makes an `mcp__server__*` entry in a `SubagentDefinition`'s `disallowedTools` the only per-subagent MCP control there is (M06 — <section_ref anchor="6fh6yq89"/>). That leaves the boundary above untouched: withholding a server from one subagent is a toolset decision, not a deny-group, and M18 still gates built-ins only.
+
 <!-- anchor: somkcqph -->
 ## Public API & Packaging (L4)
 
@@ -50,6 +58,12 @@ Exports `createMcpServer`, `mcpTool`, and the `McpServerConfig` type from **both
 M04 is the home of the `@modelcontextprotocol/sdk` peer-dependency, which no adapter owns — so M04 (a capability-module, not an adapter) fills the L7 slice for it.
 
 - **Supported peer-SDK range** — `@modelcontextprotocol/sdk` `>=1.0.0 <2.0.0` (dev-pinned `^1.29.0`; MCP has held a stable, additive 1.x line, so the range is a full major rather than a single minor). Confirmed as the verified range in the release brief (M12), narrowing the current `>=1.0.0` only if a lower bound proves necessary.
+- **Verified-pin log** —
+
+  | date | dev-pin | verified by | findings |
+  | --- | --- | --- | --- |
+  | 2026-07-28 | `^1.29.0` | CI e2e baseline (`tool-use` scenario across adapters) | `none recorded retroactively` — log seed, stating the pin the suite has been running against rather than a fresh measurement. Note the client-side form-elicitation refusal recorded in <section_ref anchor="wxyessab"/> is a property of the *engine's* MCP client, not of this pin. |
+
 - **Version gate (HARD)** — where the MCP SDK is loaded, read its version and `satisfies(range)`; a mismatch **emits** `error` `phase:'init'` (`AdapterInitError`), non-suppressible.
 - **Version-acquisition mechanism** — resolve `@modelcontextprotocol/sdk` `package.json` `version`; fall back to the nearest resolvable manifest if the `exports` map hides it.
 - **Availability probe** — the MCP SDK is loaded lazily only when in-process `sdk` servers / the `createMcpServer` / `mcpTool` builders are used; absence surfaces as `AdapterInitError`.
@@ -63,6 +77,8 @@ M04 is the home of the `@modelcontextprotocol/sdk` peer-dependency, which no ada
 - codex with any `mcpServers` entry → one warning, entries ignored (pre-registration is the supported path).
 - An MCP server emits an elicitation but no `onUserInput` handler is provided → surfaced per M11/L1 user-input semantics (no silent drop of the request).
 - **The engine's MCP *client* can refuse the elicitation before the adapter ever sees it.** Elicitation is a client capability and may be advertised only in part: measured on claude-code (`@anthropic-ai/claude-agent-sdk` 0.3.153, 2026-07-27), an in-process SDK-MCP server calling `elicitInput({ message, requestedSchema })` — which resolves to **form** mode — is rejected inside the MCP layer with `Client does not support form elicitation`. No `elicitation/create` is forwarded, so no `user_input_request` is owed and the adapter bridge is never reached. The server sees the throw and reports it as its own tool error; the model then typically recovers by asking through whatever ask-user tool it has, which arrives as `source: 'model-tool'`. Two consequences: a correct adapter-side bridge does **not** imply the path is live end-to-end, and any live test for it must key on `source: 'mcp-elicitation'` specifically — keying on "a user-input request happened" reads the model's fallback as success. Whether the same client accepts **url**-mode elicitation is untested.
+
+- A filesystem MCP server under an M18 `file-read` + `file-write` deny → **not blocked**. The built-in file tools are gone; the server's are not, and the run can still read and write through it. A consumer that wants the filesystem genuinely unreachable must withhold the server as well as deny the groups.
 
 <!-- anchor: de94pzsi -->
 ## Acceptance criteria

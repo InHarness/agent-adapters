@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-07-27T22:03:49.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-resolvemodel-claude-code-opus-5-re",
   "status": "active",
   "tags": [
     "m02"
   ],
   "text": "resolveModel('claude-code', 'opus-5') returns 'claude-opus-5', and 'claude-opus-5' is a member of ADAPTIVE_THINKING_ONLY.",
+  "title": "resolveModel('claude-code', 'opus-5') returns 'claude-opus-5', and 'claude-opus-5' is a member of ADAPTIVE_THINKING_ONLY.",
+  "updatedAt": "2026-07-27T22:03:49.000Z",
   "verifies": []
 }

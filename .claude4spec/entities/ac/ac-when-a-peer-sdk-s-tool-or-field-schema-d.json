@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-07-15T09:40:48.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-when-a-peer-sdk-s-tool-or-field-schema-d",
   "status": "active",
   "tags": [
     "core"
   ],
   "text": "When a peer-SDK's tool or field schema drifts within the declared L7 range, the adapter reads defensively (dual-path over Record<string,unknown>) and keeps producing correct output — a renamed field degrades gracefully and is never a silent no-op.",
+  "title": "When a peer-SDK's tool or field schema drifts within the declared L7 range, the adapter reads defensively (dual-path over Record<string,unknown>) and keeps producing correct output — a renamed field d",
+  "updatedAt": "2026-07-15T09:40:48.000Z",
   "verifies": []
 }

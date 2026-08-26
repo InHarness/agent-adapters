@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:12:07.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-the-testing-subpath-exports-the-asserti",
   "status": "active",
   "tags": [
     "m12"
   ],
   "text": "The /testing subpath exports the assertion toolkit without pulling in any adapter.",
+  "title": "The /testing subpath exports the assertion toolkit without pulling in any adapter.",
+  "updatedAt": "2026-06-29T13:12:07.000Z",
   "verifies": []
 }

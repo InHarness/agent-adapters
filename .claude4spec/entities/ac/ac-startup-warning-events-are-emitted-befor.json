@@ -1,11 +1,15 @@
 {
+  "createdAt": "2026-06-29T13:12:26.000Z",
   "description": null,
   "kind": "requirement",
+  "payloadVersion": 2,
   "slug": "ac-startup-warning-events-are-emitted-befor",
   "status": "active",
   "tags": [
     "m14"
   ],
   "text": "Startup warning events are emitted before adapter_ready, so the readiness marker delimits the end of startup warnings.",
+  "title": "Startup warning events are emitted before adapter_ready, so the readiness marker delimits the end of startup warnings.",
+  "updatedAt": "2026-06-29T13:12:26.000Z",
   "verifies": []
 }

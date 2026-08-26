@@ -1,0 +1,20 @@
+{
+  "createdAt": "2026-08-25T09:49:35.278Z",
+  "description": null,
+  "kind": "requirement",
+  "payloadVersion": 2,
+  "slug": "ac-a-hold-cap-expiry-raises-adapterbackg",
+  "status": "active",
+  "tags": [
+    "m13"
+  ],
+  "text": "A control-channel hold whose hard cap expires (M17) raises `AdapterBackgroundHoldExpiredError` at runtime phase, and the class satisfies four separable obligations. It is **exported from the package root**, so a consumer can name it in a `catch` or an `instanceof`. It is **distinguishable** from `AdapterAbortError` and `AdapterTimeoutError` both by class and by its `name` string — which, unlike the class, survives serialization across a process or transport boundary — because the consumer's correct reaction differs in each case: nobody aborted and the budget was not too small; the engine's background work stalled. It **carries the cap that was hit**, as a field, repeated in the human-readable message alongside the `architectureConfig` key that moves it, and `toJSON()` carries that field through so a logged error is as actionable as a caught one. And it is **terminal**: the adapter ends the run rather than leaving a live session behind a closed control channel, so nothing follows the `error` event.",
+  "title": "A hold-cap expiry raises AdapterBackgroundHoldExpiredError — exported, distinguishable by class and by name, carrying the cap, and terminal",
+  "updatedAt": "2026-08-25T09:49:35.278Z",
+  "verifies": [
+    {
+      "slug": "ac-the-control-channel-hold-is-bounded-a-ta",
+      "type": "ac"
+    }
+  ]
+}
