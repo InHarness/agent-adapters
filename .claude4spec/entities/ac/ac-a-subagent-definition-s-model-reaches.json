@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-26T15:08:28.508Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-subagent-definition-s-model-reaches",
   "status": "active",
   "tags": [
     "m06"
   ],
-  "text": "A subagent definition's model reaches the SDK unresolved, because subagent models bypass the M02 catalog by design.",
   "title": "A subagent definition's model reaches the SDK unresolved, because subagent models bypass the M02 catalog by design.",
   "updatedAt": "2026-08-26T15:08:28.508Z",
   "verifies": []

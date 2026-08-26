@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:21:01.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-for-codex-plan-mode-forces-sandbox-read",
   "status": "active",
   "tags": [
     "a02",
     "a02-edge"
   ],
-  "text": "For codex, plan mode forces sandbox read-only (otherwise workspace-write), and timeoutMs/abort() yield AdapterTimeoutError/AdapterAbortError (runtime phase).",
   "title": "For codex, plan mode forces sandbox read-only (otherwise workspace-write), and timeoutMs/abort() yield AdapterTimeoutError/AdapterAbortError (runtime phase).",
   "updatedAt": "2026-06-29T13:21:01.000Z",
   "verifies": []

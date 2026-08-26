@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-07-28T15:29:05.000Z",
-  "description": "Checked by reading each L7 consumer section (A01–A04, M04): the log table exists and its last row's dev-pin string is identical to the pin named in the Supported peer-SDK range bullet. A log lagging its range means the pin has two homes again, which is the drift this field exists to prevent.",
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-every-l7-consumer-section-contains-a-ver",
   "status": "active",
   "tags": [
     "m12"
   ],
-  "text": "Every L7 consumer section contains a Verified-pin log whose newest row names the same dev-pin as its Supported peer-SDK range.",
   "title": "Every L7 consumer section contains a Verified-pin log whose newest row names the same dev-pin as its Supported peer-SDK range.",
   "updatedAt": "2026-07-28T15:29:05.000Z",
   "verifies": []

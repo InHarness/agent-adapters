@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:21:00.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-turn-failed-followed-by-a-codex-exec",
   "status": "active",
   "tags": [
     "a02",
     "a02-edge"
   ],
-  "text": "A turn.failed followed by a 'Codex Exec exited with…' throw surfaces exactly one error event (the duplicate envelope is suppressed).",
   "title": "A turn.failed followed by a 'Codex Exec exited with…' throw surfaces exactly one error event (the duplicate envelope is suppressed).",
   "updatedAt": "2026-06-29T13:21:00.000Z",
   "verifies": []

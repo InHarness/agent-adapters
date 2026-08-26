@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-08-26T15:08:28.512Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-subagent-s-filesystem-reach-equals",
   "status": "active",
   "tags": [
     "m06",
     "m15"
   ],
-  "text": "A subagent's filesystem reach equals the run's declared path-scope; no field of the subagent envelope can narrow or widen it.",
   "title": "A subagent's filesystem reach equals the run's declared path-scope; no field of the subagent envelope can narrow or widen it.",
   "updatedAt": "2026-08-26T15:08:28.512Z",
   "verifies": []

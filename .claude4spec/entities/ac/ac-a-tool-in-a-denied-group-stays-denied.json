@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.186Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-tool-in-a-denied-group-stays-denied",
   "status": "active",
   "tags": [
     "m18"
   ],
-  "text": "A tool in a denied group stays denied even when its name is listed in autoApproveTools — auto-approval never re-widens a deny.",
   "title": "A tool in a denied group stays denied even when its name is listed in autoApproveTools — auto-approval never re-widens a deny.",
   "updatedAt": "2026-08-25T12:03:20.186Z",
   "verifies": []

@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:20:58.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-first-resume-after-a-process-restart-wit",
   "status": "active",
   "tags": [
     "a02",
     "a02-edge"
   ],
-  "text": "First resume after a process restart with no priorUsage supplied reports the run's usage as the cumulative-as-delta one-shot artifact.",
   "title": "First resume after a process restart with no priorUsage supplied reports the run's usage as the cumulative-as-delta one-shot artifact.",
   "updatedAt": "2026-06-29T13:20:58.000Z",
   "verifies": []

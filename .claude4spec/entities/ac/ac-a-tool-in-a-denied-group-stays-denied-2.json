@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.187Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-tool-in-a-denied-group-stays-denied-2",
   "status": "active",
   "tags": [
     "m18"
   ],
-  "text": "A tool in a denied group stays denied even when an M15 path-scope allow rule would otherwise permit it, because the M18 deny is applied last on the shared rule surface.",
   "title": "A tool in a denied group stays denied even when an M15 path-scope allow rule would otherwise permit it, because the M18 deny is applied last on the shared rule surface.",
   "updatedAt": "2026-08-25T12:03:20.187Z",
   "verifies": []

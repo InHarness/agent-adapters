@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:20:55.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-codex-adapter-degrades-mcp-subagent",
   "status": "active",
   "tags": [
     "a02"
   ],
-  "text": "The codex adapter degrades MCP, subagents, and user-input to warn-and-ignore, emitting the warning once at startup before adapter_ready.",
   "title": "The codex adapter degrades MCP, subagents, and user-input to warn-and-ignore, emitting the warning once at startup before adapter_ready.",
   "updatedAt": "2026-06-29T13:20:55.000Z",
   "verifies": []

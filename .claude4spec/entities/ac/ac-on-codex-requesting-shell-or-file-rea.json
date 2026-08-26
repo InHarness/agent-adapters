@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.216Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-on-codex-requesting-shell-or-file-rea",
   "status": "active",
   "tags": [
     "m18-edge"
   ],
-  "text": "On codex, requesting shell or file-read refuses the run before dispatch, and planMode: true therefore refuses too rather than silently delivering a read-only sandbox with a live shell.",
   "title": "On codex, requesting shell or file-read refuses the run before dispatch, and planMode: true therefore refuses too rather than silently delivering a read-only sandbox with a live shell.",
   "updatedAt": "2026-08-25T12:03:20.216Z",
   "verifies": []

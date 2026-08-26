@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:11:36.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-usagestats-separates-billing-token-count",
   "status": "active",
   "tags": [
     "m08"
   ],
-  "text": "UsageStats separates billing token counts from contextSize, which reflects context-window occupancy.",
   "title": "UsageStats separates billing token counts from contextSize, which reflects context-window occupancy.",
   "updatedAt": "2026-06-29T13:11:36.000Z",
   "verifies": []

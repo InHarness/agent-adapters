@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-08-26T15:08:28.516Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-subagent-definition-s-tools-allow-l",
   "status": "active",
   "tags": [
     "m06",
     "m06-edge"
   ],
-  "text": "A subagent definition's tools allow-list naming a tool the run's path-scope posture withholds does not restore that tool.",
   "title": "A subagent definition's tools allow-list naming a tool the run's path-scope posture withholds does not restore that tool.",
   "updatedAt": "2026-08-26T15:08:28.516Z",
   "verifies": []

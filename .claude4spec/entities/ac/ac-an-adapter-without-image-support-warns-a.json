@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:11:53.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-an-adapter-without-image-support-warns-a",
   "status": "active",
   "tags": [
     "m10",
     "m10-edge"
   ],
-  "text": "An adapter without image support warns and skips the image; the text prompt still runs.",
   "title": "An adapter without image support warns and skips the image; the text prompt still runs.",
   "updatedAt": "2026-06-29T13:11:53.000Z",
   "verifies": []

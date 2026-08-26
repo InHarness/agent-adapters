@@ -1,16 +1,14 @@
 {
   "createdAt": "2026-07-27T14:46:51.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-input-control-channel-stays-open-acr",
   "status": "active",
   "tags": [
     "a01",
     "m17"
   ],
-  "text": "The input/control channel stays open across a result emitted while background work is in flight, so a user_input_request raised by the woken model still reaches the consumer's handler; closing it there instead surfaces as a tool_result reading 'Tool permission request failed: … Stream closed' with no user_input_request on the stream.",
-  "title": "The input/control channel stays open across a result emitted while background work is in flight, so a user_input_request raised by the woken model still reaches the consumer's handler; closing it ther",
+  "title": "The input/control channel stays open across a result emitted while background work is in flight, so a user_input_request raised by the woken model still reaches the consumer's handler; closing it there instead surfaces as a tool_result reading 'Tool permission request failed: … Stream closed' with no user_input_request on the stream.",
   "updatedAt": "2026-07-27T14:46:51.000Z",
   "verifies": []
 }

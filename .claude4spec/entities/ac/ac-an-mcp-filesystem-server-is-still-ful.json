@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.208Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-an-mcp-filesystem-server-is-still-ful",
   "status": "active",
   "tags": [
     "m18-edge"
   ],
-  "text": "An MCP filesystem server is still fully usable under a file-read plus file-write deny — tool gating covers built-ins only, and the consumer's remedy is to withhold the server.",
   "title": "An MCP filesystem server is still fully usable under a file-read plus file-write deny — tool gating covers built-ins only, and the consumer's remedy is to withhold the server.",
   "updatedAt": "2026-08-25T12:03:20.208Z",
   "verifies": []

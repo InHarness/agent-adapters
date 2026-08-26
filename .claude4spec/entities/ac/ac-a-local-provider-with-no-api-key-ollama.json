@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:11:06.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-local-provider-with-no-api-key-ollama",
   "status": "active",
   "tags": [
     "m03",
     "m03-edge"
   ],
-  "text": "A local provider with no API key (ollama) initializes without requiring any credential env.",
   "title": "A local provider with no API key (ollama) initializes without requiring any credential env.",
   "updatedAt": "2026-06-29T13:11:06.000Z",
   "verifies": []

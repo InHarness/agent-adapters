@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.190Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-run-s-deny-groups-are-applied-to-ev",
   "status": "active",
   "tags": [
     "m18"
   ],
-  "text": "A run's deny-groups are applied to every subagent definition the run spawns, so a delegated subagent cannot use a tool the parent denied.",
   "title": "A run's deny-groups are applied to every subagent definition the run spawns, so a delegated subagent cannot use a tool the parent denied.",
   "updatedAt": "2026-08-25T12:03:20.190Z",
   "verifies": []

@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:21:28.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-gemini-adapter-maps-message-agent-pa",
   "status": "active",
   "tags": [
     "a04"
   ],
-  "text": "The gemini adapter maps message agent parts (thought to thinking, text to text_delta), tool_request to tool_use, tool_response to tool_result, agent_end to result, and error to error.",
   "title": "The gemini adapter maps message agent parts (thought to thinking, text to text_delta), tool_request to tool_use, tool_response to tool_result, agent_end to result, and error to error.",
   "updatedAt": "2026-06-29T13:21:28.000Z",
   "verifies": []

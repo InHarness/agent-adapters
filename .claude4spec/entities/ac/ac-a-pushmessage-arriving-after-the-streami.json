@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:20:45.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-pushmessage-arriving-after-the-streami",
   "status": "active",
   "tags": [
     "a01",
     "a01-edge"
   ],
-  "text": "A pushMessage arriving after the streaming-input channel has closed returns false, and a streaming-input run may emit multiple result events.",
   "title": "A pushMessage arriving after the streaming-input channel has closed returns false, and a streaming-input run may emit multiple result events.",
   "updatedAt": "2026-06-29T13:20:45.000Z",
   "verifies": []

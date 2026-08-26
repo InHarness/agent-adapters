@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:12:31.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-package-ships-both-esm-and-cjs-build",
   "status": "active",
   "tags": [
     "core"
   ],
-  "text": "The package ships both ESM and CJS builds with tree-shakeable subpath exports and optional per-adapter peer dependencies.",
   "title": "The package ships both ESM and CJS builds with tree-shakeable subpath exports and optional per-adapter peer dependencies.",
   "updatedAt": "2026-06-29T13:12:31.000Z",
   "verifies": []

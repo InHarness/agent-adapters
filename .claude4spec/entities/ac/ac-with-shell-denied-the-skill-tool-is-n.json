@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.193Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-with-shell-denied-the-skill-tool-is-n",
   "status": "active",
   "tags": [
     "m18"
   ],
-  "text": "With shell denied, the skill tool is not offered to the model, even on an adapter that otherwise keeps it available under the plan-mode preset.",
   "title": "With shell denied, the skill tool is not offered to the model, even on an adapter that otherwise keeps it available under the plan-mode preset.",
   "updatedAt": "2026-08-25T12:03:20.193Z",
   "verifies": []

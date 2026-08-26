@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T14:44:24.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-path-scope-precedence-holds-disallowedp",
   "status": "active",
   "tags": [
     "m15"
   ],
-  "text": "Path-scope confines reads and writes to cwd ∪ allowedPaths (the ceiling), with precedence disallowedPaths > allowedPaths > base(cwd) read as narrowing that ceiling — allowedPaths widen the base up to it, disallowedPaths carve out from within it.",
-  "title": "Path-scope confines reads and writes to cwd ∪ allowedPaths (the ceiling), with precedence disallowedPaths > allowedPaths > base(cwd) read as narrowing that ceiling — allowedPaths widen the base up to ",
+  "title": "Path-scope confines reads and writes to cwd ∪ allowedPaths (the ceiling), with precedence disallowedPaths > allowedPaths > base(cwd) read as narrowing that ceiling — allowedPaths widen the base up to it, disallowedPaths carve out from within it.",
   "updatedAt": "2026-07-05T15:08:32.000Z",
   "verifies": []
 }

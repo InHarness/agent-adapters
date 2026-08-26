@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-08-26T15:08:31.167Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-claude-code-e2e-subagents-scenari",
   "status": "active",
   "tags": [
     "m06",
     "m15"
   ],
-  "text": "The claude-code e2e subagents scenario proves against a live model that a subagent of a soft path-scoped run is refused a read outside cwd union allowedPaths.",
   "title": "The claude-code e2e subagents scenario proves against a live model that a subagent of a soft path-scoped run is refused a read outside cwd union allowedPaths.",
   "updatedAt": "2026-08-26T15:08:31.167Z",
   "verifies": [

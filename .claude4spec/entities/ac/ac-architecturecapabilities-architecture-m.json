@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:12:01.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-architecturecapabilities-architecture-m",
   "status": "active",
   "tags": [
     "m11"
   ],
-  "text": "architectureCapabilities(architecture).midTurnPush advertises mid-turn push support up front.",
   "title": "architectureCapabilities(architecture).midTurnPush advertises mid-turn push support up front.",
   "updatedAt": "2026-06-29T13:12:01.000Z",
   "verifies": []

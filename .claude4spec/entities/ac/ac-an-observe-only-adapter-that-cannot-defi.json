@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:11:25.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-an-observe-only-adapter-that-cannot-defi",
   "status": "active",
   "tags": [
     "m06",
     "m06-edge"
   ],
-  "text": "An observe-only adapter that cannot define subagents degrades definition per the matrix while still emitting lifecycle events.",
   "title": "An observe-only adapter that cannot define subagents degrades definition per the matrix while still emitting lifecycle events.",
   "updatedAt": "2026-06-29T13:11:25.000Z",
   "verifies": []

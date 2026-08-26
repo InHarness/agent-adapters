@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.195Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-an-unknown-group-string-in-disallowed",
   "status": "active",
   "tags": [
     "m18"
   ],
-  "text": "An unknown group string in disallowedToolGroups refuses the run before dispatch with AdapterToolPolicyError rather than being silently dropped; duplicates collapse and order is insignificant.",
   "title": "An unknown group string in disallowedToolGroups refuses the run before dispatch with AdapterToolPolicyError rather than being silently dropped; duplicates collapse and order is insignificant.",
   "updatedAt": "2026-08-25T12:03:20.195Z",
   "verifies": []

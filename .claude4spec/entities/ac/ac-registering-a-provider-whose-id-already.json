@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:11:05.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-registering-a-provider-whose-id-already",
   "status": "active",
   "tags": [
     "m03",
     "m03-edge"
   ],
-  "text": "Registering a provider whose id already exists follows a documented override-or-error rule, not a silent half-registration.",
   "title": "Registering a provider whose id already exists follows a documented override-or-error rule, not a silent half-registration.",
   "updatedAt": "2026-06-29T13:11:05.000Z",
   "verifies": []

@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:11:39.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-priorusage-seeds-cumulative-accounting-s",
   "status": "active",
   "tags": [
     "m08"
   ],
-  "text": "priorUsage seeds cumulative accounting so cross-process (codex) usage deltas are computed correctly.",
   "title": "priorUsage seeds cumulative accounting so cross-process (codex) usage deltas are computed correctly.",
   "updatedAt": "2026-06-29T13:11:39.000Z",
   "verifies": []

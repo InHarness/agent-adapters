@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:10:57.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-an-unknown-model-string-passes-through-r",
   "status": "active",
   "tags": [
     "m02"
   ],
-  "text": "An unknown model string passes through resolveModel unchanged and is treated as a literal model id.",
   "title": "An unknown model string passes through resolveModel unchanged and is treated as a literal model id.",
   "updatedAt": "2026-06-29T13:10:57.000Z",
   "verifies": []

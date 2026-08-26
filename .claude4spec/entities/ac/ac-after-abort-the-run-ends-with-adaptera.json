@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:12:13.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-after-abort-the-run-ends-with-adaptera",
   "status": "active",
   "tags": [
     "m13"
   ],
-  "text": "After abort() the run ends with AdapterAbortError or clean iterator completion and leaves no dangling SDK process.",
   "title": "After abort() the run ends with AdapterAbortError or clean iterator completion and leaves no dangling SDK process.",
   "updatedAt": "2026-06-29T13:12:13.000Z",
   "verifies": []

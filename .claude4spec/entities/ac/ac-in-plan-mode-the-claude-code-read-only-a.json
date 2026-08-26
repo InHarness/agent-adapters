@@ -1,16 +1,14 @@
 {
   "createdAt": "2026-07-14T10:19:50.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-in-plan-mode-the-claude-code-read-only-a",
   "status": "active",
   "tags": [
     "a01",
     "m16"
   ],
-  "text": "In plan mode the claude-code read-only allowlist tracks every current alias of a renamed built-in (TodoWrite plus the TaskCreate/TaskGet/TaskUpdate/TaskList family and the ToolSearch discovery gate), so a plan-mode turn on a newer model always has a usable task-tracking tool and never falls back to prose planning.",
-  "title": "In plan mode the claude-code read-only allowlist tracks every current alias of a renamed built-in (TodoWrite plus the TaskCreate/TaskGet/TaskUpdate/TaskList family and the ToolSearch discovery gate), ",
+  "title": "In plan mode the claude-code read-only allowlist tracks every current alias of a renamed built-in (TodoWrite plus the TaskCreate/TaskGet/TaskUpdate/TaskList family and the ToolSearch discovery gate), so a plan-mode turn on a newer model always has a usable task-tracking tool and never falls back to prose planning.",
   "updatedAt": "2026-07-14T10:19:50.000Z",
   "verifies": []
 }

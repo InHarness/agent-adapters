@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.220Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-on-gemini-a-built-in-added-by-a-peer",
   "status": "active",
   "tags": [
     "m18-edge"
   ],
-  "text": "On gemini, a built-in added by a peer-SDK bump is available until the group mapping names it, because the exclusion primitive is deny-only and cannot satisfy the residual-allow-list invariant.",
   "title": "On gemini, a built-in added by a peer-SDK bump is available until the group mapping names it, because the exclusion primitive is deny-only and cannot satisfy the residual-allow-list invariant.",
   "updatedAt": "2026-08-25T12:03:20.220Z",
   "verifies": []

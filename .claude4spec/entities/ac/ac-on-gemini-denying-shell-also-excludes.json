@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.221Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-on-gemini-denying-shell-also-excludes",
   "status": "active",
   "tags": [
     "m18-edge"
   ],
-  "text": "On gemini, denying shell also excludes the background-process tools, and the exclusion still holds under an auto-approving approval mode because exclusion happens before the policy engine.",
   "title": "On gemini, denying shell also excludes the background-process tools, and the exclusion still holds under an auto-approving approval mode because exclusion happens before the policy engine.",
   "updatedAt": "2026-08-25T12:03:20.221Z",
   "verifies": []

@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:20:40.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-mid-turn-pushmessage-is-accepted-emit",
   "status": "active",
   "tags": [
     "a01"
   ],
-  "text": "A mid-turn pushMessage is accepted, emitted as a user_message, and enqueued onto a live streaming-input channel that stays open across turns while messages are pending.",
   "title": "A mid-turn pushMessage is accepted, emitted as a user_message, and enqueued onto a live streaming-input channel that stays open across turns while messages are pending.",
   "updatedAt": "2026-06-29T13:20:40.000Z",
   "verifies": []

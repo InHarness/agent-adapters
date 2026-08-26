@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:11:26.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-subagent-events-lacking-subagenttaskid-a",
   "status": "active",
   "tags": [
     "m06",
     "m06-edge"
   ],
-  "text": "Subagent events lacking subagentTaskId are attributed to the parent bucket per the documented fallback.",
   "title": "Subagent events lacking subagentTaskId are attributed to the parent bucket per the documented fallback.",
   "updatedAt": "2026-06-29T13:11:26.000Z",
   "verifies": []

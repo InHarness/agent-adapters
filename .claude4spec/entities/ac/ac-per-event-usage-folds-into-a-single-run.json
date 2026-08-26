@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:11:37.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-per-event-usage-folds-into-a-single-run",
   "status": "active",
   "tags": [
     "m08"
   ],
-  "text": "Per-event usage folds into a single run total via the stream collectors.",
   "title": "Per-event usage folds into a single run total via the stream collectors.",
   "updatedAt": "2026-06-29T13:11:37.000Z",
   "verifies": []

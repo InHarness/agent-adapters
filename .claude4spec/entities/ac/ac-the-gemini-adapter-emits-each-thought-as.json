@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:21:31.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-gemini-adapter-emits-each-thought-as",
   "status": "active",
   "tags": [
     "a04"
   ],
-  "text": "The gemini adapter emits each thought as a thinking event with replace: true (a whole-block summary that supersedes the prior, never concatenated).",
   "title": "The gemini adapter emits each thought as a thinking event with replace: true (a whole-block summary that supersedes the prior, never concatenated).",
   "updatedAt": "2026-06-29T13:21:31.000Z",
   "verifies": []

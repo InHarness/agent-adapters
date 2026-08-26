@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:10:56.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-resolvemodel-alias-maps-a-friendly-alia",
   "status": "active",
   "tags": [
     "m02"
   ],
-  "text": "resolveModel(alias) maps a friendly alias to a concrete model id via MODEL_ALIASES.",
   "title": "resolveModel(alias) maps a friendly alias to a concrete model id via MODEL_ALIASES.",
   "updatedAt": "2026-06-29T13:10:56.000Z",
   "verifies": []

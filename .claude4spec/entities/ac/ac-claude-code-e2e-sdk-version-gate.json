@@ -1,16 +1,14 @@
 {
   "createdAt": "2026-07-15T11:55:13.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-claude-code-e2e-sdk-version-gate",
   "status": "active",
   "tags": [
     "a01",
     "a01-edge"
   ],
-  "text": "Installing the claude-agent-sdk outside the declared range emits an init phase AdapterInitError naming installed X requires Y, non-suppressible. Intended behavior; the version gate is not yet implemented in code.",
-  "title": "Installing the claude-agent-sdk outside the declared range emits an init phase AdapterInitError naming installed X requires Y, non-suppressible. Intended behavior; the version gate is not yet implemen",
+  "title": "Installing the claude-agent-sdk outside the declared range emits an init phase AdapterInitError naming installed X requires Y, non-suppressible. Intended behavior; the version gate is not yet implemented in code.",
   "updatedAt": "2026-07-15T11:55:13.000Z",
   "verifies": [
     {

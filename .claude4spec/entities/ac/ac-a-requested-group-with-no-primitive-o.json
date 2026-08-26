@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.173Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-requested-group-with-no-primitive-o",
   "status": "active",
   "tags": [
     "m18"
   ],
-  "text": "A requested group with no primitive on the target adapter refuses the run before dispatch with AdapterToolPolicyError, and nothing runs — no partial application of the remaining enforceable groups.",
   "title": "A requested group with no primitive on the target adapter refuses the run before dispatch with AdapterToolPolicyError, and nothing runs — no partial application of the remaining enforceable groups.",
   "updatedAt": "2026-08-25T12:03:20.173Z",
   "verifies": []

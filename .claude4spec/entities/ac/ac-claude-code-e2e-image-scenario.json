@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-07-15T11:55:13.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-claude-code-e2e-image-scenario",
   "status": "active",
   "tags": [
     "m10"
   ],
-  "text": "The claude-code e2e image scenario passes an image on input and the live model returns a description of it.",
   "title": "The claude-code e2e image scenario passes an image on input and the live model returns a description of it.",
   "updatedAt": "2026-07-15T11:55:13.000Z",
   "verifies": [

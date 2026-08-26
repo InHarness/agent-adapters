@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-08-25T12:03:20.219Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-on-opencode-a-permission-bucket-the-r",
   "status": "active",
   "tags": [
     "m18-edge"
   ],
-  "text": "On opencode, a permission bucket the running server does not consume is accepted and ignored with no validation error, so the adapter claims hard strength only for buckets confirmed against that server version.",
-  "title": "On opencode, a permission bucket the running server does not consume is accepted and ignored with no validation error, so the adapter claims hard strength only for buckets confirmed against that serve",
+  "title": "On opencode, a permission bucket the running server does not consume is accepted and ignored with no validation error, so the adapter claims hard strength only for buckets confirmed against that server version.",
   "updatedAt": "2026-08-25T12:03:20.219Z",
   "verifies": []
 }

@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.197Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-architecturecapabilities-arch-toolgat",
   "status": "active",
   "tags": [
     "m18"
   ],
-  "text": "architectureCapabilities(arch).toolGating is a plain bool reporting only whether a gating mechanism exists at all, and is true on an adapter that can enforce some groups but not others.",
   "title": "architectureCapabilities(arch).toolGating is a plain bool reporting only whether a gating mechanism exists at all, and is true on an adapter that can enforce some groups but not others.",
   "updatedAt": "2026-08-25T12:03:20.197Z",
   "verifies": []

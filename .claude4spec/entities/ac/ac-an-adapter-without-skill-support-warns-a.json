@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:11:19.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-an-adapter-without-skill-support-warns-a",
   "status": "active",
   "tags": [
     "m05",
     "m05-edge"
   ],
-  "text": "An adapter without skill support warns and skips skill delivery; the run still proceeds.",
   "title": "An adapter without skill support warns and skips skill delivery; the run still proceeds.",
   "updatedAt": "2026-06-29T13:11:19.000Z",
   "verifies": []

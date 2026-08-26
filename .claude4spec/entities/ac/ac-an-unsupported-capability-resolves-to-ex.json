@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:10:07.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-an-unsupported-capability-resolves-to-ex",
   "status": "active",
   "tags": [
     "m01",
     "m01-edge"
   ],
-  "text": "An unsupported capability resolves to exactly one of warn, skip, or synthesize — never a silent drop.",
   "title": "An unsupported capability resolves to exactly one of warn, skip, or synthesize — never a silent drop.",
   "updatedAt": "2026-06-29T13:10:07.000Z",
   "verifies": []

@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:11:43.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-createconsoleobserver-returns-a-ready",
   "status": "active",
   "tags": [
     "m09"
   ],
-  "text": "createConsoleObserver() returns a ready-made observer that logs events to the console.",
   "title": "createConsoleObserver() returns a ready-made observer that logs events to the console.",
   "updatedAt": "2026-06-29T13:11:43.000Z",
   "verifies": []

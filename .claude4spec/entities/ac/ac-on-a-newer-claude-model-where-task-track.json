@@ -1,16 +1,14 @@
 {
   "createdAt": "2026-07-14T10:19:50.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-on-a-newer-claude-model-where-task-track",
   "status": "active",
   "tags": [
     "m16",
     "m16-edge"
   ],
-  "text": "On a newer Claude model where task-tracking is the TaskCreate/TaskUpdate CRUD family gated behind ToolSearch, a claude-code plan-mode turn still surfaces a usable task tool and still projects todo_list_updated — no regression to prose-only planning.",
-  "title": "On a newer Claude model where task-tracking is the TaskCreate/TaskUpdate CRUD family gated behind ToolSearch, a claude-code plan-mode turn still surfaces a usable task tool and still projects todo_lis",
+  "title": "On a newer Claude model where task-tracking is the TaskCreate/TaskUpdate CRUD family gated behind ToolSearch, a claude-code plan-mode turn still surfaces a usable task tool and still projects todo_list_updated — no regression to prose-only planning.",
   "updatedAt": "2026-07-14T10:19:50.000Z",
   "verifies": []
 }

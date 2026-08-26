@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:20:43.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-claude-code-adapter-rolls-anthropic",
   "status": "active",
   "tags": [
     "a01"
   ],
-  "text": "The claude-code adapter rolls Anthropic's three input buckets (input + cache_read + cache_creation) into a single inputTokens, and reports contextSize as input + output.",
   "title": "The claude-code adapter rolls Anthropic's three input buckets (input + cache_read + cache_creation) into a single inputTokens, and reports contextSize as input + output.",
   "updatedAt": "2026-06-29T13:20:43.000Z",
   "verifies": []

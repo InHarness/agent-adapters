@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:20:36.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-claude-code-adapter-maps-each-docume",
   "status": "active",
   "tags": [
     "a01"
   ],
-  "text": "The claude-code adapter maps each documented SDK message to its UnifiedEvent: stream_event text/thinking deltas, assistant/user/tool_use_summary messages, system task events to subagent_started/progress/completed, compact_boundary to flush, and result success to result / non-success to error.",
-  "title": "The claude-code adapter maps each documented SDK message to its UnifiedEvent: stream_event text/thinking deltas, assistant/user/tool_use_summary messages, system task events to subagent_started/progre",
+  "title": "The claude-code adapter maps each documented SDK message to its UnifiedEvent: stream_event text/thinking deltas, assistant/user/tool_use_summary messages, system task events to subagent_started/progress/completed, compact_boundary to flush, and result success to result / non-success to error.",
   "updatedAt": "2026-06-29T13:20:36.000Z",
   "verifies": []
 }

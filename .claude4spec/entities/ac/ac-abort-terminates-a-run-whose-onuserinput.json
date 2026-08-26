@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-07-27T14:46:51.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-abort-terminates-a-run-whose-onuserinput",
   "status": "active",
   "tags": [
     "m13"
   ],
-  "text": "abort() (and an expiring timeoutMs) terminates a run parked on an unanswered user_input_request whose consumer handler never resolves: the outstanding request is answered cancel, the stream yields AdapterAbortError or AdapterTimeoutError, and no SDK subprocess is left running.",
-  "title": "abort() (and an expiring timeoutMs) terminates a run parked on an unanswered user_input_request whose consumer handler never resolves: the outstanding request is answered cancel, the stream yields Ada",
+  "title": "abort() (and an expiring timeoutMs) terminates a run parked on an unanswered user_input_request whose consumer handler never resolves: the outstanding request is answered cancel, the stream yields AdapterAbortError or AdapterTimeoutError, and no SDK subprocess is left running.",
   "updatedAt": "2026-07-27T14:46:51.000Z",
   "verifies": []
 }

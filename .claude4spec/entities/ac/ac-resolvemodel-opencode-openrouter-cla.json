@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-07-28T11:25:51.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-resolvemodel-opencode-openrouter-cla",
   "status": "active",
   "tags": [
     "m02"
   ],
-  "text": "resolveModel('opencode-openrouter', 'claude-sonnet-5') returns 'anthropic/claude-sonnet-5' with a 1,000,000-token context window.",
   "title": "resolveModel('opencode-openrouter', 'claude-sonnet-5') returns 'anthropic/claude-sonnet-5' with a 1,000,000-token context window.",
   "updatedAt": "2026-07-28T11:25:51.000Z",
   "verifies": []

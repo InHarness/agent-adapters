@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.191Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-with-shell-denied-background-task-cap",
   "status": "active",
   "tags": [
     "m18"
   ],
-  "text": "With shell denied, background-task capability is off for that run: no background_task_* events are emitted and result.backgroundTasks is never populated.",
   "title": "With shell denied, background-task capability is off for that run: no background_task_* events are emitted and result.backgroundTasks is never populated.",
   "updatedAt": "2026-08-25T12:03:20.191Z",
   "verifies": []

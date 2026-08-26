@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-07-14T10:19:50.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-claude-code-adapter-projects-task-tr",
   "status": "active",
   "tags": [
     "m16"
   ],
-  "text": "The claude-code adapter projects task-tracking into todo_list_updated (source model-tool) whether the SDK emits legacy TodoWrite or the per-item TaskCreate/TaskUpdate CRUD family.",
   "title": "The claude-code adapter projects task-tracking into todo_list_updated (source model-tool) whether the SDK emits legacy TodoWrite or the per-item TaskCreate/TaskUpdate CRUD family.",
   "updatedAt": "2026-07-14T10:19:50.000Z",
   "verifies": []

@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:11:22.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-subagentdefinition-lets-a-consumer-defin",
   "status": "active",
   "tags": [
     "m06"
   ],
-  "text": "SubagentDefinition lets a consumer define a subagent on adapters that support definition.",
   "title": "SubagentDefinition lets a consumer define a subagent on adapters that support definition.",
   "updatedAt": "2026-06-29T13:11:22.000Z",
   "verifies": []

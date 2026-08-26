@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-07-05T15:08:35.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-with-scope-declared-a-read-or-write-of",
   "status": "active",
   "tags": [
     "m15"
   ],
-  "text": "With scope declared, a read or write of a path outside cwd ∪ allowedPaths is blocked even though that path is not listed in disallowedPaths (allow-confinement, not deny-only).",
   "title": "With scope declared, a read or write of a path outside cwd ∪ allowedPaths is blocked even though that path is not listed in disallowedPaths (allow-confinement, not deny-only).",
   "updatedAt": "2026-07-05T15:08:35.000Z",
   "verifies": []

@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:20:41.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-in-plan-mode-the-claude-code-adapter-hid",
   "status": "active",
   "tags": [
     "a01"
   ],
-  "text": "In plan mode the claude-code adapter hides mutating built-ins via tools/disallowedTools rather than permissionMode 'plan', so consumer-curated MCP tools still execute.",
   "title": "In plan mode the claude-code adapter hides mutating built-ins via tools/disallowedTools rather than permissionMode 'plan', so consumer-curated MCP tools still execute.",
   "updatedAt": "2026-06-29T13:20:41.000Z",
   "verifies": []

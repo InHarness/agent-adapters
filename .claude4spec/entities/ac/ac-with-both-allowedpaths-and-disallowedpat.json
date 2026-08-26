@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T14:44:25.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-with-both-allowedpaths-and-disallowedpat",
   "status": "active",
   "tags": [
     "m15"
   ],
-  "text": "With both allowedPaths and disallowedPaths absent, run behavior is identical to today (no-op, backward compatible).",
   "title": "With both allowedPaths and disallowedPaths absent, run behavior is identical to today (no-op, backward compatible).",
   "updatedAt": "2026-06-29T14:44:25.000Z",
   "verifies": []

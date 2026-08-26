@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:10:02.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-registeradapter-name-factory-makes-a-n",
   "status": "active",
   "tags": [
     "m01"
   ],
-  "text": "registerAdapter(name, factory) makes a new architecture resolvable by createAdapter without any change to consumer code.",
   "title": "registerAdapter(name, factory) makes a new architecture resolvable by createAdapter without any change to consumer code.",
   "updatedAt": "2026-06-29T13:10:02.000Z",
   "verifies": []

@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.155Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-with-disallowedtoolgroups-absent-or-a",
   "status": "active",
   "tags": [
     "m18"
   ],
-  "text": "With disallowedToolGroups absent or an empty array and no preset applied, run behavior is byte-for-byte identical to today's (no-op, backward compatible).",
   "title": "With disallowedToolGroups absent or an empty array and no preset applied, run behavior is byte-for-byte identical to today's (no-op, backward compatible).",
   "updatedAt": "2026-08-25T12:03:20.155Z",
   "verifies": []

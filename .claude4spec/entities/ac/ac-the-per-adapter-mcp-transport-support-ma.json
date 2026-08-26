@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:11:09.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-the-per-adapter-mcp-transport-support-ma",
   "status": "active",
   "tags": [
     "m04"
   ],
-  "text": "The per-adapter MCP transport support matrix is the single source of truth for which transport each adapter accepts.",
   "title": "The per-adapter MCP transport support matrix is the single source of truth for which transport each adapter accepts.",
   "updatedAt": "2026-06-29T13:11:09.000Z",
   "verifies": []

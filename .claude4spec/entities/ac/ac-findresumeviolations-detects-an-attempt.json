@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:11:28.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-findresumeviolations-detects-an-attempt",
   "status": "active",
   "tags": [
     "m07"
   ],
-  "text": "findResumeViolations detects an attempt to mutate an immutable field on a resumed session.",
   "title": "findResumeViolations detects an attempt to mutate an immutable field on a resumed session.",
   "updatedAt": "2026-06-29T13:11:28.000Z",
   "verifies": []

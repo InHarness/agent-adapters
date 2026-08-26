@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-08-25T12:03:20.223Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-on-codex-denying-file-write-maps-to-a",
   "status": "active",
   "tags": [
     "m18-edge"
   ],
-  "text": "On codex, denying file-write maps to a whole-run read-only posture that leaves reads and the shell live — coarse, not a per-tool gate — and the run says so via the porous-combination warning.",
   "title": "On codex, denying file-write maps to a whole-run read-only posture that leaves reads and the shell live — coarse, not a per-tool gate — and the run says so via the porous-combination warning.",
   "updatedAt": "2026-08-25T12:03:20.223Z",
   "verifies": []

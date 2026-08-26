@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:12:11.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-adaptererror-records-whether-a-failure-o",
   "status": "active",
   "tags": [
     "m13"
   ],
-  "text": "AdapterError records whether a failure occurred in the init phase or the runtime phase.",
   "title": "AdapterError records whether a failure occurred in the init phase or the runtime phase.",
   "updatedAt": "2026-06-29T13:12:11.000Z",
   "verifies": []

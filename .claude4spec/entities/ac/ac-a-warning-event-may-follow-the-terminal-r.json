@@ -1,16 +1,14 @@
 {
   "createdAt": "2026-07-27T19:30:47.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-warning-event-may-follow-the-terminal-r",
   "status": "active",
   "tags": [
     "m01",
     "m12"
   ],
-  "text": "A warning event may follow the terminal result without breaking conformance: the toolkit's terminality assertion reads the last non-flush, non-warning event, so a stream ending result then warning passes.",
-  "title": "A warning event may follow the terminal result without breaking conformance: the toolkit's terminality assertion reads the last non-flush, non-warning event, so a stream ending result then warning pas",
+  "title": "A warning event may follow the terminal result without breaking conformance: the toolkit's terminality assertion reads the last non-flush, non-warning event, so a stream ending result then warning passes.",
   "updatedAt": "2026-07-27T19:30:47.000Z",
   "verifies": []
 }

@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T14:44:36.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-disallowedpaths-carve-out-is-not-guara",
   "status": "active",
   "tags": [
     "m15",
     "m15-edge"
   ],
-  "text": "A disallowedPaths carve-out is not guaranteed on an allow-list-only adapter (codex) and is surfaced as an expressiveness limitation so consumers do not assume an unenforced deny.",
   "title": "A disallowedPaths carve-out is not guaranteed on an allow-list-only adapter (codex) and is surfaced as an expressiveness limitation so consumers do not assume an unenforced deny.",
   "updatedAt": "2026-06-29T14:44:36.000Z",
   "verifies": []

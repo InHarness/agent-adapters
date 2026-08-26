@@ -1,15 +1,13 @@
 {
   "createdAt": "2026-06-29T13:21:13.000Z",
-  "description": null,
   "kind": "edge-case",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-a-failed-opencode-v2-question-subscripti",
   "status": "active",
   "tags": [
     "a03",
     "a03-edge"
   ],
-  "text": "A failed opencode v2 question subscription emits a warning and the run continues on the authoritative v1 stream with user-input disabled for that session.",
   "title": "A failed opencode v2 question subscription emits a warning and the run continues on the authoritative v1 stream with user-input disabled for that session.",
   "updatedAt": "2026-06-29T13:21:13.000Z",
   "verifies": []

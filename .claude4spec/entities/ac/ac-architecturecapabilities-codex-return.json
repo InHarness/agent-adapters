@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:20:52.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-architecturecapabilities-codex-return",
   "status": "active",
   "tags": [
     "a02"
   ],
-  "text": "architectureCapabilities('codex') returns { midTurnPush: false, imageInput: true, subagentDefinition: false }.",
   "title": "architectureCapabilities('codex') returns { midTurnPush: false, imageInput: true, subagentDefinition: false }.",
   "updatedAt": "2026-06-29T13:20:52.000Z",
   "verifies": []

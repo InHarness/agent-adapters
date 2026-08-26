@@ -1,14 +1,12 @@
 {
   "createdAt": "2026-06-29T13:21:30.000Z",
-  "description": null,
   "kind": "requirement",
-  "payloadVersion": 2,
+  "payloadVersion": 3,
   "slug": "ac-architecturecapabilities-gemini-retur",
   "status": "active",
   "tags": [
     "a04"
   ],
-  "text": "architectureCapabilities('gemini') returns { midTurnPush: false, imageInput: true, subagentDefinition: false }.",
   "title": "architectureCapabilities('gemini') returns { midTurnPush: false, imageInput: true, subagentDefinition: false }.",
   "updatedAt": "2026-06-29T13:21:30.000Z",
   "verifies": []
