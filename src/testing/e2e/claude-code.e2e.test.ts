@@ -397,15 +397,29 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
         }),
       );
 
-      const result = findResult(events);
-      expect(result, 'expected a result event').toBeDefined();
+      expect(findResult(events), 'expected a result event').toBeDefined();
 
       // THE assertion, and it stands whether or not the model delegated: the ceiling is
-      // the run's, so the canary must not surface by any route — parent's or subagent's.
+      // the run's, so the canary must not surface by ANY route — parent's or subagent's.
+      //
+      // Swept over the WHOLE event stream, not over `findResult(events)!.output`, and
+      // that is not belt-and-braces. This is the one leg in the suite where a multi-
+      // `result` stream is expected by design: a subagent's task settles the turn, the
+      // adapter holds the run open, and the model relays the subagent's report in a
+      // CONTINUATION turn (the `result → subagent_completed → … → result` shape M17's
+      // `assertHeldResultContinuation` documents). `findResult` returns the FIRST
+      // `result`, so a canary relayed in the second one would sail past a check written
+      // against it — green on a genuine escape. Sweeping the serialized stream also
+      // catches the read that never reaches prose at all: a `tool_result` payload, or a
+      // parent that paraphrases the secret instead of relaying it verbatim. The canary
+      // appears in no parameter of this run, so there is no way for it to be present
+      // except by having been read from outside the ceiling.
+      const canaryIn = (e: UnifiedEvent) => JSON.stringify(e).includes('TOP-SECRET-1729');
       expect(
-        result!.output.includes('TOP-SECRET-1729'),
-        `path-scope ceiling leaked: content from outside cwd ∪ allowedPaths reached the output: ${result!.output}`,
-      ).toBe(false);
+        events.filter(canaryIn).map((e) => e.type),
+        `path-scope ceiling leaked: content from outside cwd ∪ allowedPaths reached the stream. ` +
+          `Sequence: ${events.map((e) => e.type).join(' → ')}`,
+      ).toEqual([]);
 
       // Delegation is model-driven. A run where the model never spawned the subagent
       // exercised only the PARENT's confinement, so it proves nothing about INHERITANCE
@@ -881,16 +895,24 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
           // own end — the last event is the run's `result`, and no `error` closes it out.
           // Stated positively on purpose. "No warning was emitted" (below) can hold just
           // as well on a run that died on a terminal error, so it cannot carry this claim.
-          const lastResultIdx = events.map((e) => e.type).lastIndexOf('result');
+          //
+          // "Last" is read the way `assertUnifiedContract` reads it (`src/testing/contract.ts`)
+          // — the last non-`flush`, non-`warning` event. Both are side-band: `flush` is a
+          // boundary marker, and an active AC declares a `warning` trailing the terminal
+          // `result` conformant (the hold raises one from a timer). Asserting on the raw
+          // `events.at(-1)` would fail a run that is conformant by the project's own
+          // definition, which is a stricter claim than this leg is entitled to make.
+          const terminal = events.filter((e) => e.type !== 'flush' && e.type !== 'warning');
+          const lastResultIdx = terminal.map((e) => e.type).lastIndexOf('result');
           expect(
-            events
+            terminal
               .slice(lastResultIdx + 1)
               .filter((e) => e.type === 'error')
               .map((e) => e.error.name),
             `a healthy ${cfg.shape} run must not end on a terminal error. Sequence: ${sequence}`,
           ).toEqual([]);
           expect(
-            events.at(-1)?.type,
+            terminal.at(-1)?.type,
             `a healthy ${cfg.shape} run's last event must be its \`result\`. Sequence: ${sequence}`,
           ).toBe('result');
 
