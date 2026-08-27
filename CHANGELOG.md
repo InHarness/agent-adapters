@@ -3,6 +3,25 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.9.8] — 2026-08-27
+
+### ⚠ Behavioral change — read this even though nothing will fail to compile
+
+`subagent_completed.status` stays typed `string`, on purpose: the vocabulary below is a specification obligation on what adapters **produce**, not a compile-time constraint on consumers (the same discipline M17 applies to `taskType`). So an exhaustive `switch` over the old values gets **no compiler warning** about the two new ones, and this note is your only signal.
+
+- **`subagent_completed.status` is now a declared four-value vocabulary — `'completed' | 'failed' | 'aborted' | 'stopped'` — that adapters MAP onto rather than forward.** `'aborted'` means a **run-level** termination ended the run (a terminal `error` follows immediately); `'stopped'` means **one** delegation ended while the run kept producing events. They are deliberately distinct: collapsing them destroys the only signal for telling "my subagent was cancelled but the agent is still working" from "everything is over". Consumers switching on `status` should handle both new values. The union is exported as the type `SubagentStatus` for anyone who wants to opt into the narrower type.
+- **Aborting or timing out a run now closes every subagent the adapter still had open**, with a synthesized `subagent_completed { status: 'aborted' }` emitted **before** the terminal `error`. Previously the stream simply ended and a consumer pairing `subagent_started` with `subagent_completed` was left holding an unmatched pair forever — its "clean up when every subagent is closed" step never fired. This applies to `abort()`, `timeoutMs`, and a background hold-cap expiry, whether the run ends with a terminal `error` or by natural iterator completion. Exactly **one** completion per start: a subagent that already reported its own end is not closed a second time.
+  - The synthesized event reports that **this run stopped tracking that subagent** — not that the helper agent's own execution ended. Use it to close your own bookkeeping; do not read it as evidence that every delegated task actually stopped.
+  - Deliberately the **opposite** of the `background_task_*` rule, which is unchanged: background work outlives the run and only the engine can honestly report its completion, so a remaining background task is still *abandoned* on a cap expiry rather than closed.
+- **claude-code now maps its SDK's task status instead of forwarding it verbatim.** A status the adapter does not recognize and that is not cancellation-shaped is reported as `'failed'` plus **one** `warning` per run — never as `'completed'`, because a false claim of success is the one error a consumer would act on irreversibly. Cancellation-shaped spellings the SDK might add (`cancelled` / `canceled`, which its `task_updated` channel already shows) map to `'aborted'`. **If you branch on a raw forwarded value today, re-check that branch** — in particular `'stopped'`, which previously reached you as the SDK's own spelling and now arrives through the map. That `warning` is a **drift** signal, not a capability degradation: it means an SDK status arrived that nothing in the pinned range declared.
+- **gemini no longer reports an aborted subagent thread as `'completed'`.** `agent_end` is mapped by `reason`: `failed` → `'failed'`, `aborted` → `'aborted'`, otherwise `'completed'`. The reason is native on that SDK, so the abort case is reported rather than inferred.
+- **codex emits no subagent lifecycle events at all**, on any path including abort — documented previously as "at best synthesized", which implied events might arrive. The SDK has no subagent concept; the absence is the contract.
+
+### Added
+
+- **`assertSubagentLifecycle(events)`** in the exported testing toolkit (`@inharness-ai/agent-adapters/testing`). It asserts the two M06 invariants **together** — every `subagent_started` closed before the stream ends, and no start closed twice — plus that no `subagent_*` event follows the terminal error and that every `status` is inside the declared vocabulary. They ship as one assertion because pairing alone would pass a flush that double-closes already-settled subagents.
+- **`mapSubagentStatus(raw, declared)`** exported for adapter authors: declared spelling → its counterpart; unrecognized-but-cancellation-shaped → `'aborted'`; anything else → `'failed'` with a `warn` flag. Never `'completed'` for an unrecognized value.
+
 <!-- anchor: u5kp9nlm -->
 ## [0.9.6] — 2026-08-25
 

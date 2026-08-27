@@ -4,7 +4,7 @@
 // before an adapter maps the definitions onto its SDK, so a bad definition
 // surfaces a clear error instead of a cryptic SDK failure.
 
-import type { SubagentDefinition } from './types.js';
+import type { SubagentDefinition, SubagentStatus } from './types.js';
 
 /**
  * Validate subagent definitions: each needs a non-empty `name`, `description`,
@@ -30,4 +30,44 @@ export function validateSubagents(defs: SubagentDefinition[] | undefined): void 
     }
     seen.add(def.name);
   }
+}
+
+/**
+ * Spellings an SDK uses for "this work was stopped by a termination". Matched
+ * only AFTER the adapter's own declared map misses, so a declared spelling is
+ * never reinterpreted by a regex. Covers both `cancelled` and `canceled`.
+ */
+const CANCELLATION_SHAPED = /cancel|abort|interrupt|terminat/i;
+
+/**
+ * Map an SDK's own task status onto the unified {@link SubagentStatus}
+ * vocabulary (M06). Adapters call this instead of forwarding the wire value —
+ * wire values must never be matched against the unified set directly.
+ *
+ * The rules are ordered, and the order is the contract:
+ *
+ *   1. a spelling the adapter declares → its declared counterpart;
+ *   2. an unrecognized but cancellation-shaped spelling → `'aborted'`;
+ *   3. anything else → `'failed'`, with `warn: true`.
+ *
+ * Rule 3 never yields `'completed'`. A subagent that actually succeeded under
+ * some new SDK wording being reported as `'failed'` is a false negative chosen
+ * deliberately over a false positive: claiming success is the one error a
+ * consumer would act on irreversibly.
+ *
+ * `warn` is a DRIFT signal, not a capability degradation — nothing was requested
+ * and refused; a status arrived that nothing in the pinned SDK range ever
+ * declared, and the next pin-verification pass has to investigate it. The caller
+ * owns the dedup: at most ONE warning per run, however many unrecognized
+ * statuses arrive during it.
+ */
+export function mapSubagentStatus(
+  raw: unknown,
+  declared: Record<string, SubagentStatus>,
+): { status: SubagentStatus; warn: boolean } {
+  const value = typeof raw === 'string' ? raw : '';
+  const mapped = declared[value];
+  if (mapped) return { status: mapped, warn: false };
+  if (CANCELLATION_SHAPED.test(value)) return { status: 'aborted', warn: false };
+  return { status: 'failed', warn: true };
 }

@@ -476,6 +476,32 @@ export class OpencodeAdapter implements RuntimeAdapter {
       }, params.timeoutMs);
     }
 
+    // OpenCode's SSE does not attach a task/call ID to text/reasoning deltas.
+    // We correlate by ordering: deltas observed between a task tool's
+    // running → completed/error window are attributed to that task.
+    // Assumes chronological SSE delivery and a single active subagent
+    // (OpenCode doesn't ship nested tasks today — if it ever does, this
+    // must become a stack).
+    let activeSubagentTaskId: string | undefined;
+    /**
+     * Close the subagent this run still has open (M06). AT MOST ONE event, by
+     * construction, not by omission: attribution here is ordering-based under a
+     * single-active assumption (see the comment above), so a nested or concurrent
+     * `task` was never opened as its own tracked pair and there is nothing to close
+     * for it — claiming otherwise would invent a lifecycle the adapter never tracked.
+     *
+     * The two normal settle paths below (`completed` / `error`) clear the tracker as
+     * they report, so a subagent that already got its own completion is absent here:
+     * that is what keeps "at most one `subagent_completed` per `subagent_started`"
+     * true on the abort path.
+     */
+    const flushOpenSubagent = function* (): Generator<UnifiedEvent> {
+      if (activeSubagentTaskId === undefined) return;
+      const taskId = activeSubagentTaskId;
+      activeSubagentTaskId = undefined;
+      yield { type: 'subagent_completed', taskId, status: 'aborted' };
+    };
+
     try {
       // 1. Create or resume session
       const cwd = params.cwd ?? process.cwd();
@@ -537,13 +563,6 @@ export class OpencodeAdapter implements RuntimeAdapter {
       const currentBlocks: ContentBlock[] = [];
       let lastMessageId: string | undefined;
       const messageRoleById = new Map<string, 'user' | 'assistant'>();
-      // OpenCode's SSE does not attach a task/call ID to text/reasoning deltas.
-      // We correlate by ordering: deltas observed between a task tool's
-      // running → completed/error window are attributed to that task.
-      // Assumes chronological SSE delivery and a single active subagent
-      // (OpenCode doesn't ship nested tasks today — if it ever does, this
-      // must become a stack).
-      let activeSubagentTaskId: string | undefined;
 
       const v1Iterator = sseResult.stream[Symbol.asyncIterator]();
       let pendingNext: Promise<IteratorResult<unknown>> | null = null;
@@ -585,6 +604,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
         const event = winner.value.value;
 
         if (signal.aborted) {
+          yield* flushOpenSubagent();
           if (timedOut) {
             yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!), phase: 'runtime' };
           } else {
@@ -840,6 +860,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
     } catch (err) {
       v2SubscriptionCancel?.();
       if (signal.aborted) {
+        yield* flushOpenSubagent();
         if (timedOut) {
           yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!), phase: 'runtime' };
         } else {

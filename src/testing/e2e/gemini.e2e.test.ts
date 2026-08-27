@@ -41,7 +41,7 @@ import {
   assertToolPolicyRefusal,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
-import { assertAdapterReady } from '../contract.js';
+import { assertAdapterReady, assertSubagentLifecycle } from '../contract.js';
 
 const HAS_API_KEY = requireEnv('GOOGLE_API_KEY') || requireEnv('GEMINI_API_KEY');
 
@@ -363,6 +363,44 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
       }
     });
   });
+
+  it('abort with a subagent thread in flight closes the lifecycle pair, exactly once', async (ctx) => {
+    // NOT VERIFIED LIVE as of 0.9.8 — written alongside the claude-code leg, which is
+    // the one that ran. The adapter-side flush it exercises is symmetrical.
+    const { config } = createE2eMcpServer();
+    const adapter = createAdapter('gemini');
+    const events: UnifiedEvent[] = [];
+    let aborted = false;
+
+    for await (const event of adapter.execute({
+      prompt: SUBAGENT_PROMPT,
+      systemPrompt: SUBAGENT_SYSTEM_PROMPT,
+      model: 'gemini-2.5-flash',
+      maxTurns: 5,
+      mcpServers: { 'e2e-test': config },
+    })) {
+      events.push(event);
+      if (event.type === 'subagent_started' && !aborted) {
+        aborted = true;
+        adapter.abort();
+      }
+    }
+
+    if (!events.some((e) => e.type === 'subagent_started')) {
+      console.warn(
+        `[INCONCLUSIVE] gemini abort × subagents: the model never delegated. ` +
+          `Sequence: ${events.map((e) => e.type).join(' → ')}`,
+      );
+      ctx.skip();
+    }
+
+    const lifecycle = assertSubagentLifecycle(events);
+    expect(lifecycle.assertions.filter((a) => !a.passed).map((a) => `${a.name}: ${a.message}`)).toEqual([]);
+    expect(
+      events.some((e) => e.type === 'subagent_completed' && e.status === 'aborted'),
+      'the thread open at abort() must be closed with `aborted`, never `completed`',
+    ).toBe(true);
+  }, 120_000);
 
   it('subagent events carry subagentTaskId on deltas', async () => {
     const { config } = createE2eMcpServer();

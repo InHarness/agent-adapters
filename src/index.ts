@@ -22,6 +22,7 @@ export type {
   AdapterFactory,
   InlineSkill,
   SubagentDefinition,
+  SubagentStatus,
   ProviderConfig,
   ProviderPreset,
   ContractAssertion,
@@ -132,8 +133,8 @@ export {
 export type { ToolGroup, ToolGatingStrength, ToolGatingReport } from './tool-groups.js';
 export { probeToolGating, TOOL_GROUPS, PLAN_MODE_DENY_GROUPS } from './tool-groups.js';
 
-// Subagent definition validation
-export { validateSubagents } from './subagents.js';
+// Subagent definition validation + the unified `subagent_completed.status` map
+export { validateSubagents, mapSubagentStatus } from './subagents.js';
 
 // Session-resume constraints (which inputs cannot change across resumed turns)
 export type { ResumeFieldConstraint, ResumeConfigSnapshot } from './session-resume.js';

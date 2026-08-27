@@ -11,7 +11,13 @@ import { createAdapter } from '../../factory.js';
 import { collectEvents } from '../../utils.js';
 import { resolveModel } from '../../models.js';
 import { probeToolGating } from '../../tool-groups.js';
-import { assertSimpleText, assertToolUse, assertThinking, assertAdapterReady } from '../contract.js';
+import {
+  assertSimpleText,
+  assertToolUse,
+  assertThinking,
+  assertAdapterReady,
+  assertSubagentLifecycle,
+} from '../contract.js';
 import { AdapterAbortError, AdapterTimeoutError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
 import { architectureCapabilities } from '../../capabilities.js';
@@ -463,6 +469,69 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     expect(errorEvents.length).toBeGreaterThanOrEqual(1);
     expect(errorEvents[0].error).toBeInstanceOf(AdapterAbortError);
   });
+
+  it('abort mid-stream with subagents in flight closes the lifecycle pair, exactly once', async (ctx) => {
+    // The abort axis and the subagent axis had never been crossed before this case,
+    // which is why the defect survived: a run terminated with delegation in flight
+    // ended the stream on an unmatched `subagent_started`, and a consumer pairing the
+    // two live waited forever for a cleanup step that never fired.
+    //
+    // The prompt asks for three parallel subagents and an immediate end of turn —
+    // several open pairs at once, which is the shape that catches a flush that closes
+    // only the most recent one.
+    const adapter = createAdapter('claude-code');
+    const events: UnifiedEvent[] = [];
+    let aborted = false;
+
+    for await (const event of adapter.execute({
+      prompt: SUBAGENTS_THEN_QUESTION_PROMPT,
+      systemPrompt: SUBAGENTS_THEN_QUESTION_SYSTEM_PROMPT,
+      model: MODEL,
+      maxTurns: 6,
+      streamingInput: true,
+    })) {
+      events.push(event);
+      // On the FIRST delegation, so the others are still open when the run ends.
+      if (event.type === 'subagent_started' && !aborted) {
+        aborted = true;
+        adapter.abort();
+      }
+    }
+
+    // Delegation is model-driven. A run where the model never spawned anything
+    // exercised only the plain abort path, which the case above already covers —
+    // report it rather than banking a green that proved nothing.
+    const started = events.filter((e) => e.type === 'subagent_started');
+    if (started.length === 0) {
+      console.warn(
+        `[INCONCLUSIVE] abort × subagents: the model never delegated, so no lifecycle pair ` +
+          `was open when the run ended. Sequence: ${events.map((e) => e.type).join(' → ')}`,
+      );
+      ctx.skip();
+    }
+
+    // Pairing AND at-most-once, together: pairing alone would pass a flush that
+    // re-closes subagents which already reported their own end.
+    const lifecycle = assertSubagentLifecycle(events);
+    expect(lifecycle.assertions.filter((a) => !a.passed).map((a) => `${a.name}: ${a.message}`)).toEqual([]);
+
+    const closedByFlush = events.filter(
+      (e): e is Extract<UnifiedEvent, { type: 'subagent_completed' }> =>
+        e.type === 'subagent_completed' && e.status === 'aborted',
+    );
+    expect(closedByFlush.length, 'at least the subagent open at abort() must be closed').toBeGreaterThanOrEqual(1);
+
+    const errorEvents = events.filter(
+      (e): e is Extract<UnifiedEvent, { type: 'error' }> => e.type === 'error',
+    );
+    expect(errorEvents.length).toBeGreaterThanOrEqual(1);
+    expect(errorEvents[0].error).toBeInstanceOf(AdapterAbortError);
+    expect(errorEvents[0].phase).toBe('runtime');
+
+    // The iterator COMPLETES rather than throwing — reaching this line is the proof.
+    const errorIdx = events.indexOf(errorEvents[0]);
+    expect(events.slice(errorIdx + 1).filter((e) => e.type.startsWith('subagent_'))).toEqual([]);
+  }, 120_000);
 
   it('reports midTurnPush capability', () => {
     expect(architectureCapabilities('claude-code').midTurnPush).toBe(true);

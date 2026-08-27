@@ -255,6 +255,101 @@ export function assertNoBackgroundTasks(events: UnifiedEvent[]): ContractResult 
 }
 
 /**
+ * Validate the subagent lifecycle family (M06) over an already-collected run.
+ *
+ * TWO invariants, asserted TOGETHER on purpose:
+ *
+ *   1. PAIRING — every `subagent_started` is matched by a `subagent_completed`
+ *      before the stream ends, on EVERY terminal path: normal completion, `abort()`,
+ *      `timeoutMs`, a background hold-cap expiry. A run-level termination closes what
+ *      the adapter opened; it never leaves a started event without its counterpart.
+ *   2. AT MOST ONCE — no `subagent_started` is matched by two completions.
+ *
+ * Splitting them would let the exact defect this exists to catch through: pairing
+ * alone passes a termination flush that re-closes subagents which already reported
+ * their own completion, and at-most-once alone passes a flush that closes nothing.
+ *
+ * Also checks that no `subagent_*` event follows the terminal `error`, and that every
+ * `status` is inside the declared vocabulary — an adapter that forwards its SDK's own
+ * spelling instead of mapping it fails here.
+ *
+ * Operates on already-collected events rather than a stream, so it can be layered onto
+ * an existing scenario's events without paying for a second run. A run with no
+ * delegation at all passes vacuously — this asserts the shape of a lifecycle, not that
+ * the model chose to delegate.
+ */
+export function assertSubagentLifecycle(events: UnifiedEvent[]): ContractResult {
+  const assertions: ContractAssertion[] = [];
+
+  const started = events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'subagent_started' }> => e.type === 'subagent_started',
+  );
+  const completed = events.filter(
+    (e): e is Extract<UnifiedEvent, { type: 'subagent_completed' }> => e.type === 'subagent_completed',
+  );
+
+  const completionsById = new Map<string, number>();
+  for (const e of completed) completionsById.set(e.taskId, (completionsById.get(e.taskId) ?? 0) + 1);
+
+  const unclosed = started.filter((e) => !completionsById.has(e.taskId)).map((e) => e.taskId);
+  assertions.push(
+    assert(
+      'every subagent_started is closed before the stream ends',
+      unclosed.length === 0,
+      `${unclosed.length} subagent(s) left open: ${unclosed.join(', ')} — a consumer pairing ` +
+        `started/completed live would wait forever`,
+    ),
+  );
+
+  const doubled = [...completionsById.entries()].filter(([, n]) => n > 1).map(([id, n]) => `${id}×${n}`);
+  assertions.push(
+    assert(
+      'no subagent_started is closed twice',
+      doubled.length === 0,
+      `Duplicate completions: ${doubled.join(', ')} — the termination flush must skip ` +
+        `subagents that already reported their own end`,
+    ),
+  );
+
+  const orphanCompletions = [...completionsById.keys()].filter(
+    (id) => !started.some((e) => e.taskId === id),
+  );
+  assertions.push(
+    assert(
+      'no subagent_completed without its subagent_started',
+      orphanCompletions.length === 0,
+      `Completions with no matching start: ${orphanCompletions.join(', ')}`,
+    ),
+  );
+
+  const declared = new Set(['completed', 'failed', 'aborted', 'stopped']);
+  const offVocabulary = completed.filter((e) => !declared.has(e.status)).map((e) => e.status);
+  assertions.push(
+    assert(
+      'every status is inside the declared vocabulary',
+      offVocabulary.length === 0,
+      `Got ${offVocabulary.map((v) => JSON.stringify(v)).join(', ')} — adapters must MAP their ` +
+        `SDK's spelling onto 'completed' | 'failed' | 'aborted' | 'stopped', never forward it raw`,
+    ),
+  );
+
+  const terminalErrorIdx = events.findIndex((e) => e.type === 'error');
+  const afterError =
+    terminalErrorIdx === -1
+      ? []
+      : events.slice(terminalErrorIdx + 1).filter((e) => e.type.startsWith('subagent_'));
+  assertions.push(
+    assert(
+      'nothing in the subagent family follows the terminal error',
+      afterError.length === 0,
+      `Got: ${afterError.map((e) => e.type).join(', ')} — the flush belongs BEFORE the error`,
+    ),
+  );
+
+  return buildResult('subagent_lifecycle', events, assertions);
+}
+
+/**
  * Validate a multi-turn stream.
  * Checks: ≥2 assistant_message events, ≥2 tool_use events, rawMessages.length ≥ 2.
  */
