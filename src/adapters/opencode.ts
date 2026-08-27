@@ -826,6 +826,10 @@ export class OpencodeAdapter implements RuntimeAdapter {
               .flatMap((m) => m.content.filter((c) => c.type === 'text').map((c) => (c as { text: string }).text))
               .join('\n');
 
+            // The run ends on this `result`. A `task` tool still inside its
+            // running → completed window can no longer be closed by anything
+            // downstream, so it is closed here — same obligation as the abort paths.
+            yield* flushOpenSubagent();
             yield {
               type: 'result',
               output,
@@ -849,6 +853,8 @@ export class OpencodeAdapter implements RuntimeAdapter {
               (errData?.message as string | undefined) ??
               (errObj?.message as string | undefined) ??
               'Session error';
+            // Terminal for this run — flush BEFORE the error, never after it.
+            yield* flushOpenSubagent();
             yield { type: 'error', error: new Error(errMsg), phase: 'runtime' };
             return;
           }
@@ -857,6 +863,10 @@ export class OpencodeAdapter implements RuntimeAdapter {
             break;
         }
       }
+
+      // The SSE stream ended without a `session.idle`/`session.error` of its own —
+      // backstop, for the same reason the branches above flush.
+      yield* flushOpenSubagent();
     } catch (err) {
       v2SubscriptionCancel?.();
       if (signal.aborted) {
@@ -868,6 +878,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
         }
         return;
       }
+      yield* flushOpenSubagent();
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       v2SubscriptionCancel?.();

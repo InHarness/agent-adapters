@@ -1337,17 +1337,25 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
      * never drops an entry (late notifications still have to route), so walking it
      * would re-close every subagent the run ever started.
      *
-     * It is ONE generator called from every terminal site for the same reason
-     * `terminalRuntimeError()` above is one closure: those exit paths used to hold
-     * copies of the same ternary, and that is exactly how a fifth path gets half the
-     * teardown.
+     * The flush is ONE generator called from every path that ends this run — the three
+     * terminal reasons below, an SDK iterator throw, and the ordinary loop exit — for
+     * the same reason `terminalRuntimeError()` above is one closure: those exit paths
+     * used to hold copies of the same ternary, and that is exactly how a fifth path
+     * gets half the teardown. Its own `flushedSubagents` guard makes it idempotent, so
+     * two paths overlapping (a throw after a partial flush) still cannot double-close.
      */
-    const endRunTerminally = function* (): Generator<UnifiedEvent> {
-      settleAllPending();
+    const flushedSubagents = new Set<string>();
+    const flushOpenSubagents = function* (): Generator<UnifiedEvent> {
       for (const taskId of [...tasks.inFlight]) {
         if (tasks.kind(taskId)?.isBackground) continue;
+        if (flushedSubagents.has(taskId)) continue;
+        flushedSubagents.add(taskId);
         yield { type: 'subagent_completed', taskId, status: 'aborted' };
       }
+    };
+    const endRunTerminally = function* (): Generator<UnifiedEvent> {
+      settleAllPending();
+      yield* flushOpenSubagents();
       yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
     };
     if (params.timeoutMs) {
@@ -2152,11 +2160,24 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         yield* endRunTerminally();
         return;
       }
+
+      // The ORDINARY end of the run, and it carries the same obligation. A turn can end
+      // with a delegation the engine never reported on — `error_max_turns` closes the
+      // channel while an Agent-tool `task_notification` is still seconds away — and once
+      // this generator returns, nothing can ever arrive to close that pair. No terminal
+      // error follows here, so this is the one flush that stands alone.
+      yield* flushOpenSubagents();
     } catch (err) {
       if (run.abortController.signal.aborted) {
         yield* endRunTerminally();
         return;
       }
+      // Same M06 obligation as `endRunTerminally()`, on the path that does NOT own the
+      // terminal reason: the SDK's iterator threw for a reason of its own (transport
+      // failure, CLI crash). The run still ends here, so every subagent it still has
+      // open still has to be closed — before the error, never after it.
+      settleAllPending();
+      yield* flushOpenSubagents();
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);

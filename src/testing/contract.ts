@@ -333,7 +333,11 @@ export function assertSubagentLifecycle(events: UnifiedEvent[]): ContractResult 
     ),
   );
 
-  const terminalErrorIdx = events.findIndex((e) => e.type === 'error');
+  // The LAST error, not the first: `error` is not always terminal. claude-code yields a
+  // non-terminal `error` when a consumer's `onUserInput` callback throws and keeps
+  // iterating; gemini yields non-fatal ones too. Anchoring on the first would fail a
+  // perfectly conformant run whose delegation merely came after such an event.
+  const terminalErrorIdx = events.map((e) => e.type).lastIndexOf('error');
   const afterError =
     terminalErrorIdx === -1
       ? []

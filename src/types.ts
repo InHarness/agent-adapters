@@ -153,23 +153,6 @@ export interface BackgroundTaskRef {
 }
 
 /**
- * `subagentTaskId` on the delta-like variants (`text_delta`, `thinking`,
- * `tool_use`, `tool_result`) matches the `taskId` of the surrounding
- * `subagent_started` envelope. Required for grouping when multiple subagents
- * run concurrently — `isSubagent: true` alone is too coarse.
- *
- * Per-adapter support:
- *   - claude-code: ✅ mapped from `parent_tool_use_id` via local lookup
- *   - gemini:      ✅ direct pass-through of `event.threadId`
- *   - opencode:    ⚠️ inferred from SSE ordering (single active subagent only)
- *   - codex:       ❌ SDK has no subagent concept — always `undefined`
- *
- * Graceful degradation: when a delta carries `isSubagent: true` but no
- * `subagentTaskId` (e.g. claude-code race before `task_started`, or upstream
- * SDK doesn't expose the ID), consumers should treat the event as belonging
- * to an unknown subagent rather than the parent.
- */
-/**
  * The declared vocabulary for {@link UnifiedEvent} `subagent_completed.status`
  * (M06). Exactly four values, with fixed meanings:
  *
@@ -201,6 +184,23 @@ export interface BackgroundTaskRef {
  */
 export type SubagentStatus = 'completed' | 'failed' | 'aborted' | 'stopped';
 
+/**
+ * `subagentTaskId` on the delta-like variants (`text_delta`, `thinking`,
+ * `tool_use`, `tool_result`) matches the `taskId` of the surrounding
+ * `subagent_started` envelope. Required for grouping when multiple subagents
+ * run concurrently — `isSubagent: true` alone is too coarse.
+ *
+ * Per-adapter support:
+ *   - claude-code: ✅ mapped from `parent_tool_use_id` via local lookup
+ *   - gemini:      ✅ direct pass-through of `event.threadId`
+ *   - opencode:    ⚠️ inferred from SSE ordering (single active subagent only)
+ *   - codex:       ❌ SDK has no subagent concept — always `undefined`
+ *
+ * Graceful degradation: when a delta carries `isSubagent: true` but no
+ * `subagentTaskId` (e.g. claude-code race before `task_started`, or upstream
+ * SDK doesn't expose the ID), consumers should treat the event as belonging
+ * to an unknown subagent rather than the parent.
+ */
 export type UnifiedEvent =
   /**
    * Snapshot of the SDK-native config object the adapter is about to hand to

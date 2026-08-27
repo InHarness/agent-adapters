@@ -241,6 +241,44 @@ describe('claude-code — a run-level termination closes every open subagent', (
     expect(result.passed).toBe(true);
   });
 
+  it('closes a subagent the engine never reported on, even when the run ends normally', async () => {
+    // `error_max_turns` (and an SDK stream that simply ends) closes the run while an
+    // Agent-tool notification is still owed — those land seconds after the tool_result.
+    // Once this generator returns, nothing can ever close that pair, so the ordinary
+    // exit carries the same obligation as the terminal ones. No error follows here.
+    script = async function* ({ prompt }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+      yield taskStarted('s-1');
+      yield resultMessage();
+    };
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const events = await collectEvents(new ClaudeCodeAdapter().execute(createTestParams({})), 10_000);
+
+    expect(completions(events).map((e) => e.status)).toEqual(['aborted']);
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(assertSubagentLifecycle(events).passed).toBe(true);
+  });
+
+  it('closes them when the SDK stream throws for a reason of its own', async () => {
+    // Not an abort and not a timeout: a transport failure or CLI crash. The run ends
+    // all the same, and the flush belongs BEFORE that error like every other one.
+    script = async function* ({ prompt }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+      yield taskStarted('s-1');
+      throw new Error('transport died');
+    };
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const events = await collectEvents(new ClaudeCodeAdapter().execute(createTestParams({})), 10_000);
+
+    expect(completions(events).map((e) => e.status)).toEqual(['aborted']);
+    const errorIdx = events.findIndex((e) => e.type === 'error');
+    expect(errorIdx).toBeGreaterThanOrEqual(0);
+    expect(events.indexOf(completions(events)[0])).toBeLessThan(errorIdx);
+    expect(assertSubagentLifecycle(events).passed).toBe(true);
+  });
+
   it('a timeout closes them too — the obligation is on run-level termination, not on abort()', async () => {
     script = heldRun({ open: ['s-1'] });
     const { ClaudeCodeAdapter } = await import('./claude-code.js');

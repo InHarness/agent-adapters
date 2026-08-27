@@ -66,7 +66,10 @@ export function mapSubagentStatus(
   declared: Record<string, SubagentStatus>,
 ): { status: SubagentStatus; warn: boolean } {
   const value = typeof raw === 'string' ? raw : '';
-  const mapped = declared[value];
+  // `hasOwnProperty`, not a bare lookup: `raw` is a wire value, and a plain object's
+  // inherited members would otherwise read as declared mappings — `'constructor'`
+  // would map onto a function and be emitted as a `status`.
+  const mapped = Object.prototype.hasOwnProperty.call(declared, value) ? declared[value] : undefined;
   if (mapped) return { status: mapped, warn: false };
   if (CANCELLATION_SHAPED.test(value)) return { status: 'aborted', warn: false };
   return { status: 'failed', warn: true };

@@ -860,6 +860,10 @@ export class GeminiAdapter implements RuntimeAdapter {
               }
             }
 
+            // The run ends on this `result`, so a thread whose own `agent_end` never
+            // arrived can no longer be closed by anything downstream. Same obligation as
+            // the abort branch above, on the ordinary path.
+            yield* flushOpenSubagents();
             yield {
               type: 'result',
               output,
@@ -873,6 +877,10 @@ export class GeminiAdapter implements RuntimeAdapter {
 
           case 'error': {
             const fatal = event.fatal as boolean;
+            // Only a FATAL error ends the run — and then the flush belongs before it,
+            // never after. A non-fatal one is just an event; the run keeps producing and
+            // the threads keep their chance to close themselves.
+            if (fatal) yield* flushOpenSubagents();
             yield { type: 'error', error: new Error((event.message as string) ?? 'Gemini error'), phase: 'runtime' };
             if (fatal) return;
             break;
@@ -883,6 +891,11 @@ export class GeminiAdapter implements RuntimeAdapter {
             break;
         }
       }
+
+      // The event stream ended without an `agent_end` of its own — a backstop for the
+      // same reason the branches above flush: once this generator returns, nothing can
+      // close an open pair.
+      yield* flushOpenSubagents();
     } catch (err) {
       if (this.aborted) {
         yield* flushOpenSubagents();
@@ -893,6 +906,7 @@ export class GeminiAdapter implements RuntimeAdapter {
         }
         return;
       }
+      yield* flushOpenSubagents();
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);

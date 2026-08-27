@@ -46,6 +46,17 @@ describe('mapSubagentStatus', () => {
       expect(mapSubagentStatus(raw, DECLARED).status, raw).not.toBe('completed');
     }
   });
+
+  it("does not mistake Object.prototype members for declared mappings", () => {
+    // `raw` is a wire value: a bare `declared[value]` lookup would resolve
+    // `'constructor'`/`'toString'` to inherited functions and emit one of them AS the
+    // status — silently defeating the whole point of mapping instead of forwarding.
+    for (const raw of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+      const mapped = mapSubagentStatus(raw, DECLARED);
+      expect(typeof mapped.status, raw).toBe('string');
+      expect(['completed', 'failed', 'aborted', 'stopped'], raw).toContain(mapped.status);
+    }
+  });
 });
 
 describe('validateSubagents', () => {
