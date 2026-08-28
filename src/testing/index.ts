@@ -7,6 +7,7 @@ export {
   assertMultiTurn,
   assertAdapterReady,
   assertNoBackgroundTasks,
+  assertSubagentLifecycle,
 } from './contract.js';
 export { MockAdapter, createTestParams } from './helpers.js';
 export {

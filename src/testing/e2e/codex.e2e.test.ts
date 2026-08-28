@@ -290,6 +290,32 @@ describe.skipIf(SKIP)('codex e2e', () => {
     }, 60_000);
   });
 
+  it('emits no synthesized subagent_completed on abort either — the absence IS the contract', async () => {
+    // M06's termination flush closes every subagent the adapter has OPEN. Codex has no
+    // subagent concept at all, so it opens none and closes none: zero lifecycle events
+    // on every path, aborted or not. This is a deliberate contract, not an omission —
+    // do not "fix" it by adding a flush here.
+    const adapter = createAdapter('codex');
+    const events: UnifiedEvent[] = [];
+    let aborted = false;
+
+    for await (const event of adapter.execute({
+      prompt: 'Write a long essay about the history of computing. Make it very detailed.',
+      systemPrompt: 'Write at least 2000 words.',
+      model: 'gpt-5.5',
+      maxTurns: 1,
+    })) {
+      events.push(event);
+      if (event.type === 'text_delta' && !aborted) {
+        aborted = true;
+        adapter.abort();
+      }
+    }
+
+    expect(events.some((e) => e.type.startsWith('subagent_'))).toBe(false);
+    expect(events.some((e) => e.type === 'error')).toBe(true);
+  });
+
   it('no subagent events and subagentTaskId is never populated', async () => {
     const adapter = createAdapter('codex');
     const events = await collectEvents(

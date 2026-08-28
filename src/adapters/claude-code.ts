@@ -25,6 +25,7 @@ import type {
   ElicitationRequest,
   ElicitationResponse,
   ImageInput,
+  SubagentStatus,
 } from '../types.js';
 import {
   AdapterInitError,
@@ -39,7 +40,7 @@ import { checkPeerSdkVersion } from '../sdk-version.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
-import { validateSubagents } from '../subagents.js';
+import { validateSubagents, mapSubagentStatus } from '../subagents.js';
 import { probePathScope, getClaudeSandboxConfig } from '../path-scope.js';
 import {
   checkToolPolicy,
@@ -67,6 +68,24 @@ export type {
   CreateMcpServerOptions,
   McpServerInstance,
 } from '../mcp.js';
+
+// --- Subagent status (M06) ---
+//
+// The SDK's `SDKTaskNotificationMessage.status` union, mapped onto the unified
+// `subagent_completed.status` vocabulary. It is a CLOSED three-value union on the
+// verified pin (`completed | failed | stopped`), and `stopped` is native here —
+// `Query.stopTask()` is the per-task lever, distinct from a run-level abort — so it
+// maps straight onto unified `'stopped'` rather than being collapsed into `'aborted'`.
+//
+// Anything outside this table is handled by `mapSubagentStatus`, not by this table:
+// cancellation-shaped spellings (the `cancelled`/`canceled` the `task_updated` channel
+// already shows) become `'aborted'`, and everything else becomes `'failed'` plus one
+// drift warning per run. Never `'completed'` — see ../subagents.ts.
+const SDK_TASK_STATUS_MAP: Record<string, SubagentStatus> = {
+  completed: 'completed',
+  failed: 'failed',
+  stopped: 'stopped',
+};
 
 // --- Built-in tool gating (M18) ---
 //
@@ -1239,6 +1258,13 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // workflow → `background_task_*` (M17). See ./claude-code.background-hold.ts
     // for the settlement invariant this registry enforces.
     const tasks = createTaskRegistry();
+    /**
+     * Whether this run has already reported an unrecognized SDK task status. The M06
+     * drift signal is at most ONE `warning` per run, however many unknown statuses
+     * arrive during it. Per-RUN, not module-level: a module-level flag would leak
+     * across runs and suppress the next run's signal entirely.
+     */
+    let unknownSubagentStatusWarned = false;
     // Track task-tracking tool_use IDs (TodoWrite or the TaskCreate/TaskGet/
     // TaskUpdate/TaskList family) so we can suppress their matching tool_result
     // (both the UnifiedEvent and the ContentBlock in rawMessages). That
@@ -1282,6 +1308,56 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         : backgroundHoldExpiredAfterMs !== null
           ? new AdapterBackgroundHoldExpiredError('claude-code', backgroundHoldExpiredAfterMs)
           : new AdapterAbortError('claude-code');
+    /**
+     * End this run the one way it is allowed to end abnormally: settle whatever the
+     * SDK is still awaiting, CLOSE EVERY SUBAGENT THIS RUN STILL HAS OPEN, then yield
+     * the terminal error. Callers `return` straight after.
+     *
+     * The flush is the M06 obligation: a run-level termination — `abort()`,
+     * `timeoutMs`, a background hold-cap expiry — must not leave a `subagent_started`
+     * without its counterpart, or a consumer pairing them live waits forever for a
+     * cleanup step that never fires. It reports on the ADAPTER'S TRACKING, not on the
+     * subagent: it says this run stopped tracking that delegation, not that the helper
+     * agent's own execution ended.
+     *
+     * Deliberately the opposite of the `background_task_*` rule. Background work
+     * outlives the run and only the engine can honestly report its completion, so a
+     * remaining background task is ABANDONED on a cap expiry. A subagent ends WITH the
+     * run, so the adapter is the party that can report its end truthfully — hence the
+     * `isBackground` filter below. Synthesizing a subagent event for a backgrounded
+     * shell command would be a category error.
+     *
+     * `tasks.settle()` removes from `inFlight`, so a subagent that already reported its
+     * own `task_notification` is naturally absent here — which is how "at most one
+     * `subagent_completed` per `subagent_started`" falls out of the data structure
+     * rather than out of a second bookkeeping set. It also settles the open probe about
+     * `Query.interrupt()`: if the SDK settles an in-flight task as `'stopped'`, that
+     * status is the one reported and this flush cannot overwrite it. Note this is the
+     * registry's `inFlight`, NOT the `kindById` map behind `tasks.kind()` — that map
+     * never drops an entry (late notifications still have to route), so walking it
+     * would re-close every subagent the run ever started.
+     *
+     * The flush is ONE generator called from every path that ends this run — the three
+     * terminal reasons below, an SDK iterator throw, and the ordinary loop exit — for
+     * the same reason `terminalRuntimeError()` above is one closure: those exit paths
+     * used to hold copies of the same ternary, and that is exactly how a fifth path
+     * gets half the teardown. Its own `flushedSubagents` guard makes it idempotent, so
+     * two paths overlapping (a throw after a partial flush) still cannot double-close.
+     */
+    const flushedSubagents = new Set<string>();
+    const flushOpenSubagents = function* (): Generator<UnifiedEvent> {
+      for (const taskId of [...tasks.inFlight]) {
+        if (tasks.kind(taskId)?.isBackground) continue;
+        if (flushedSubagents.has(taskId)) continue;
+        flushedSubagents.add(taskId);
+        yield { type: 'subagent_completed', taskId, status: 'aborted' };
+      }
+    };
+    const endRunTerminally = function* (): Generator<UnifiedEvent> {
+      settleAllPending();
+      yield* flushOpenSubagents();
+      yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
+    };
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
         timedOut = true;
@@ -1560,8 +1636,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               // Settle the SDK-side promise so the callback doesn't leak, and
               // cancel everything still queued behind it.
               settleUnanswered(pending, 'cancel');
-              settleAllPending();
-              yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
+              yield* endRunTerminally();
               return;
             }
             const res = outcome.res;
@@ -1617,8 +1692,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         }
 
         if (winner.kind === 'abort') {
-          settleAllPending();
-          yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
+          yield* endRunTerminally();
           return;
         }
 
@@ -1631,8 +1705,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         hold.touch(event);
 
         if (run.abortController.signal.aborted) {
-          settleAllPending();
-          yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
+          yield* endRunTerminally();
           return;
         }
 
@@ -1901,10 +1974,27 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   usage: normalizeClaudeUsage(e.usage),
                 };
               } else {
+                // MAP, never forward. `task_notification.status` is a closed union on
+                // the pinned SDK (`completed | failed | stopped`), but the sibling
+                // `task_updated.patch.status` channel below already shows a wider
+                // engine vocabulary (`cancelled`/`canceled`) — so a peer-SDK bump
+                // inside the declared range could widen this one to match, and the
+                // unified surface must not inherit whatever the SDK happens to spell.
+                const mapped = mapSubagentStatus(e.status, SDK_TASK_STATUS_MAP);
+                if (mapped.warn && !unknownSubagentStatusWarned) {
+                  unknownSubagentStatusWarned = true;
+                  yield {
+                    type: 'warning',
+                    message:
+                      `claude-code reported an unrecognized subagent status ${JSON.stringify(e.status)}; ` +
+                      `reported as 'failed' because claiming success is the unsafe direction. This is a ` +
+                      `drift signal — the SDK pin's declared statuses no longer cover what it emits.`,
+                  };
+                }
                 yield {
                   type: 'subagent_completed',
                   taskId,
-                  status: e.status as string,
+                  status: mapped.status,
                   summary: e.summary as string | undefined,
                   // Per-subagent total (sum across the subagent's turns).
                   usage: normalizeClaudeUsage(e.usage),
@@ -2067,16 +2157,27 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // session" — trips the flag on a run that completed successfully, and turning
       // that into a terminal error would report a good run as a failed one.
       if (backgroundHoldExpiredAfterMs !== null || timedOut) {
-        settleAllPending();
-        yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
+        yield* endRunTerminally();
         return;
       }
+
+      // The ORDINARY end of the run, and it carries the same obligation. A turn can end
+      // with a delegation the engine never reported on — `error_max_turns` closes the
+      // channel while an Agent-tool `task_notification` is still seconds away — and once
+      // this generator returns, nothing can ever arrive to close that pair. No terminal
+      // error follows here, so this is the one flush that stands alone.
+      yield* flushOpenSubagents();
     } catch (err) {
       if (run.abortController.signal.aborted) {
-        settleAllPending();
-        yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
+        yield* endRunTerminally();
         return;
       }
+      // Same M06 obligation as `endRunTerminally()`, on the path that does NOT own the
+      // terminal reason: the SDK's iterator threw for a reason of its own (transport
+      // failure, CLI crash). The run still ends here, so every subagent it still has
+      // open still has to be closed — before the error, never after it.
+      settleAllPending();
+      yield* flushOpenSubagents();
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);

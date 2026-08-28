@@ -153,6 +153,38 @@ export interface BackgroundTaskRef {
 }
 
 /**
+ * The declared vocabulary for {@link UnifiedEvent} `subagent_completed.status`
+ * (M06). Exactly four values, with fixed meanings:
+ *
+ *   - `'completed'` — the subagent ran to its own end.
+ *   - `'failed'`    — the subagent ended in error.
+ *   - `'aborted'`   — the subagent was closed because a RUN-LEVEL termination
+ *                     (`abort()`, `timeoutMs`, a background hold-cap expiry)
+ *                     ended the run. A terminal `error` follows immediately.
+ *   - `'stopped'`   — the subagent was ended INDIVIDUALLY while the run kept
+ *                     producing events (the per-task stop lever M17 reserves).
+ *
+ * `'aborted'` and `'stopped'` are deliberately distinct: the first says the run
+ * is over, the second says one delegation ended while the agent is still working.
+ * Collapsing them would destroy the only signal a consumer has to tell them apart.
+ *
+ * Adapters MAP their SDK's own spelling onto these names and never forward it
+ * raw — see {@link mapSubagentStatus}. Which adapter produces which:
+ *
+ *   - claude-code: all four
+ *   - gemini:      `completed` / `failed` / `aborted`
+ *   - opencode:    `completed` / `failed` / `aborted`
+ *   - codex:       none — no subagent concept, no lifecycle events at all
+ *
+ * NOTE the field on the event stays typed `string`, deliberately. The vocabulary
+ * is a specification obligation on what adapters PRODUCE, not a compile-time
+ * constraint on consumers — the same discipline M17 applies to `taskType`. This
+ * alias is exported for consumers who want to opt into the narrower type
+ * themselves.
+ */
+export type SubagentStatus = 'completed' | 'failed' | 'aborted' | 'stopped';
+
+/**
  * `subagentTaskId` on the delta-like variants (`text_delta`, `thinking`,
  * `tool_use`, `tool_result`) matches the `taskId` of the surrounding
  * `subagent_started` envelope. Required for grouping when multiple subagents
@@ -200,6 +232,19 @@ export type UnifiedEvent =
   | { type: 'assistant_message'; message: NormalizedMessage }
   | { type: 'subagent_started'; taskId: string; description: string; toolUseId: string }
   | { type: 'subagent_progress'; taskId: string; description: string; lastToolName?: string }
+  /**
+   * A subagent's lifecycle ended. `status` carries one of the four values of
+   * {@link SubagentStatus} — see there for the vocabulary and its per-adapter
+   * coverage. Typed `string` on purpose (the vocabulary is an obligation on
+   * producers, not a compile-time constraint), so a consumer's exhaustive
+   * `switch` gets no compiler warning when a value is added: read the CHANGELOG.
+   *
+   * At most ONE of these per `subagent_started`, and never zero: a run-level
+   * termination closes every subagent the adapter still has open with
+   * `status: 'aborted'` before the stream ends. That synthesized completion
+   * reports that THIS RUN stopped tracking the subagent — not that the helper
+   * agent's own execution ended.
+   */
   | { type: 'subagent_completed'; taskId: string; status: string; summary?: string; usage?: UsageStats }
   /**
    * Engine-backgrounded side work — a shell command the engine detached (e.g.

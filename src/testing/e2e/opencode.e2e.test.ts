@@ -38,7 +38,7 @@ import {
   assertToolPolicyRefusal,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
-import { assertAdapterReady } from '../contract.js';
+import { assertAdapterReady, assertSubagentLifecycle } from '../contract.js';
 
 const HAS_API_KEY = requireEnv('OPENROUTER_API_KEY');
 const HAS_CLI = isOpencodeAvailable();
@@ -323,6 +323,45 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
       }
     });
   });
+
+  it('abort with a task subagent in flight closes the ONE tracked pair', async (ctx) => {
+    // NOT VERIFIED LIVE as of 0.9.8 — written alongside the claude-code leg.
+    // Attribution here is ordering-based under a single-active assumption, so the
+    // flush closes exactly the one subagent the adapter was tracking. A nested or
+    // concurrent `task` was never opened as its own pair, and nothing is claimed for
+    // it — that is the documented degradation, not a gap in this case.
+    const adapter = createAdapter('opencode-openrouter');
+    const events: UnifiedEvent[] = [];
+    let aborted = false;
+
+    for await (const event of adapter.execute({
+      prompt: SUBAGENT_PROMPT,
+      systemPrompt: SUBAGENT_SYSTEM_PROMPT,
+      model: 'claude-sonnet-4',
+      maxTurns: 5,
+    })) {
+      events.push(event);
+      if (event.type === 'subagent_started' && !aborted) {
+        aborted = true;
+        adapter.abort();
+      }
+    }
+
+    if (!events.some((e) => e.type === 'subagent_started')) {
+      console.warn(
+        `[INCONCLUSIVE] opencode abort × subagents: the model never delegated. ` +
+          `Sequence: ${events.map((e) => e.type).join(' → ')}`,
+      );
+      ctx.skip();
+    }
+
+    const lifecycle = assertSubagentLifecycle(events);
+    expect(lifecycle.assertions.filter((a) => !a.passed).map((a) => `${a.name}: ${a.message}`)).toEqual([]);
+    expect(
+      events.filter((e) => e.type === 'subagent_completed' && e.status === 'aborted').length,
+      'at most one — single-active by construction',
+    ).toBeLessThanOrEqual(1);
+  }, 120_000);
 
   it('subagent events carry subagentTaskId on deltas (ordering-based)', async () => {
     const adapter = createAdapter('opencode-openrouter');

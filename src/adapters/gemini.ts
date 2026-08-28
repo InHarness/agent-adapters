@@ -634,6 +634,25 @@ export class GeminiAdapter implements RuntimeAdapter {
 
     // Track subagent state via threadId
     const activeSubagents = new Set<string>();
+    /**
+     * Close every subagent thread this run still has open (M06). A run-level
+     * termination — `abort()` or `timeoutMs` — must not leave a `subagent_started`
+     * without its counterpart, or a consumer pairing them live waits forever.
+     *
+     * A backstop, not the normal path: the `agent_end` handler below deletes a thread
+     * from the set as it reports it, so a thread that already got its own completion is
+     * absent here. That is what keeps "at most one `subagent_completed` per
+     * `subagent_started`" true — the set the settle path empties is the set this walks.
+     *
+     * It reports on the ADAPTER'S TRACKING: this run stopped tracking that thread, not
+     * that the helper agent's own execution ended.
+     */
+    const flushOpenSubagents = function* (): Generator<UnifiedEvent> {
+      for (const threadId of [...activeSubagents]) {
+        activeSubagents.delete(threadId);
+        yield { type: 'subagent_completed', taskId: threadId, status: 'aborted' };
+      }
+    };
 
     try {
       const imageParts = params.images?.length
@@ -799,16 +818,23 @@ export class GeminiAdapter implements RuntimeAdapter {
             // Synthesize subagent_completed if this is a subagent thread ending
             if (event.threadId && activeSubagents.has(event.threadId)) {
               activeSubagents.delete(event.threadId);
+              // MAP by reason, never collapse. `aborted` is NATIVE on this SDK, so
+              // the abort case is REPORTED rather than inferred — reporting it as
+              // `'completed'` (which this used to do) falsely claims the delegation
+              // succeeded, and claiming success is the one error a consumer would act
+              // on irreversibly.
+              const reason = event.reason as string | undefined;
               yield {
                 type: 'subagent_completed',
                 taskId: event.threadId,
-                status: (event.reason as string) === 'failed' ? 'failed' : 'completed',
+                status: reason === 'failed' ? 'failed' : reason === 'aborted' ? 'aborted' : 'completed',
               };
               break;
             }
 
-            const reason = event.reason as string | undefined;
-            if (reason === 'aborted') {
+            const endReason = event.reason as string | undefined;
+            if (endReason === 'aborted') {
+              yield* flushOpenSubagents();
               yield {
                 type: 'error',
                 error: timedOut ? new AdapterTimeoutError('gemini', params.timeoutMs!) : new AdapterAbortError('gemini'),
@@ -834,6 +860,10 @@ export class GeminiAdapter implements RuntimeAdapter {
               }
             }
 
+            // The run ends on this `result`, so a thread whose own `agent_end` never
+            // arrived can no longer be closed by anything downstream. Same obligation as
+            // the abort branch above, on the ordinary path.
+            yield* flushOpenSubagents();
             yield {
               type: 'result',
               output,
@@ -847,6 +877,10 @@ export class GeminiAdapter implements RuntimeAdapter {
 
           case 'error': {
             const fatal = event.fatal as boolean;
+            // Only a FATAL error ends the run — and then the flush belongs before it,
+            // never after. A non-fatal one is just an event; the run keeps producing and
+            // the threads keep their chance to close themselves.
+            if (fatal) yield* flushOpenSubagents();
             yield { type: 'error', error: new Error((event.message as string) ?? 'Gemini error'), phase: 'runtime' };
             if (fatal) return;
             break;
@@ -857,8 +891,14 @@ export class GeminiAdapter implements RuntimeAdapter {
             break;
         }
       }
+
+      // The event stream ended without an `agent_end` of its own — a backstop for the
+      // same reason the branches above flush: once this generator returns, nothing can
+      // close an open pair.
+      yield* flushOpenSubagents();
     } catch (err) {
       if (this.aborted) {
+        yield* flushOpenSubagents();
         if (timedOut) {
           yield { type: 'error', error: new AdapterTimeoutError('gemini', params.timeoutMs!), phase: 'runtime' };
         } else {
@@ -866,6 +906,7 @@ export class GeminiAdapter implements RuntimeAdapter {
         }
         return;
       }
+      yield* flushOpenSubagents();
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);

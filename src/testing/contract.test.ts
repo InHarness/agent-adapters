@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { MockAdapter, createTestParams } from './helpers.js';
-import { assertSimpleText, assertToolUse, assertThinking, assertMultiTurn } from './contract.js';
+import {
+  assertSimpleText,
+  assertToolUse,
+  assertThinking,
+  assertMultiTurn,
+  assertSubagentLifecycle,
+} from './contract.js';
 import type { UnifiedEvent, NormalizedMessage } from '../types.js';
 
 const assistantMsg: NormalizedMessage = {
@@ -97,5 +103,32 @@ describe('contract assertions with MockAdapter', () => {
     const mock = new MockAdapter('test', events);
     const result = await assertMultiTurn(mock.execute(createTestParams()));
     expect(result.passed).toBe(true);
+  });
+});
+
+describe('assertSubagentLifecycle', () => {
+  it('anchors "nothing after the terminal error" on the LAST error, not the first', () => {
+    // `error` is not always terminal: claude-code yields one when a consumer's
+    // `onUserInput` callback throws and keeps iterating, gemini yields non-fatal ones.
+    // Anchoring on the first would fail a perfectly conformant run whose delegation
+    // merely happened after such an event.
+    const events: UnifiedEvent[] = [
+      { type: 'error', error: new Error('non-fatal hiccup'), phase: 'runtime' },
+      { type: 'subagent_started', taskId: 's-1', description: 'work' },
+      { type: 'subagent_completed', taskId: 's-1', status: 'aborted' },
+      { type: 'error', error: new Error('terminal'), phase: 'runtime' },
+    ];
+    const result = assertSubagentLifecycle(events);
+    expect(result.assertions.filter((a) => !a.passed)).toEqual([]);
+    expect(result.passed).toBe(true);
+  });
+
+  it('still fails a flush that lands after the terminal error', () => {
+    const events: UnifiedEvent[] = [
+      { type: 'subagent_started', taskId: 's-1', description: 'work' },
+      { type: 'error', error: new Error('terminal'), phase: 'runtime' },
+      { type: 'subagent_completed', taskId: 's-1', status: 'aborted' },
+    ];
+    expect(assertSubagentLifecycle(events).passed).toBe(false);
   });
 });
