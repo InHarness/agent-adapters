@@ -458,4 +458,38 @@ describe('subagent deny propagation', () => {
   it('is a no-op when the run denies nothing', () => {
     expect(subagentToolPolicy({ tools: ['Bash'] }, undefined)).toEqual({ tools: ['Bash'] });
   });
+
+  // M06: a subagent inherits the run's MCP servers "filtered by its own toolset".
+  // Tool groups contain built-ins only, so no group can deny an `mcp__*` name —
+  // intersecting them away left a mostly-MCP definition with `tools: []`, which the
+  // SDK reads as "no tools" rather than "inherit".
+  it('passes an mcp__ name through — groups gate built-ins, not MCP', () => {
+    const out = subagentToolPolicy({ tools: ['mcp__reference-tools__search_pages'] }, policy);
+    expect(out.tools).toEqual(['mcp__reference-tools__search_pages']);
+  });
+
+  it('applies both rules at once: denied built-in drops, MCP survives', () => {
+    const out = subagentToolPolicy(
+      { tools: ['Read', 'Bash', 'mcp__entity-tools__get_entities'] },
+      policy,
+    );
+    expect(out.tools).toEqual(['Read', 'mcp__entity-tools__get_entities']);
+  });
+
+  // The residual-allow-list invariant: the predicate is "is this MCP", never "is this
+  // absent from the built-in list". A built-in this library has not heard of — one
+  // landing in a future SDK bump — must still be blocked, so an upgrade degrades toward
+  // safety. This is the only case where the two predicates disagree.
+  it('still blocks a built-in it has never heard of', () => {
+    const out = subagentToolPolicy({ tools: ['SomeFutureBuiltin', 'Read'] }, policy);
+    expect(out.tools).toEqual(['Read']);
+  });
+
+  it('still unions the run\'s denied built-ins into disallowedTools', () => {
+    const out = subagentToolPolicy(
+      { tools: ['mcp__entity-tools__get_entities'], disallowedTools: ['Custom'] },
+      policy,
+    );
+    expect(out.disallowedTools).toEqual(expect.arrayContaining(['Custom', ...policy.deny]));
+  });
 });
