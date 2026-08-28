@@ -3,6 +3,16 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.9.9] — 2026-08-28
+
+### Fixed
+
+- **A subagent definition's `mcp__*` tools survive built-in tool gating.** `subagentToolPolicy` intersected the definition's whole `tools` list with the run's residual allow-list, and that allow-list contains **built-in names only** — so every MCP tool fell out the moment any group was denied. A definition whose toolset is mostly MCP came back with `tools: []`, which the SDK reads as *"no tools"* rather than *"inherit"*, leaving the subagent unable to reach anything. Since `buildClaudeCodeToolPolicy` returns a policy for *any* non-empty deny set, and plan mode alone denies `file-write` + `shell`, this hit nearly every gated run.
+
+  Tool groups are four (`shell`, `file-read`, `file-write`, `web`) and every name in them is a built-in, so an MCP tool was never something a group could deny. M06 already specifies that a subagent inherits the run's MCP servers *"filtered by its own toolset"* — which requires those names to survive this intersection.
+
+  **Deny propagation is unchanged**: a denied built-in still drops from the definition and still lands in `disallowedTools`. The predicate is `t.startsWith('mcp__') || allowed.has(t)` — deliberately *"is this MCP"* rather than *"is this absent from the built-in list"*, so the M18 residual-allow-list invariant holds and a built-in this library has never heard of (one arriving in a future SDK bump) is still blocked.
+
 ## [0.9.8] — 2026-08-27
 
 ### ⚠ Behavioral change — read this even though nothing will fail to compile

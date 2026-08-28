@@ -219,6 +219,23 @@ export function buildClaudeCodeToolPolicy(
  * the parent run's shape.
  *
  * Returns the definition's fields unchanged when the run denies nothing.
+ *
+ * **The narrowing covers BUILT-INS ONLY — an `mcp__*` name passes through.**
+ * Tool groups are four (`shell`, `file-read`, `file-write`, `web`) and every
+ * name they contain is a built-in, so an MCP tool is not something a group can
+ * deny; M06 says a subagent inherits the run's MCP servers "filtered by its own
+ * toolset", which requires those names to survive this intersection or the
+ * filter has nothing left to filter with. Dropping them anyway was a bug: a
+ * definition whose toolset is mostly MCP came back with `tools: []` the moment
+ * ANY group was denied, and an empty array reads as "no tools" to the SDK
+ * rather than "inherit" — so the subagent was spawned unable to reach anything.
+ *
+ * The predicate is deliberately "is this MCP", NOT "is this absent from the
+ * built-in list". Enforcement here is a RESIDUAL ALLOW-LIST, not a deny-list:
+ * a built-in this library has never heard of — a new one landing in an SDK
+ * bump — must still be BLOCKED, so an upgrade degrades toward safety. The two
+ * predicates differ on exactly that case, which is the case the rule exists
+ * for.
  */
 export function subagentToolPolicy(
   agent: { tools?: string[]; disallowedTools?: string[] },
@@ -231,7 +248,9 @@ export function subagentToolPolicy(
     };
   }
   const allowed = new Set(toolPolicy.allow);
-  const tools = agent.tools ? agent.tools.filter((t) => allowed.has(t)) : toolPolicy.allow;
+  const tools = agent.tools
+    ? agent.tools.filter((t) => t.startsWith('mcp__') || allowed.has(t))
+    : toolPolicy.allow;
   const disallowedTools = [...new Set([...(agent.disallowedTools ?? []), ...toolPolicy.deny])];
   return { tools, disallowedTools };
 }
