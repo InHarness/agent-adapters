@@ -138,6 +138,26 @@ export const CLAUDE_CODE_TASK_TRACKING_TOOLS: string[] = [
 export const CLAUDE_CODE_TASK_WRITE_TOOLS: string[] = ['TodoWrite', 'TaskCreate', 'TaskUpdate'];
 
 /**
+ * Declared task-write fields that carry no todo-list content: identifiers, and the
+ * dependency-graph / ownership / metadata keys of `TaskUpdateInput`.
+ *
+ * A write built ONLY from these legitimately merges nothing — `TaskUpdate({ taskId,
+ * addBlockedBy })` reorders the task graph without touching any item's text or
+ * status — so it must not be reported as lost state. The warning exists for an
+ * UNRECOGNIZED spelling, which is what real drift looks like; firing it on a
+ * perfectly handled call would teach consumers to ignore it.
+ */
+const TASK_NON_TODO_INPUT_KEYS = new Set([
+  'taskId',
+  'task_id',
+  'id',
+  'addBlocks',
+  'addBlockedBy',
+  'owner',
+  'metadata',
+]);
+
+/**
  * Built-ins belonging to each gated group. Renamed/relocated built-ins list
  * EVERY spelling: a deny that names only one of two live aliases silently fails
  * to fire, and on the allow-list side an unlisted alias silently disappears.
@@ -364,7 +384,7 @@ export function normalizeAssistantMessage(msg: SDKMessage & { type: 'assistant' 
  * replaces the full list.
  */
 export function todoItemsFromTodoWriteInput(input: Record<string, unknown>): TodoItem[] {
-  const raw = Array.isArray(input.todos) ? (input.todos as Record<string, unknown>[]) : [];
+  const raw = (readTaskItemArray(input.todos) ?? []) as Record<string, unknown>[];
   return raw.map((t, idx) => ({
     id: String(idx),
     content: typeof t.content === 'string' ? t.content : '',
@@ -419,8 +439,13 @@ function readTodoPriority(value: unknown): TodoItem['priority'] | undefined {
  * must never throw out of the stream handler. An unparseable batch falls through
  * to the caller's warning path rather than crashing the run (M16).
  */
-function readBatchTasks(input: Record<string, unknown>): unknown[] | undefined {
-  const raw = input.tasks;
+/**
+ * An item list the model may have sent either as a real array or as a STRINGIFIED
+ * JSON array — the same raw-stream failure mode {@link TASK_STATUS_KEYS} documents,
+ * observed on `TaskCreate({ tasks })` and equally possible on `TodoWrite({ todos })`.
+ * Never throws: a malformed string is "no list", not a broken stream.
+ */
+function readTaskItemArray(raw: unknown): unknown[] | undefined {
   if (Array.isArray(raw)) return raw;
   if (typeof raw !== 'string') return undefined;
   try {
@@ -429,6 +454,10 @@ function readBatchTasks(input: Record<string, unknown>): unknown[] | undefined {
   } catch {
     return undefined;
   }
+}
+
+function readBatchTasks(input: Record<string, unknown>): unknown[] | undefined {
+  return readTaskItemArray(input.tasks);
 }
 
 /**
@@ -441,6 +470,26 @@ function readBatchTasks(input: Record<string, unknown>): unknown[] | undefined {
  * items — the CRUD family accumulates per-item, only `TodoWrite` replaces
  * wholesale (M16).
  */
+/**
+ * The snapshot id a per-item task write lands on. An engine-assigned id resolves
+ * back to the create that produced it; an id we have never seen assigned is used
+ * as-is (it may name a task from an earlier turn, which this snapshot cannot have);
+ * a create that names no id at all is keyed by its `tool_use` id.
+ *
+ * Shared with the call site on purpose: the positional-fallback queue holds snapshot
+ * ITEM ids, and an entry that is not the id the merge actually used would alias a
+ * later update onto nothing (M16).
+ */
+export function resolveTaskItemId(
+  toolUseId: string,
+  input: Record<string, unknown>,
+  serverIdAliases?: ReadonlyMap<string, string>,
+): string {
+  const explicitId =
+    typeof input.taskId === 'string' ? input.taskId : typeof input.id === 'string' ? input.id : undefined;
+  return (explicitId ? serverIdAliases?.get(explicitId) : undefined) ?? explicitId ?? toolUseId;
+}
+
 export function batchTaskItemId(toolUseId: string, index: number): string {
   return `${toolUseId}#${index}`;
 }
@@ -488,7 +537,15 @@ export function mergeTaskToolInputIntoSnapshot(
   input: Record<string, unknown>,
   serverIdAliases?: ReadonlyMap<string, string>,
 ): TodoItem[] | undefined {
-  const batch = readBatchTasks(input);
+  const explicitId =
+    typeof input.taskId === 'string' ? input.taskId : typeof input.id === 'string' ? input.id : undefined;
+
+  // A batch is a CREATE shape: N brand-new items, no identifier of its own. An
+  // input that names a task it is updating is not one, however its items are
+  // spelled — appending `<toolUseId>#0` there would silently strand the update
+  // instead of applying it, so that falls to the per-item path (and, when that
+  // merges nothing, to the caller's warning) rather than to a wrong merge.
+  const batch = explicitId === undefined ? readBatchTasks(input) : undefined;
   if (batch !== undefined) {
     const next = snapshot.slice();
     let mergedCount = 0;
@@ -542,12 +599,7 @@ export function mergeTaskToolInputIntoSnapshot(
     status !== undefined;
   if (!hasWritableField) return undefined;
 
-  const explicitId =
-    typeof input.taskId === 'string' ? input.taskId : typeof input.id === 'string' ? input.id : undefined;
-  // An engine-assigned id resolves back to the create that produced it; an id we
-  // have never seen assigned is used as-is (it may name a task from an earlier
-  // turn, which this snapshot cannot have).
-  const id = (explicitId ? serverIdAliases?.get(explicitId) : undefined) ?? explicitId ?? toolUseId;
+  const id = resolveTaskItemId(toolUseId, input, serverIdAliases);
 
   const next = snapshot.slice();
   const idx = next.findIndex((item) => item.id === id);
@@ -558,6 +610,7 @@ export function mergeTaskToolInputIntoSnapshot(
       : typeof input.subject === 'string'
         ? input.subject
         : (existing?.content ?? '');
+  const inputPriority = readTodoPriority(input.priority);
   const merged: TodoItem = {
     id,
     content,
@@ -567,7 +620,11 @@ export function mergeTaskToolInputIntoSnapshot(
         ? { activeForm: existing.activeForm }
         : {}),
     status: (status ?? existing?.status ?? 'pending') as TodoItem['status'],
-    ...(existing?.priority !== undefined ? { priority: existing.priority } : {}),
+    ...(inputPriority !== undefined
+      ? { priority: inputPriority }
+      : existing?.priority !== undefined
+        ? { priority: existing.priority }
+        : {}),
   };
   if (idx >= 0) next[idx] = merged;
   else next.push(merged);
@@ -1553,10 +1610,16 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // Item ids, not tool_use ids: for a single create the two are the same, but a
     // batch contributes one entry PER ITEM, so the count stays honest either way.
     const unresolvedTaskCreateItemIds: string[] = [];
-    // The snapshot ids a batch `TaskCreate` produced, in item order, awaiting the
-    // tool_result that names the ids the engine assigned them. Positional: ids[i]
-    // belongs to item i, which is the only mapping a batch result can offer.
-    const batchCreateItemIdsByToolUseId = new Map<string, string[]>();
+    // The snapshot ids a `TaskCreate` produced, in item order, awaiting the
+    // tool_result that names the ids the engine assigned them. Recorded for EVERY
+    // create, not just batches: the id the snapshot keyed the item by is
+    // `taskId ?? id ?? toolUseId` (see resolveTaskItemId), so a create that carried
+    // its own `id` is NOT filed under its tool_use id, and queueing the tool_use id
+    // would alias a later update onto an item that does not exist. `batch` says
+    // which extraction the tool_result needs: positional multi-id for a batch
+    // (ids[i] belongs to item i, the only mapping a batch result can offer), the
+    // proven single-id prose match otherwise.
+    const createdTaskItemIdsByToolUseId = new Map<string, { itemIds: string[]; batch: boolean }>();
     // Unmergeable WRITE shapes already reported this run, keyed by tool + sorted
     // input keys. A model that consistently emits an unhandled spelling would
     // otherwise warn on every call and drown the side-band — the same reason the
@@ -2030,6 +2093,23 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             // matching tool_result stay visible since the real answer for
             // those two read verbs lives in the tool_result, not this input.
             const unmergeableTaskWarnings: string[] = [];
+            // Warn ONCE per distinct lost shape: a model that consistently emits an
+            // unhandled spelling would otherwise drown the side-band in one warning
+            // per call (cf. the unknownSubagentStatusWarned latch above).
+            const warnUnmergeableTask = (toolName: string, input: Record<string, unknown>): void => {
+              const keys = Object.keys(input).sort();
+              if (!keys.some((key) => !TASK_NON_TODO_INPUT_KEYS.has(key))) return;
+              const shape = `${toolName}(${keys.join(',')})`;
+              if (warnedUnmergeableTaskShapes.has(shape)) return;
+              warnedUnmergeableTaskShapes.add(shape);
+              unmergeableTaskWarnings.push(
+                `claude-code emitted a ${toolName} this adapter could not merge into the ` +
+                  `todo snapshot (input keys: ${keys.length > 0 ? keys.join(', ') : '<none>'}). ` +
+                  `That task-list update is lost — the list will not advance for it. This is a ` +
+                  `drift signal: the model is using a field spelling the merge gate does not ` +
+                  `accept yet (M16).`,
+              );
+            };
             for (let i = 0; i < normalized.content.length; i++) {
               const block = normalized.content[i];
               if (block.type !== 'toolUse') continue;
@@ -2037,6 +2117,15 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               let items: TodoItem[] | undefined;
               if (block.toolName === 'TodoWrite') {
                 items = todoItemsFromTodoWriteInput(block.input);
+                // TodoWrite REPLACES the snapshot wholesale, so an unreadable `todos`
+                // would not merely fail to advance the list — it would blank it. An
+                // empty list the model actually sent is a legitimate clear; a `todos`
+                // that is neither an array nor a JSON array of one is lost state, so
+                // the old snapshot is kept and the loss is reported (M16).
+                if (items.length === 0 && readTaskItemArray(block.input.todos) === undefined) {
+                  warnUnmergeableTask(block.toolName, block.input);
+                  items = undefined;
+                }
               } else if (CLAUDE_CODE_TASK_TRACKING_TOOLS.includes(block.toolName)) {
                 // Last-resort reconciliation (M16): an update naming an id we never
                 // saw assigned, with exactly one create still unaccounted for, can
@@ -2070,18 +2159,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 // list that silently stops advancing. Say so on the side-band —
                 // before this, the only symptom was an empty list (M16).
                 if (items === undefined && CLAUDE_CODE_TASK_WRITE_TOOLS.includes(block.toolName)) {
-                  const keys = Object.keys(block.input).sort();
-                  const shape = `${block.toolName}(${keys.join(',')})`;
-                  if (!warnedUnmergeableTaskShapes.has(shape)) {
-                    warnedUnmergeableTaskShapes.add(shape);
-                    unmergeableTaskWarnings.push(
-                      `claude-code emitted a ${block.toolName} this adapter could not merge into the ` +
-                        `todo snapshot (input keys: ${keys.length > 0 ? keys.join(', ') : '<none>'}). ` +
-                        `That task-list update is lost — the list will not advance for it. This is a ` +
-                        `drift signal: the model is using a field spelling the merge gate does not ` +
-                        `accept yet (M16).`,
-                    );
-                  }
+                  warnUnmergeableTask(block.toolName, block.input);
                 }
               }
               if (items === undefined) continue;
@@ -2091,11 +2169,22 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               if (block.toolName === 'TaskCreate') {
                 taskCreateToolUseIds.add(block.toolUseId);
                 // A batch create owns several snapshot items at once. Remember which,
-                // in order, so its tool_result's N ids can be mapped onto them.
+                // in order, so its tool_result's N ids can be mapped onto them; a
+                // single create owns exactly the one id the merge resolved.
                 const batchIds = items
                   .filter((item) => item.id.startsWith(`${block.toolUseId}#`))
                   .map((item) => item.id);
-                if (batchIds.length > 0) batchCreateItemIdsByToolUseId.set(block.toolUseId, batchIds);
+                createdTaskItemIdsByToolUseId.set(
+                  block.toolUseId,
+                  batchIds.length > 0
+                    ? { itemIds: batchIds, batch: true }
+                    : {
+                        itemIds: [
+                          resolveTaskItemId(block.toolUseId, block.input, serverTaskIdToToolUseId),
+                        ],
+                        batch: false,
+                      },
+                );
               }
               pendingTodoToolUseIds.add(block.toolUseId);
               lastTodoSnapshot = items;
@@ -2156,9 +2245,10 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   // without this the update would append a second, blank-titled
                   // item and the real one would never change status (M16).
                   if (taskCreateToolUseIds.delete(block.toolUseId)) {
-                    const batchItemIds = batchCreateItemIdsByToolUseId.get(block.toolUseId);
-                    batchCreateItemIdsByToolUseId.delete(block.toolUseId);
-                    if (batchItemIds !== undefined) {
+                    const created = createdTaskItemIdsByToolUseId.get(block.toolUseId);
+                    createdTaskItemIdsByToolUseId.delete(block.toolUseId);
+                    if (created?.batch) {
+                      const batchItemIds = created.itemIds;
                       // A batch announces N ids for N items; the only mapping on offer
                       // is positional, and it is only trustworthy when the counts agree.
                       // A partial or over-long list is ambiguous, and a wrong alias
@@ -2185,12 +2275,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                     }
                     const assigned = extractAssignedTaskId(String(block.content ?? ''));
                     if (assigned) {
-                      serverTaskIdToToolUseId.set(assigned, block.toolUseId);
+                      serverTaskIdToToolUseId.set(assigned, created?.itemIds[0] ?? block.toolUseId);
                     } else {
                       // Nothing matched the prose. Remember which TaskCreate is
                       // outstanding so the next unknown TaskUpdate id can still be
                       // reconciled positionally — see unresolvedTaskCreateItemIds.
-                      unresolvedTaskCreateItemIds.push(block.toolUseId);
+                      unresolvedTaskCreateItemIds.push(created?.itemIds[0] ?? block.toolUseId);
                       if (debugUsage()) {
                         console.error(
                           '[agent-adapters claude-code] TaskCreate tool_result did not name an ' +

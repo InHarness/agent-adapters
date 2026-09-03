@@ -357,3 +357,84 @@ describe('claude-code — an unmergeable task WRITE is reported (M16)', () => {
     expect(taskToolEvents(events), 'their answer lives in the tool_result, so it must survive').toHaveLength(2);
   });
 });
+
+// Review follow-ups. Each of these was a way the M16 machinery could be wrong in the
+// quiet direction: a warning that cries drift over a perfectly handled call, an alias
+// filed under an id the snapshot never used, or a wholesale replace that blanks the
+// list from input it could not read.
+describe('claude-code — task-tracking edge shapes (M16 review)', () => {
+  it('stays silent for a TaskUpdate that only rewires the task graph', async () => {
+    // `addBlocks`/`addBlockedBy`/`owner`/`metadata` are DECLARED TaskUpdateInput
+    // fields (sdk-tools.d.ts on 0.3.220) that carry no todo content. Merging nothing
+    // is the correct outcome — nothing about the list changed — so warning "that
+    // update is lost" would be a false drift signal.
+    const events = await runTaskCalls([
+      { id: 'toolu_c1', name: 'TaskCreate', input: { subject: 'a', description: 'A' }, result: 'Task #1 created successfully: a' },
+      { id: 'toolu_c2', name: 'TaskCreate', input: { subject: 'b', description: 'B' }, result: 'Task #2 created successfully: b' },
+      { id: 'toolu_link', name: 'TaskUpdate', input: { taskId: '2', addBlockedBy: ['1'] } },
+    ]);
+
+    expect(warnings(events)).toEqual([]);
+    expect(finalSnapshot(events)?.map((i) => [i.content, i.status])).toEqual([
+      ['A', 'pending'],
+      ['B', 'pending'],
+    ]);
+  });
+
+  it('does not treat an update that names a task as a batch create', async () => {
+    // A `tasks` array alongside an explicit taskId is not N new items; appending
+    // `<toolUseId>#0` would strand the update on an item nothing else references.
+    const events = await runTaskCalls([
+      { id: 'toolu_c', name: 'TaskCreate', input: { subject: 'a', description: 'A' }, result: 'Task #1 created successfully: a' },
+      { id: 'toolu_u', name: 'TaskUpdate', input: { taskId: '1', tasks: '[{"content":"a","status":"completed"}]' } },
+    ]);
+
+    expect(finalSnapshot(events)?.map((i) => [i.content, i.status])).toEqual([['A', 'pending']]);
+    expect(warnings(events), 'the unmergeable update is reported rather than merged wrongly').toHaveLength(1);
+  });
+
+  it('aliases onto the id the snapshot actually used when a create carries its own id', async () => {
+    // The merge keys on `taskId ?? id ?? toolUseId`, so a create that spelled its own
+    // id is NOT filed under its tool_use id. Queueing the tool_use id would alias the
+    // later update onto an item that does not exist — a blank stub, and the real item
+    // stuck at pending.
+    const events = await runTaskCalls([
+      { id: 'toolu_c', name: 'TaskCreate', input: { id: 'tmp-1', subject: 'a', description: 'A' }, result: 'Done.' },
+      { id: 'toolu_u', name: 'TaskUpdate', input: { taskId: '7', status: 'completed' } },
+    ]);
+
+    expect(finalSnapshot(events)).toEqual([{ id: 'tmp-1', content: 'A', status: 'completed' }]);
+  });
+
+  it('reads a TodoWrite list the model stringified', async () => {
+    const events = await runTaskCalls([
+      { id: 'toolu_t', name: 'TodoWrite', input: { todos: '[{"content":"a","status":"in_progress"}]' } },
+    ]);
+
+    expect(finalSnapshot(events)?.map((i) => [i.content, i.status])).toEqual([['a', 'in_progress']]);
+    expect(warnings(events)).toEqual([]);
+  });
+
+  it('keeps the old snapshot when a TodoWrite list is unreadable, and says so', async () => {
+    // TodoWrite REPLACES wholesale, so an unreadable `todos` would blank the list
+    // rather than merely fail to advance it.
+    const events = await runTaskCalls([
+      { id: 'toolu_t1', name: 'TodoWrite', input: { todos: [{ content: 'a', status: 'pending' }] } },
+      { id: 'toolu_t2', name: 'TodoWrite', input: { todos: '[{' } },
+    ]);
+
+    expect(finalSnapshot(events)?.map((i) => [i.content, i.status])).toEqual([['a', 'pending']]);
+    expect(warnings(events)).toHaveLength(1);
+    expect(warnings(events)[0].message).toContain('TodoWrite');
+  });
+
+  it('clears the list for a TodoWrite that really sent an empty one', async () => {
+    const events = await runTaskCalls([
+      { id: 'toolu_t1', name: 'TodoWrite', input: { todos: [{ content: 'a', status: 'pending' }] } },
+      { id: 'toolu_t2', name: 'TodoWrite', input: { todos: [] } },
+    ]);
+
+    expect(finalSnapshot(events)).toEqual([]);
+    expect(warnings(events)).toEqual([]);
+  });
+});

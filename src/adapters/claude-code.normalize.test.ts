@@ -12,6 +12,7 @@ import {
   extractAssignedTaskId,
   extractAssignedTaskIds,
   batchTaskItemId,
+  resolveTaskItemId,
   buildClaudeCodeToolPolicy,
   subagentToolPolicy,
   CLAUDE_CODE_TASK_TRACKING_TOOLS,
@@ -671,5 +672,57 @@ describe('extractAssignedTaskIds', () => {
   it('agrees with the single-id extractor on a single-create result', () => {
     const content = 'Task #1 created successfully: probe';
     expect(extractAssignedTaskIds(content)).toEqual([extractAssignedTaskId(content)]);
+  });
+});
+
+describe('task merge — per-item / batch symmetry (M16 review)', () => {
+  it('reads priority on the per-item path, as the batch path does', () => {
+    // Same field, same raw stream, two code paths: an item is not allowed to keep
+    // its priority only because it happened to arrive inside a `tasks` array.
+    const out = mergeTaskToolInputIntoSnapshot([], 'toolu_p', {
+      subject: 'a',
+      description: 'A',
+      priority: 'high',
+    });
+    expect(out).toEqual([{ id: 'toolu_p', content: 'A', status: 'pending', priority: 'high' }]);
+  });
+
+  it('keeps an existing priority when an update does not restate it', () => {
+    const first = mergeTaskToolInputIntoSnapshot([], 'toolu_p', { subject: 'a', priority: 'low' })!;
+    expect(mergeTaskToolInputIntoSnapshot(first, 'toolu_x', { taskId: 'toolu_p', status: 'completed' })).toEqual([
+      { id: 'toolu_p', content: 'a', status: 'completed', priority: 'low' },
+    ]);
+  });
+
+  it('ignores `tasks` on an input that names the task it updates', () => {
+    // A batch is a create shape — N brand-new items, no identifier of its own.
+    expect(
+      mergeTaskToolInputIntoSnapshot([], 'toolu_u', {
+        taskId: '1',
+        tasks: '[{"content":"a","status":"completed"}]',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('resolveTaskItemId agrees with the id the merge keys on', () => {
+    const aliases = new Map([['7', 'tmp-1']]);
+    expect(resolveTaskItemId('toolu_1', { subject: 'a' })).toBe('toolu_1');
+    expect(resolveTaskItemId('toolu_1', { id: 'tmp-1', subject: 'a' })).toBe('tmp-1');
+    expect(resolveTaskItemId('toolu_2', { taskId: '7' }, aliases)).toBe('tmp-1');
+    const merged = mergeTaskToolInputIntoSnapshot([], 'toolu_1', { id: 'tmp-1', subject: 'a' })!;
+    expect(merged[0].id).toBe(resolveTaskItemId('toolu_1', { id: 'tmp-1', subject: 'a' }));
+  });
+});
+
+describe('todoItemsFromTodoWriteInput — stringified lists', () => {
+  it('parses a `todos` the model sent as a JSON string', () => {
+    expect(todoItemsFromTodoWriteInput({ todos: '[{"content":"a","status":"in_progress"}]' })).toEqual([
+      { id: '0', content: 'a', status: 'in_progress' },
+    ]);
+  });
+
+  it('yields nothing for a malformed `todos`, without throwing', () => {
+    expect(todoItemsFromTodoWriteInput({ todos: '[{' })).toEqual([]);
+    expect(todoItemsFromTodoWriteInput({})).toEqual([]);
   });
 });
