@@ -129,6 +129,14 @@ export const CLAUDE_CODE_TASK_TRACKING_TOOLS: string[] = [
   'TaskList',
 ];
 
+/** The WRITE verbs of that family. The split matters at exactly one place: when a
+ *  call merges nothing. For `TaskGet`/`TaskList` that is correct and expected —
+ *  they are reads whose answer lives in the tool_result payload this adapter does
+ *  not parse, so they stay silent. For a write it means the task-list update was
+ *  LOST, which the adapter reports as a `warning`. Gate that on these names, never
+ *  on "the merge returned undefined" (M16). */
+export const CLAUDE_CODE_TASK_WRITE_TOOLS: string[] = ['TodoWrite', 'TaskCreate', 'TaskUpdate'];
+
 /**
  * Built-ins belonging to each gated group. Renamed/relocated built-ins list
  * EVERY spelling: a deny that names only one of two live aliases silently fails
@@ -366,9 +374,81 @@ export function todoItemsFromTodoWriteInput(input: Record<string, unknown>): Tod
 }
 
 /**
+ * The keys a task write may carry its status under, most-canonical first.
+ *
+ * Only `status` is declared by the SDK (`TaskUpdateInput`, `sdk-tools.d.ts:2509`
+ * on 0.3.220). The other two are the MODEL's spellings, and they are legitimate
+ * here for one specific reason, which is the invariant this whole gate rests on:
+ *
+ *   THE MERGE GATE READS THE RAW STREAM INPUT.
+ *
+ * Claude Code repairs close-but-incorrect key names before it executes a tool —
+ * mapping `id`/`task_id` to `taskId`, `active_form` to `activeForm` — but that
+ * repair is NEVER written back into the stream we normalize. So the declared SDK
+ * schema is a LOWER BOUND on what arrives here, not the contract, and reading
+ * these fields defensively is what the SDK docs explicitly tell integrators to do
+ * (`agent-sdk/todo-tracking`).
+ *
+ * Narrowing this list to "what the types say" is exactly the regression that
+ * silently killed task tracking for two months (commit `f4107ee`, 2026-07-14):
+ * `{"taskId":"4","state":"in_progress"}` was observed live and dropped on the
+ * floor. Do not re-narrow it (M16).
+ */
+const TASK_STATUS_KEYS = ['status', 'state', 'task_status'] as const;
+
+function readTaskStatus(input: Record<string, unknown>): string | undefined {
+  for (const key of TASK_STATUS_KEYS) {
+    const value = input[key];
+    if (typeof value === 'string') return value;
+  }
+  return undefined;
+}
+
+/** `TodoItem.priority` is a closed set; anything else is dropped rather than widened. */
+function readTodoPriority(value: unknown): TodoItem['priority'] | undefined {
+  return value === 'low' || value === 'medium' || value === 'high' ? value : undefined;
+}
+
+/**
+ * A batch `TaskCreate` carries N items under `tasks` instead of one item in
+ * `subject`/`description` — and `tasks` arrives as a JSON *string*, not an array:
+ *
+ *   { "tasks": "[{\"content\":\"…\",\"status\":\"pending\",\"priority\":\"high\"}]" }
+ *
+ * Parsed defensively: malformed JSON, a non-array result, or a non-object item
+ * must never throw out of the stream handler. An unparseable batch falls through
+ * to the caller's warning path rather than crashing the run (M16).
+ */
+function readBatchTasks(input: Record<string, unknown>): unknown[] | undefined {
+  const raw = input.tasks;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== 'string') return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * @internal Exported for unit tests.
+ * The snapshot id for item `index` of a batch `TaskCreate`.
+ *
+ * A batch create has no per-item identifier of its own, so the id is synthesized
+ * from the call that produced it. Keying on the bare index instead ("0", "1", as
+ * legacy `TodoWrite` does) would make a second batch overwrite the first batch's
+ * items — the CRUD family accumulates per-item, only `TodoWrite` replaces
+ * wholesale (M16).
+ */
+export function batchTaskItemId(toolUseId: string, index: number): string {
+  return `${toolUseId}#${index}`;
+}
+
+/**
  * @internal Exported for unit tests.
  * Upsert a single task-tracking CRUD call (TaskCreate/TaskGet/TaskUpdate/
- * TaskList) into the running snapshot. Field names match the real tool
+ * TaskList) into the running snapshot. Field names follow the real tool
  * schema (`@anthropic-ai/claude-agent-sdk`'s `sdk-tools.d.ts`):
  * `TaskCreateInput`/`TaskUpdateInput` use `subject`/`description`, and
  * `TaskUpdateInput`/`TaskGetInput` key on `taskId` — never `id`, and
@@ -376,10 +456,22 @@ export function todoItemsFromTodoWriteInput(input: Record<string, unknown>): Tod
  * reports it in the create's `tool_result` (`"Task #1 created successfully:
  * <subject>"`), which a later `TaskUpdate({ taskId: '1' })` then keys on. A
  * created item is keyed by its `toolUseId`, so the caller passes
- * `serverIdAliases` — assigned id → the `toolUseId` of the create that produced
- * it — and an update reconciles with the item it belongs to. Without that alias
- * the update would append a second, content-less item and the real one would
- * never change status (M16).
+ * `serverIdAliases` — assigned id → the snapshot id of the item that create
+ * produced — and an update reconciles with the item it belongs to. Without that
+ * alias the update would append a second, content-less item and the real one
+ * would never change status (M16).
+ *
+ * That schema is a lower bound, not the contract: this reads the RAW STREAM
+ * input, so both the identifier (`taskId ?? id`) and the status
+ * ({@link TASK_STATUS_KEYS}) are resolved through alias lists. The two are
+ * deliberately symmetric — do not "unify" them by narrowing either side.
+ *
+ * Two shapes merge here:
+ *  - per-item: `subject`/`description`/`activeForm`/<status> on the input itself;
+ *  - batch:    N items under `tasks` (see {@link readBatchTasks}), in the
+ *    `TodoWrite` item vocabulary — `content`, not `subject`.
+ * A batch that yields at least one usable item wins; otherwise the per-item path
+ * still runs, so a malformed `tasks` alongside a usable `subject` is not lost.
  *
  * Returns `undefined` (no merge) when the call carries no writable field —
  * `TaskGet`'s `{ taskId }` and `TaskList`'s `{}` inputs never do. The caller
@@ -387,7 +479,8 @@ export function todoItemsFromTodoWriteInput(input: Record<string, unknown>): Tod
  * those two read verbs lives entirely in the `tool_result` payload (e.g.
  * `TaskListOutput.tasks`), which this function does not have access to and
  * this adapter does not parse — suppressing it here would silently discard
- * the only place that data exists.
+ * the only place that data exists. For the two WRITE verbs, `undefined` means
+ * lost state instead, and the caller reports it as a `warning`.
  */
 export function mergeTaskToolInputIntoSnapshot(
   snapshot: TodoItem[],
@@ -395,11 +488,58 @@ export function mergeTaskToolInputIntoSnapshot(
   input: Record<string, unknown>,
   serverIdAliases?: ReadonlyMap<string, string>,
 ): TodoItem[] | undefined {
+  const batch = readBatchTasks(input);
+  if (batch !== undefined) {
+    const next = snapshot.slice();
+    let mergedCount = 0;
+    batch.forEach((rawItem, index) => {
+      if (typeof rawItem !== 'object' || rawItem === null) return;
+      const item = rawItem as Record<string, unknown>;
+      // The batch speaks the TodoWrite item vocabulary (`content`); `subject` is
+      // accepted too, since the two vocabularies are otherwise interchangeable.
+      const content =
+        typeof item.content === 'string'
+          ? item.content
+          : typeof item.subject === 'string'
+            ? item.subject
+            : undefined;
+      if (content === undefined) return;
+
+      const id = batchTaskItemId(toolUseId, index);
+      const at = next.findIndex((existingItem) => existingItem.id === id);
+      const existing = at >= 0 ? next[at] : undefined;
+      const status = readTaskStatus(item);
+      const priority = readTodoPriority(item.priority);
+      const merged: TodoItem = {
+        id,
+        content,
+        ...(typeof item.activeForm === 'string'
+          ? { activeForm: item.activeForm }
+          : existing?.activeForm !== undefined
+            ? { activeForm: existing.activeForm }
+            : {}),
+        status: (status ?? existing?.status ?? 'pending') as TodoItem['status'],
+        ...(priority !== undefined
+          ? { priority }
+          : existing?.priority !== undefined
+            ? { priority: existing.priority }
+            : {}),
+      };
+      if (at >= 0) next[at] = merged;
+      else next.push(merged);
+      mergedCount++;
+    });
+    if (mergedCount > 0) return next;
+    // Nothing usable in the batch — fall through to the per-item path below,
+    // and to the caller's warning if that yields nothing either.
+  }
+
+  const status = readTaskStatus(input);
   const hasWritableField =
     typeof input.subject === 'string' ||
     typeof input.description === 'string' ||
     typeof input.activeForm === 'string' ||
-    typeof input.status === 'string';
+    status !== undefined;
   if (!hasWritableField) return undefined;
 
   const explicitId =
@@ -426,11 +566,47 @@ export function mergeTaskToolInputIntoSnapshot(
       : existing?.activeForm !== undefined
         ? { activeForm: existing.activeForm }
         : {}),
-    status: (typeof input.status === 'string' ? input.status : (existing?.status ?? 'pending')) as TodoItem['status'],
+    status: (status ?? existing?.status ?? 'pending') as TodoItem['status'],
+    ...(existing?.priority !== undefined ? { priority: existing.priority } : {}),
   };
   if (idx >= 0) next[idx] = merged;
   else next.push(merged);
   return next;
+}
+
+/** The keys a structured `TaskCreate` tool_result may report an assigned id under. */
+const ASSIGNED_TASK_ID_KEYS = ['taskId', 'task_id', 'id'] as const;
+
+/**
+ * Phrasings the engine has been seen to announce an assigned id with. Shared by
+ * the single-id and batch extractors so a newly tolerated phrasing benefits both.
+ */
+const ASSIGNED_TASK_ID_PATTERNS = [
+  // "Task #1 created successfully: <subject>" — verbatim on 0.3.153 and 0.3.210.
+  /task\s*#\s*([\w.-]+)\s+created/i,
+  // "Created task 1: <subject>" / "Created task #1"
+  /created\s+task\s*#?\s*([\w.-]+)/i,
+  // "Task 1 created" — the same sentence without the hash.
+  /task\s+([\w.-]+)\s+created/i,
+  // "task_id: 1" / "taskId=1" anywhere in the blob.
+  /task[_\s]?id["'\s]*[:=]["'\s]*([\w.-]+)/i,
+];
+
+/**
+ * Guard against capturing a word out of the surrounding sentence — "task was
+ * created" would otherwise yield "was". Real ids are numeric ("1") or long
+ * opaque handles; an English word is neither.
+ */
+function looksLikeAssignedId(candidate: string): boolean {
+  return /\d/.test(candidate) || candidate.length >= 8;
+}
+
+function safeParseJsonValue(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -450,30 +626,104 @@ export function mergeTaskToolInputIntoSnapshot(
  */
 export function extractAssignedTaskId(content: string): string | undefined {
   const structured = safeParseJson(content);
-  for (const key of ['taskId', 'task_id', 'id']) {
+  for (const key of ASSIGNED_TASK_ID_KEYS) {
     const v = structured?.[key];
     if (typeof v === 'string' && v.length > 0) return v;
     if (typeof v === 'number') return String(v);
   }
 
-  const patterns = [
-    // "Task #1 created successfully: <subject>" — verbatim on 0.3.153 and 0.3.210.
-    /task\s*#\s*([\w.-]+)\s+created/i,
-    // "Created task 1: <subject>" / "Created task #1"
-    /created\s+task\s*#?\s*([\w.-]+)/i,
-    // "Task 1 created" — the same sentence without the hash.
-    /task\s+([\w.-]+)\s+created/i,
-    // "task_id: 1" / "taskId=1" anywhere in the blob.
-    /task[_\s]?id["'\s]*[:=]["'\s]*([\w.-]+)/i,
-  ];
-  for (const re of patterns) {
+  for (const re of ASSIGNED_TASK_ID_PATTERNS) {
     const candidate = re.exec(content)?.[1];
-    // Guard against capturing a word out of the surrounding sentence — "task was
-    // created" would otherwise yield "was". Real ids are numeric ("1") or long
-    // opaque handles; an English word is neither.
-    if (candidate && (/\d/.test(candidate) || candidate.length >= 8)) return candidate;
+    if (candidate && looksLikeAssignedId(candidate)) return candidate;
   }
   return undefined;
+}
+
+/**
+ * @internal Exported for unit tests.
+ * The ordered ids a BATCH `TaskCreate` tool_result announces — the plural sibling
+ * of {@link extractAssignedTaskId}.
+ *
+ * A batch creates N tasks in one call, so its result names N ids, and the caller
+ * maps them positionally onto the N items the batch merged
+ * ({@link batchTaskItemId}). Without that, every later `TaskUpdate` keyed on an
+ * announced id appends a blank stub instead of advancing the real item — the M16
+ * bug, in its batch flavour.
+ *
+ * The single-create fallback ("exactly one create unreconciled, so the two must
+ * be the same task") cannot rescue this case: a batch leaves N creates
+ * unreconciled at once, which is ambiguous by construction. Recovering the ids
+ * from the result is therefore the only path that works, so this accepts both
+ * plausible shapes rather than betting on one:
+ *
+ *  - structured — a JSON array of ids, of objects carrying an id key, or an
+ *    object with such an array under `tasks`;
+ *  - prose — every match of {@link ASSIGNED_TASK_ID_PATTERNS} across the whole
+ *    payload, ordered by where it appears in the text rather than by which
+ *    pattern found it, so "Task #1 created… Task #2 created…" stays in order.
+ *
+ * Ids are de-duplicated: the prose patterns overlap by design (three of them can
+ * match one sentence), and one task must not consume two slots. Returns `[]`
+ * rather than a guess when nothing matches — the caller then leaves the batch
+ * unaliased instead of corrupting real items with a wrong one.
+ */
+export function extractAssignedTaskIds(content: string): string[] {
+  const ids: string[] = [];
+  const push = (value: unknown): void => {
+    const id = typeof value === 'string' ? value : typeof value === 'number' ? String(value) : undefined;
+    if (id !== undefined && id.length > 0 && !ids.includes(id)) ids.push(id);
+  };
+
+  const structured = safeParseJsonValue(content);
+  const record =
+    typeof structured === 'object' && structured !== null && !Array.isArray(structured)
+      ? (structured as Record<string, unknown>)
+      : undefined;
+  const collection = Array.isArray(structured)
+    ? structured
+    : Array.isArray(record?.tasks)
+      ? (record.tasks as unknown[])
+      : undefined;
+
+  if (collection !== undefined) {
+    for (const entry of collection) {
+      if (typeof entry === 'string' || typeof entry === 'number') {
+        push(entry);
+        continue;
+      }
+      if (typeof entry === 'object' && entry !== null) {
+        const item = entry as Record<string, unknown>;
+        for (const key of ASSIGNED_TASK_ID_KEYS) {
+          if (item[key] !== undefined) {
+            push(item[key]);
+            break;
+          }
+        }
+      }
+    }
+    if (ids.length > 0) return ids;
+  } else if (record !== undefined) {
+    // A single structured id still answers a one-item batch.
+    for (const key of ASSIGNED_TASK_ID_KEYS) {
+      if (record[key] !== undefined) {
+        push(record[key]);
+        break;
+      }
+    }
+    if (ids.length > 0) return ids;
+  }
+
+  const found: Array<{ at: number; id: string }> = [];
+  for (const re of ASSIGNED_TASK_ID_PATTERNS) {
+    const all = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    for (const match of content.matchAll(all)) {
+      const candidate = match[1];
+      if (candidate && looksLikeAssignedId(candidate)) found.push({ at: match.index ?? 0, id: candidate });
+    }
+  }
+  found.sort((a, b) => a.at - b.at);
+  for (const entry of found) push(entry.id);
+  return ids;
 }
 
 function safeParseJson(s: string): Record<string, unknown> | undefined {
@@ -1295,12 +1545,24 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // (assigned id → the toolUseId the snapshot keys that item by).
     const taskCreateToolUseIds = new Set<string>();
     const serverTaskIdToToolUseId = new Map<string, string>();
-    // TaskCreates whose tool_result did not name an assigned id, oldest first. The
-    // last-resort reconciliation: with exactly one outstanding and a TaskUpdate
-    // arriving for an id we have never seen, the two must be the same task, so the
-    // alias can be recovered without the engine having said so in prose. Ambiguous
-    // cases (two or more outstanding) are left alone rather than guessed.
-    const unresolvedTaskCreateToolUseIds: string[] = [];
+    // Snapshot ids of created tasks whose tool_result did not name an assigned id,
+    // oldest first. The last-resort reconciliation: with exactly one outstanding and
+    // a TaskUpdate arriving for an id we have never seen, the two must be the same
+    // task, so the alias can be recovered without the engine having said so in prose.
+    // Ambiguous cases (two or more outstanding) are left alone rather than guessed.
+    // Item ids, not tool_use ids: for a single create the two are the same, but a
+    // batch contributes one entry PER ITEM, so the count stays honest either way.
+    const unresolvedTaskCreateItemIds: string[] = [];
+    // The snapshot ids a batch `TaskCreate` produced, in item order, awaiting the
+    // tool_result that names the ids the engine assigned them. Positional: ids[i]
+    // belongs to item i, which is the only mapping a batch result can offer.
+    const batchCreateItemIdsByToolUseId = new Map<string, string[]>();
+    // Unmergeable WRITE shapes already reported this run, keyed by tool + sorted
+    // input keys. A model that consistently emits an unhandled spelling would
+    // otherwise warn on every call and drown the side-band — the same reason the
+    // subagent-status warning above latches. Each distinct lost shape is reported
+    // once; a repeat of one already reported is not.
+    const warnedUnmergeableTaskShapes = new Set<string>();
     // Scoped to this execute() call, so a resumed session starts with an
     // empty snapshot. TodoWrite is immune (the model always resends the full
     // list), but a TaskUpdate referencing a taskId created in a prior turn/
@@ -1767,6 +2029,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             // those blocks are deliberately left untouched: their tool_use and
             // matching tool_result stay visible since the real answer for
             // those two read verbs lives in the tool_result, not this input.
+            const unmergeableTaskWarnings: string[] = [];
             for (let i = 0; i < normalized.content.length; i++) {
               const block = normalized.content[i];
               if (block.type !== 'toolUse') continue;
@@ -1790,10 +2053,10 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 if (
                   updateId !== undefined &&
                   !serverTaskIdToToolUseId.has(updateId) &&
-                  unresolvedTaskCreateToolUseIds.length === 1 &&
+                  unresolvedTaskCreateItemIds.length === 1 &&
                   !(lastTodoSnapshot ?? []).some((item) => item.id === updateId)
                 ) {
-                  serverTaskIdToToolUseId.set(updateId, unresolvedTaskCreateToolUseIds.shift()!);
+                  serverTaskIdToToolUseId.set(updateId, unresolvedTaskCreateItemIds.shift()!);
                 }
                 items = mergeTaskToolInputIntoSnapshot(
                   lastTodoSnapshot ?? [],
@@ -1801,18 +2064,49 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   block.input,
                   serverTaskIdToToolUseId,
                 );
+                // A write we could not merge is LOST STATE, not a read with its
+                // answer elsewhere: TaskGet/TaskList legitimately merge nothing,
+                // but a dropped TaskCreate/TaskUpdate leaves the consumer with a
+                // list that silently stops advancing. Say so on the side-band —
+                // before this, the only symptom was an empty list (M16).
+                if (items === undefined && CLAUDE_CODE_TASK_WRITE_TOOLS.includes(block.toolName)) {
+                  const keys = Object.keys(block.input).sort();
+                  const shape = `${block.toolName}(${keys.join(',')})`;
+                  if (!warnedUnmergeableTaskShapes.has(shape)) {
+                    warnedUnmergeableTaskShapes.add(shape);
+                    unmergeableTaskWarnings.push(
+                      `claude-code emitted a ${block.toolName} this adapter could not merge into the ` +
+                        `todo snapshot (input keys: ${keys.length > 0 ? keys.join(', ') : '<none>'}). ` +
+                        `That task-list update is lost — the list will not advance for it. This is a ` +
+                        `drift signal: the model is using a field spelling the merge gate does not ` +
+                        `accept yet (M16).`,
+                    );
+                  }
+                }
               }
               if (items === undefined) continue;
 
               // A create's engine-assigned id arrives in its tool_result; remember
               // which tool_use to read it back for (see the suppression filter).
-              if (block.toolName === 'TaskCreate') taskCreateToolUseIds.add(block.toolUseId);
+              if (block.toolName === 'TaskCreate') {
+                taskCreateToolUseIds.add(block.toolUseId);
+                // A batch create owns several snapshot items at once. Remember which,
+                // in order, so its tool_result's N ids can be mapped onto them.
+                const batchIds = items
+                  .filter((item) => item.id.startsWith(`${block.toolUseId}#`))
+                  .map((item) => item.id);
+                if (batchIds.length > 0) batchCreateItemIdsByToolUseId.set(block.toolUseId, batchIds);
+              }
               pendingTodoToolUseIds.add(block.toolUseId);
               lastTodoSnapshot = items;
               normalized.content[i] = { type: 'todoList', items };
             }
 
             rawMessages.push(normalized);
+
+            for (const message of unmergeableTaskWarnings) {
+              yield { type: 'warning', message };
+            }
 
             for (const block of normalized.content) {
               if (block.type === 'toolUse') {
@@ -1862,14 +2156,41 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   // without this the update would append a second, blank-titled
                   // item and the real one would never change status (M16).
                   if (taskCreateToolUseIds.delete(block.toolUseId)) {
+                    const batchItemIds = batchCreateItemIdsByToolUseId.get(block.toolUseId);
+                    batchCreateItemIdsByToolUseId.delete(block.toolUseId);
+                    if (batchItemIds !== undefined) {
+                      // A batch announces N ids for N items; the only mapping on offer
+                      // is positional, and it is only trustworthy when the counts agree.
+                      // A partial or over-long list is ambiguous, and a wrong alias
+                      // corrupts a real item where a missing one merely appends a stray
+                      // — so those fall back to the unresolved queue (M16).
+                      const assignedIds = extractAssignedTaskIds(String(block.content ?? ''));
+                      if (assignedIds.length === batchItemIds.length) {
+                        assignedIds.forEach((assignedId, index) => {
+                          serverTaskIdToToolUseId.set(assignedId, batchItemIds[index]);
+                        });
+                      } else {
+                        unresolvedTaskCreateItemIds.push(...batchItemIds);
+                        if (debugUsage()) {
+                          console.error(
+                            '[agent-adapters claude-code] batch TaskCreate tool_result named ' +
+                              `${assignedIds.length} id(s) for ${batchItemIds.length} item(s); ` +
+                              'leaving the batch unaliased rather than guessing (M16)',
+                            { toolUseId: block.toolUseId, content: block.content },
+                          );
+                        }
+                      }
+                      pendingTodoToolUseIds.delete(block.toolUseId);
+                      return false;
+                    }
                     const assigned = extractAssignedTaskId(String(block.content ?? ''));
                     if (assigned) {
                       serverTaskIdToToolUseId.set(assigned, block.toolUseId);
                     } else {
                       // Nothing matched the prose. Remember which TaskCreate is
                       // outstanding so the next unknown TaskUpdate id can still be
-                      // reconciled positionally — see unresolvedTaskCreateToolUseIds.
-                      unresolvedTaskCreateToolUseIds.push(block.toolUseId);
+                      // reconciled positionally — see unresolvedTaskCreateItemIds.
+                      unresolvedTaskCreateItemIds.push(block.toolUseId);
                       if (debugUsage()) {
                         console.error(
                           '[agent-adapters claude-code] TaskCreate tool_result did not name an ' +
