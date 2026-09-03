@@ -1233,6 +1233,44 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       // 4. result.todoListSnapshot matches the last todo_list_updated items.
       expect(result!.todoListSnapshot).toBeDefined();
       expect(result!.todoListSnapshot).toEqual(todoEvent.items);
+
+      // 5. The CRUD family ACCUMULATED. On 0.3.220 this scenario is answered with
+      //    TaskCreate x3 + TaskUpdate, not TodoWrite (observed live on sonnet-4.6),
+      //    so the snapshot only reaches three items if every per-item create merged
+      //    and the update landed on the right one. The M16 regression showed up here
+      //    as a snapshot of 0 or 1 — the assertions above all still passed.
+      const snapshot = result!.todoListSnapshot!;
+      expect(snapshot.length, 'per-item creates must accumulate, not overwrite').toBeGreaterThanOrEqual(3);
+      expect(
+        snapshot.some((item) => item.status === 'in_progress'),
+        'the prompt asks for the first item in_progress — a status transition that must survive the merge',
+      ).toBe(true);
+
+      // 6. Nothing was reported LOST. A task write the adapter cannot merge yields a
+      //    `warning`; on a scenario this ordinary there must be none.
+      const lostWrites = events.filter(
+        (e): e is Extract<UnifiedEvent, { type: 'warning' }> =>
+          e.type === 'warning' && e.message.includes('could not merge into the'),
+      );
+      expect(lostWrites.map((w) => w.message)).toEqual([]);
+
+      // 7. A Task* call MAY legitimately still surface as a plain tool row — the read
+      //    verbs answer from their tool_result, and `TaskUpdate({ taskId, addBlockedBy })`
+      //    rewires the dependency graph without touching the list (both observed live
+      //    on 0.3.220). What must never leak is a call carrying todo CONTENT: that is
+      //    the consumer-visible half of the M16 regression, the one that made task
+      //    plumbing render as ordinary tool rows instead of a list.
+      const TODO_CONTENT_KEYS = ['subject', 'description', 'activeForm', 'status', 'state', 'task_status', 'tasks', 'content'];
+      const leakedWithContent = events.filter(
+        (e) =>
+          e.type === 'tool_use' &&
+          /^Task(Create|Update|Get|List)$/.test(e.toolName) &&
+          Object.keys((e.input ?? {}) as Record<string, unknown>).some((k) => TODO_CONTENT_KEYS.includes(k)),
+      );
+      expect(
+        leakedWithContent.map((e) => (e.type === 'tool_use' ? [e.toolName, e.input] : e)),
+        'a task call carrying todo content must be projected as todo_list_updated, not leaked',
+      ).toEqual([]);
     });
   });
 
