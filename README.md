@@ -178,7 +178,8 @@ Models marked **adaptive-only** fix their own thinking budget: the adapter leave
 
 | Architecture | Alias | Full model ID | |
 |---|---|---|---|
-| `claude-code` | `fable-5` | `claude-fable-5` | adaptive-only |
+| `claude-code` | `fable-5.1` | `claude-fable-5-1` | adaptive-only |
+| | `fable-5` | `claude-fable-5` | adaptive-only |
 | | `sonnet-5` | `claude-sonnet-5` | adaptive-only |
 | | `sonnet-4.6` | `claude-sonnet-4-6` | |
 | | `sonnet-4.5` | `claude-sonnet-4-5-20250929` | |
@@ -210,6 +211,7 @@ Models marked **adaptive-only** fix their own thinking budget: the adapter leave
 | | `hy3-preview-free` | `tencent/hy3-preview:free` | |
 | | `gemini-2.5-flash` | `google/gemini-2.5-flash` | |
 | | `nemotron-3-super-free` | `nvidia/nemotron-3-super:free` | |
+| | `claude-fable-5.1` | `anthropic/claude-fable-5.1` | |
 | | `claude-fable-5` | `anthropic/claude-fable-5` | |
 | | `claude-opus-5` | `anthropic/claude-opus-5` | |
 | | `claude-opus-4.8` | `anthropic/claude-opus-4.8` | |
