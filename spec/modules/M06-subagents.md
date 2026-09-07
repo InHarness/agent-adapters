@@ -17,7 +17,7 @@ Developers can watch and group sub-agent activity uniformly: when an agent spawn
 | --- | --- |
 | L1 | `subagent_started`/`_progress`/`_completed`; `isSubagent` + optional `subagentTaskId` on deltas. |
 | L2 | Owns the subagent support matrix (definition acceptance; native vs. synthesized; taskId-on-deltas). |
-| L4 | Exports `SubagentDefinition`, `validateSubagents`. |
+| L4 | Exports `SubagentDefinition`, `SubagentStatus`, `validateSubagents`, `mapSubagentStatus`. |
 | M02 | A definition's `model` is passed through verbatim — subagent models are **not** resolved against the catalog. |
 | M04 | A subagent has no MCP config of its own; it inherits the run's servers, filtered by its own toolset. |
 | M05 | `skills` names skills; delivery and discovery stay M05's. |
