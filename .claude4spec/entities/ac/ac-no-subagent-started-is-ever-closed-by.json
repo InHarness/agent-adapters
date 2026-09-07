@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-07T14:07:43.544Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-no-subagent-started-is-ever-closed-by",
+  "status": "active",
+  "tags": [
+    "m06",
+    "m06-edge"
+  ],
+  "title": "No subagent_started is ever closed by more than one subagent_completed, including when termination synthesizes the closing event for a subagent that already emitted its own.",
+  "updatedAt": "2026-09-07T14:07:43.544Z",
+  "verifies": []
+}

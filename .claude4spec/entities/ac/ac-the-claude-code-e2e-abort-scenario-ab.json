@@ -1,0 +1,23 @@
+{
+  "createdAt": "2026-09-07T14:07:48.016Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-the-claude-code-e2e-abort-scenario-ab",
+  "status": "active",
+  "tags": [
+    "a01",
+    "m06"
+  ],
+  "title": "The claude-code e2e abort scenario aborts mid-stream with subagents in flight and observes the lifecycle pair close against a live model.",
+  "updatedAt": "2026-09-07T14:07:48.016Z",
+  "verifies": [
+    {
+      "slug": "ac-a-subagent-still-in-flight-when-abort",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-no-subagent-started-is-ever-closed-by",
+      "type": "ac"
+    }
+  ]
+}

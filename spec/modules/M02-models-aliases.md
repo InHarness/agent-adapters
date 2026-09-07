@@ -29,7 +29,7 @@ Developers can pass a stable alias (or a raw model id) and have it resolved corr
 <!-- anchor: 9rpzxpiw -->
 ## Model catalog (L3)
 
-This catalog is the **canon** for aliases, resolved ids, context windows, and adaptive-only membership. `src/models.ts` is a **mirror** of it: every new model release is edited here first, then propagated to code. Adapters A01–A04 do not duplicate these tables — they link to the relevant per-architecture table below.
+This catalog is the **canon** for aliases, resolved ids, context windows, and adaptive-only membership. `src/models.ts` is a **mirror** of it: every new model release is edited here first, then propagated to code. Adapters A01–A04 do not duplicate these tables — they link to the relevant per-architecture table below. For an architecture whose adapter wraps an SDK that bundles its own runtime, adding or changing an alias here also triggers re-checking that adapter's L7 dev-pin floor, so that the resolved id is reachable and not merely declared — for `claude-code`, see <section_ref anchor="49zu34oc"/>.
 
 The **adaptive-only?** column is a view of the `ADAPTIVE_THINKING_ONLY` class (see semantics below); it is meaningful only for architectures whose resolved ids are bare Anthropic model strings (`claude-code`). For every other architecture the class does not currently apply, so those tables omit the column.
 

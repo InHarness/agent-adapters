@@ -17,7 +17,7 @@ Developers can watch and group sub-agent activity uniformly: when an agent spawn
 | --- | --- |
 | L1 | `subagent_started`/`_progress`/`_completed`; `isSubagent` + optional `subagentTaskId` on deltas. |
 | L2 | Owns the subagent support matrix (definition acceptance; native vs. synthesized; taskId-on-deltas). |
-| L4 | Exports `SubagentDefinition`, `validateSubagents`. |
+| L4 | Exports `SubagentDefinition`, `SubagentStatus`, `validateSubagents`, `mapSubagentStatus`. |
 | M02 | A definition's `model` is passed through verbatim — subagent models are **not** resolved against the catalog. |
 | M04 | A subagent has no MCP config of its own; it inherits the run's servers, filtered by its own toolset. |
 | M05 | `skills` names skills; delivery and discovery stay M05's. |
@@ -29,6 +29,7 @@ Developers can watch and group sub-agent activity uniformly: when an agent spawn
 ## Unified Contract (L1)
 
 - Lifecycle: `subagent_started { taskId, description, toolUseId }`, `subagent_progress { taskId, description, lastToolName? }`, `subagent_completed { taskId, status, summary?, usage? }`.
+- **`status` is a closed vocabulary** — `'completed' | 'failed' | 'aborted' | 'stopped'` — and it is what a consumer switches on, so an adapter resolves its SDK's own terminal reason onto it rather than passing the raw value through. The mapping has one rule that is not a matter of taste: an unrecognized reason **never** resolves to `'completed'`. `mapSubagentStatus(raw, declared)` (<section_ref anchor="gz6lltyi"/>) is where that rule lives — it falls back to the caller's `declared` value when `raw` is not in the vocabulary, because a subagent silently reported as successful is the one mapping error a consumer has no way to detect downstream.
 - A subagent emits the **full** event stream (not just lifecycle); its deltas carry `isSubagent: true` and, when available, `subagentTaskId` matching the `subagent_started.taskId`. `subagentTaskId` is optional — consumers must handle `undefined`.
 
 - **M18 deny-groups propagate into every definition the run spawns.** When a run declares M18 deny-groups (<section_ref anchor="4j6f86yq"/>), those groups are resolved against the subagent's own toolset and applied to every definition, including definitions the consumer wrote without knowing tool gating existed. The reason is mechanical rather than stylistic: on claude-code a subagent does **not** inherit the parent's tool denies (<section_ref anchor="677rc2wh"/>), so "deny the shell" without propagation means "deny the shell until the model delegates" — which is not a boundary at all. Propagation is what lets M18 report a strength above `none` for that group.
@@ -87,7 +88,7 @@ Degradation: codex has no subagent concept, so `subagentTaskId` is never populat
 <!-- anchor: gz6lltyi -->
 ## Public API & Packaging (L4)
 
-Exports `SubagentDefinition` and `validateSubagents` from the package root.
+Exports `SubagentDefinition`, `SubagentStatus`, `validateSubagents` and `mapSubagentStatus` from the package root. `SubagentStatus` is the closed status vocabulary of `subagent_completed` and `mapSubagentStatus(raw, declared)` the shared mapper onto it; both are under the semver promise, and the mapping rule they carry is stated once, in L1 (<section_ref anchor="0f6287ae"/>).
 
 **What the envelope deliberately does not carry.** The exported type is the nine-field adapter-agnostic subset (<section_ref anchor="6fh6yq89"/>). The SDK capabilities below are withheld by decision, and each is a contract change to add — not a backlog item:
 
@@ -110,6 +111,9 @@ Exports `SubagentDefinition` and `validateSubagents` from the package root.
 - A run with M18 deny-groups spawning a subagent → the subagent's toolset is narrowed by the same groups. A `SubagentDefinition` naming a tool from a denied group is not an error and does not fail the run: the intersection wins silently, because a definition written before the policy existed should not be able to break a policy declared after it.
 - The parent adapter cannot propagate a deny into subagents → M18 reports the affected group with the subagent escape surface and never as `hard`. The run still proceeds; what it must not do is claim an enforcement it does not have.
 - Definition supplies a `tools` allow-list naming `Bash` on a run under soft path-scope → the subagent does not get it. M15's default-deny posture pre-approves the file built-ins only (<section_ref anchor="x2258xmh"/>), so shell and web are withheld from parent and subagent alike, and an allow-list cannot hand back what the run never held.
+
+- `abort()`, `timeoutMs` or hold-cap expiry fires while a subagent is still open → the run terminates per M13 (<section_ref anchor="1vd9sye5"/>) and the adapter **synthesizes a closing `subagent_completed { status: 'aborted' }` for every `subagent_started` still unpaired**, at most once per `taskId`. A subagent that already produced its own terminal event is not closed a second time.
+- That rule is the deliberate opposite of M17's, where no `background_task_completed` is owed after termination (<section_ref anchor="q9u5sbot"/>), and the asymmetry is in the shape of the two things rather than in taste. Background work is *designed* to outlive the turn, so its silence after termination is legible on its own. A subagent is a **bracket inside** the turn: a consumer grouping deltas by `subagentTaskId` has no other signal that the bucket ever closed, so an unpaired `subagent_started` is indistinguishable from a subagent still running against a run that no longer exists.
 
 <!-- anchor: o0e0wak5 -->
 ## Acceptance criteria
