@@ -48,7 +48,7 @@ The **canonical vocabulary** of real-model scenarios every adapter suite draws f
 | `image` | an image on input is materialized and described by the model. |
 | `mid-turn` | a `pushMessage` mid-turn is accepted and reflected as `user_message` in the same run. |
 | `background-tasks` | engine-backgrounded work outliving the turn is observed end-to-end: the lifecycle family is emitted, the first `result` is **not** terminal, the engine's wake-up produces a continuation turn and a further `result` before `done`, and the control channel is still live across the hold. Absent on adapters whose SDK never backgrounds work (M17's skip strategy). |
-| `abort` | `abort()` mid-stream ends the run cleanly (`AdapterAbortError`, channel closed). |
+| `abort` | `abort()` mid-stream ends the run cleanly (`AdapterAbortError`, channel closed), **and a subagent caught in flight is closed rather than abandoned** — every unpaired `subagent_started` receives its `subagent_completed { status: 'aborted' }`, at most once per `taskId` (M06 — <section_ref anchor="4b8iv50p"/>). |
 | `unknown-model` | an unknown alias warns and passes through (the SDK, not the adapter, rejects it). |
 | `usage` | billing vs `contextSize` and cache buckets are legible on the `result`. |
 

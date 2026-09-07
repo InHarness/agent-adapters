@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-07T14:07:43.548Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-an-sdk-terminal-reason-outside-the-kn",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "title": "An SDK terminal reason outside the known vocabulary never resolves to subagent_completed.status 'completed'; mapSubagentStatus falls back to the declared value instead.",
+  "updatedAt": "2026-09-07T14:07:43.548Z",
+  "verifies": []
+}

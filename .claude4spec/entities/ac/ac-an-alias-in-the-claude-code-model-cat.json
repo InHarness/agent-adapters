@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-07T15:44:03.205Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-an-alias-in-the-claude-code-model-cat",
+  "status": "active",
+  "tags": [
+    "m12"
+  ],
+  "title": "An alias in the claude-code model catalog whose resolved id the bundled CLI rejects is accompanied by a dev-pin floor at or above the SDK release bundling a CLI that accepts it.",
+  "updatedAt": "2026-09-07T15:44:03.205Z",
+  "verifies": []
+}

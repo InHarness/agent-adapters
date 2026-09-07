@@ -710,6 +710,13 @@ export class OpencodeAdapter implements RuntimeAdapter {
                   subagentTaskId: isSubagent ? callId : activeSubagentTaskId,
                 };
                 if (isSubagent) {
+                  // NOT routed through `mapSubagentStatus` (M06), deliberately. There is
+                  // no wire value to map here: this branch is already discriminated by
+                  // `status === 'completed'` on the SSE part, so the literal below is the
+                  // branch's own meaning rather than an SDK spelling passed through. The
+                  // mapper exists to stop an UNRECOGNIZED reason resolving to
+                  // `'completed'`; where the vocabulary never reaches the status at all,
+                  // it has nothing to guard. Same for the `'failed'` branch below.
                   yield {
                     type: 'subagent_completed',
                     taskId: callId,

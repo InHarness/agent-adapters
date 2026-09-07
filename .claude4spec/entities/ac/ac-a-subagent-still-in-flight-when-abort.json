@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-07T14:07:43.536Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-a-subagent-still-in-flight-when-abort",
+  "status": "active",
+  "tags": [
+    "m06",
+    "m06-edge"
+  ],
+  "title": "A subagent still in flight when abort(), timeoutMs or hold-cap expiry terminates the run is closed by a synthesized subagent_completed { status: 'aborted' }.",
+  "updatedAt": "2026-09-07T14:07:43.536Z",
+  "verifies": []
+}

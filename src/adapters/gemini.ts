@@ -16,6 +16,7 @@ import type {
   UserInputResponse,
   UserInputQuestion,
   ImageInput,
+  SubagentStatus,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
 import { resolveModel } from '../models.js';
@@ -31,6 +32,40 @@ import {
   porousCombinationWarning,
 } from '../tool-groups.js';
 import type { ToolGroup } from '../tool-groups.js';
+import { mapSubagentStatus } from '../subagents.js';
+
+// --- Subagent status (M06) ---
+//
+// The SDK's `StreamEndReason` union, mapped onto the unified
+// `subagent_completed.status` vocabulary. Unlike claude-code's three-value status,
+// this union is WIDE — `'completed' | 'failed' | 'aborted' | 'max_turns' |
+// 'max_budget' | 'max_time' | 'refusal' | 'elicitation' | (string & {})` — which is
+// exactly why routing it through `mapSubagentStatus` is not enough on its own: the
+// mapper only knows the four unified literals, so every reason the SDK adds beyond
+// them has to be declared HERE or it lands on the mapper's `'failed'` + drift-warning
+// backstop.
+//
+// The `'failed'` / `'stopped'` axis used below: `'failed'` is the ERROR path (an
+// exception, a tool blowing up), `'stopped'` is "ended by a boundary or a decision,
+// without an error and without a result". So the three resource caps and a model's
+// refusal are all `'stopped'` — nothing went wrong, the work simply was not done.
+//
+// Anything outside this table is handled by `mapSubagentStatus`, never here:
+// cancellation-shaped spellings become `'aborted'`, and everything else becomes
+// `'failed'` plus one drift warning per run. Never `'completed'` — see ../subagents.ts.
+const SDK_STREAM_END_STATUS_MAP: Record<string, SubagentStatus> = {
+  completed: 'completed',
+  failed: 'failed',
+  aborted: 'aborted',
+  max_turns: 'stopped',
+  max_budget: 'stopped',
+  max_time: 'stopped',
+  refusal: 'stopped',
+  // NOTE: `'elicitation'` is deliberately ABSENT. It is a SUSPENSION, not a terminal
+  // reason — `AgentEnd` carries `elicitationIds` and the SDK has an
+  // `elicitation_response` event to resume from — so the adapter emits no
+  // `subagent_completed` for it at all rather than mapping it to a status.
+};
 
 /**
  * Resolve `params.images` into gemini-cli-core `media` content parts — the same
@@ -634,6 +669,10 @@ export class GeminiAdapter implements RuntimeAdapter {
 
     // Track subagent state via threadId
     const activeSubagents = new Set<string>();
+    // At most ONE peer-SDK drift warning per run, however many unrecognized subagent
+    // end reasons arrive during it — `mapSubagentStatus` reports the drift, the caller
+    // owns the dedup.
+    let unknownSubagentStatusWarned = false;
     /**
      * Close every subagent thread this run still has open (M06). A run-level
      * termination — `abort()` or `timeoutMs` — must not leave a `subagent_started`
@@ -817,17 +856,40 @@ export class GeminiAdapter implements RuntimeAdapter {
           case 'agent_end': {
             // Synthesize subagent_completed if this is a subagent thread ending
             if (event.threadId && activeSubagents.has(event.threadId)) {
+              // A stream that ends for `elicitation` is SUSPENDED, not finished: the
+              // SDK hands back `elicitationIds` and resumes the same thread once an
+              // `elicitation_response` arrives. Closing the bracket here would risk a
+              // SECOND `subagent_completed` for this taskId when the resumed stream
+              // really ends, and M06 allows at most one. So emit nothing and leave the
+              // taskId OPEN — the resumed terminal event closes it, or, if the run dies
+              // first, `flushOpenSubagents()` closes it as `'aborted'`. Note the
+              // `activeSubagents.delete` below is deliberately not reached on this path.
+              if (event.reason === 'elicitation') break;
+
               activeSubagents.delete(event.threadId);
-              // MAP by reason, never collapse. `aborted` is NATIVE on this SDK, so
-              // the abort case is REPORTED rather than inferred — reporting it as
-              // `'completed'` (which this used to do) falsely claims the delegation
-              // succeeded, and claiming success is the one error a consumer would act
-              // on irreversibly.
-              const reason = event.reason as string | undefined;
+              // MAP by reason, never collapse, and never by hand: the SDK's
+              // `StreamEndReason` is far wider than the four unified literals, so the
+              // declared table (SDK_STREAM_END_STATUS_MAP) plus `mapSubagentStatus`'s
+              // backstop is what keeps an unrecognized reason from being reported as
+              // `'completed'` — claiming success is the one error a consumer would act
+              // on irreversibly, and it is undetectable downstream.
+              const mapped = mapSubagentStatus(event.reason, SDK_STREAM_END_STATUS_MAP);
+              if (mapped.warn && !unknownSubagentStatusWarned) {
+                // DRIFT, not degradation: a status arrived that nothing in the pinned
+                // SDK range declares. One warning per run, however many arrive.
+                unknownSubagentStatusWarned = true;
+                yield {
+                  type: 'warning',
+                  message:
+                    `gemini reported an unrecognized subagent end reason ` +
+                    `${JSON.stringify(event.reason)}; reported as '${mapped.status}'. ` +
+                    `This is peer-SDK drift — the pinned range never declared it.`,
+                };
+              }
               yield {
                 type: 'subagent_completed',
                 taskId: event.threadId,
-                status: reason === 'failed' ? 'failed' : reason === 'aborted' ? 'aborted' : 'completed',
+                status: mapped.status,
               };
               break;
             }

@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-07T14:07:43.546Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-subagent-completed-status-carries-onl",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "title": "subagent_completed.status carries only the closed vocabulary 'completed' | 'failed' | 'aborted' | 'stopped'.",
+  "updatedAt": "2026-09-07T14:07:43.546Z",
+  "verifies": []
+}
