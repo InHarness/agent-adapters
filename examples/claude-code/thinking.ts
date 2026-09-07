@@ -17,7 +17,15 @@ const THINKING_PROMPT =
 const THINKING_SYSTEM_PROMPT =
   'Think through your reasoning step by step before answering. This is a classic lateral thinking puzzle.';
 
-const ADAPTIVE_MODELS = new Set(['fable-5', 'opus-4.6', 'opus-4.7', 'opus-4.8']);
+const ADAPTIVE_MODELS = new Set([
+  'fable-5.1',
+  'fable-5',
+  'sonnet-5',
+  'opus-4.6',
+  'opus-4.7',
+  'opus-4.8',
+  'opus-5',
+]);
 
 async function main() {
   const model = process.env.MODEL || 'opus-4.7';

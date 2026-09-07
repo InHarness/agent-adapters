@@ -88,6 +88,7 @@ Claude E2E reads the model from `E2E_CLAUDE_MODEL` (default: `sonnet-4.6`). See 
 Convenience scripts are already wired up:
 
 ```bash
+npm run test:e2e:claude:fable-5.1
 npm run test:e2e:claude:fable-5
 npm run test:e2e:claude:sonnet-5
 npm run test:e2e:claude:sonnet-4.6
@@ -122,11 +123,11 @@ Available aliases per architecture (from `src/models.ts` `MODEL_ALIASES`) — yo
 
 | Architecture | Aliases |
 | --- | --- |
-| `claude-code` | `fable-5`, `sonnet-5`, `sonnet-4.6`, `sonnet-4.5`, `opus-5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `haiku-4.5` |
+| `claude-code` | `fable-5.1`, `fable-5`, `sonnet-5`, `sonnet-4.6`, `sonnet-4.5`, `opus-5`, `opus-4.8`, `opus-4.7`, `opus-4.6`, `opus-4.5`, `haiku-4.5` |
 | `claude-code-ollama` | `qwen-coder-32b`, `deepseek-coder`, `codellama-70b`, `llama-3.1-70b` |
 | `claude-code-minimax` | `minimax-m2.7` |
 | `codex` | `gpt-5.5`, `gpt-5.5-codex`, `gpt-5.5-mini`, `gpt-5.4`, `gpt-5.4-codex`, `gpt-5.4-mini`, `gpt-5`, `gpt-5-codex`, `gpt-5-mini` |
-| `opencode-openrouter` | `kimi-k2.6`, `step-3.5-flash`, `ling-2.6-1t-free`, `minimax-m2.7`, `claude-sonnet-4.6`, `hy3-preview-free`, `gemini-2.5-flash`, `nemotron-3-super-free`, `claude-fable-5`, `claude-opus-5`, `claude-opus-4.8`, `claude-opus-4.7`, `claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1` |
+| `opencode-openrouter` | `kimi-k2.6`, `step-3.5-flash`, `ling-2.6-1t-free`, `minimax-m2.7`, `claude-sonnet-4.6`, `hy3-preview-free`, `gemini-2.5-flash`, `nemotron-3-super-free`, `claude-fable-5.1`, `claude-fable-5`, `claude-opus-5`, `claude-opus-4.8`, `claude-opus-4.7`, `claude-sonnet-4`, `claude-opus-4`, `gemini-2.5-pro`, `deepseek-r1` |
 | `gemini` | `gemini-3.1-pro`, `gemini-3.1-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash` |
 
 <!-- anchor: 25dgpmka -->

@@ -11,6 +11,34 @@ import {
   getModelContextWindow,
 } from './models.js';
 
+describe('fable-5.1 in the model catalog (M02)', () => {
+  it('resolves the claude-code alias and is adaptive-thinking-only', () => {
+    expect(resolveModel('claude-code', 'fable-5.1')).toBe('claude-fable-5-1');
+    // The adapter branches on the *resolved* id (claude-code.ts) to suppress the
+    // fixed thinking budget and restore `display: 'summarized'`. Membership here
+    // is the only switch — a miss sends a budget the model answers with a 400.
+    expect(ADAPTIVE_THINKING_ONLY.has('claude-fable-5-1')).toBe(true);
+  });
+
+  it('passes the resolved id through unchanged', () => {
+    expect(resolveModel('claude-code', 'claude-fable-5-1')).toBe('claude-fable-5-1');
+  });
+
+  it('carries a 1M context window under either spelling', () => {
+    expect(getModelContextWindow('claude-code', 'fable-5.1')).toBe(1_000_000);
+    expect(getModelContextWindow('claude-code', 'claude-fable-5-1')).toBe(1_000_000);
+  });
+
+  it('is reachable through opencode-openrouter under its own alias spelling', () => {
+    // Deliberately NOT the same string as the claude-code alias: `claude-fable-5.1`
+    // here, `fable-5.1` there, and the OpenRouter id carries the vendor prefix.
+    expect(resolveModel('opencode-openrouter', 'claude-fable-5.1')).toBe(
+      'anthropic/claude-fable-5.1',
+    );
+    expect(getModelContextWindow('opencode-openrouter', 'claude-fable-5.1')).toBe(1_000_000);
+  });
+});
+
 describe('opus-5 in the model catalog (M02)', () => {
   it("resolves the claude-code alias and is adaptive-thinking-only", () => {
     expect(resolveModel('claude-code', 'opus-5')).toBe('claude-opus-5');
@@ -39,6 +67,7 @@ describe('ADAPTIVE_THINKING_ONLY membership', () => {
   it('matches the M02 class exactly', () => {
     expect([...ADAPTIVE_THINKING_ONLY].sort()).toEqual(
       [
+        'claude-fable-5-1',
         'claude-fable-5',
         'claude-sonnet-5',
         'claude-opus-4-6',

@@ -7,6 +7,21 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 
 > **First npm release since 0.9.6.** Versions 0.9.7 and 0.9.8 were bumped in the source tree but never tagged or published, so installing 0.9.9 also picks up everything in their sections below — including 0.9.8's behavioral change to `subagent_completed.status`. Read those sections too if you are upgrading from 0.9.6.
 
+### Added
+
+- **Claude Fable 5.1** — `fable-5.1` (id `claude-fable-5-1`, 1M context window) registered for
+  `claude-code`, and `claude-fable-5.1` (id `anthropic/claude-fable-5.1`, 1M) for
+  `opencode-openrouter`. The two alias spellings are deliberately different per architecture —
+  `fable-5.1` on claude-code, `claude-fable-5.1` on OpenRouter, which also carries the
+  `anthropic/` vendor prefix.
+
+  `claude-fable-5-1` joins `ADAPTIVE_THINKING_ONLY`, so the adapter never pushes a fixed
+  thinking budget for it and restores `thinking.display: 'summarized'` automatically. The
+  matching `CLAUDE_CODE_OPTIONS` override narrows the UI's thinking knob to `adaptive`;
+  `src/models.test.ts` pins the two lists together, as it has since 0.9.x.
+
+  Purely additive: no alias was removed or renamed and no default model changed.
+
 ### Fixed
 
 - **A subagent definition's `mcp__*` tools survive built-in tool gating.** `subagentToolPolicy` intersected the definition's whole `tools` list with the run's residual allow-list, and that allow-list contains **built-in names only** — so every MCP tool fell out the moment any group was denied. A definition whose toolset is mostly MCP came back with `tools: []`, which the SDK reads as *"no tools"* rather than *"inherit"*, leaving the subagent unable to reach anything. Since `buildClaudeCodeToolPolicy` returns a policy for *any* non-empty deny set, and plan mode alone denies `file-write` + `shell`, this hit nearly every gated run.

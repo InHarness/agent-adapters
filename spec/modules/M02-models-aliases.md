@@ -38,6 +38,7 @@ The **adaptive-only?** column is a view of the `ADAPTIVE_THINKING_ONLY` class (s
 
 | alias | resolved id | context window | adaptive-only? |
 | --- | --- | --- | --- |
+| `fable-5.1` | `claude-fable-5-1` | 1,000,000 | ✓ |
 | `fable-5` | `claude-fable-5` | 1,000,000 | ✓ |
 | `sonnet-5` | `claude-sonnet-5` | 1,000,000 | ✓ |
 | `sonnet-4.6` | `claude-sonnet-4-6` | 200,000 | — |
@@ -82,6 +83,7 @@ Aliases are ordered by popularity (most-used first). A `—` window means the si
 | `hy3-preview-free` | `tencent/hy3-preview:free` | — |
 | `gemini-2.5-flash` | `google/gemini-2.5-flash` | 1,048,576 |
 | `nemotron-3-super-free` | `nvidia/nemotron-3-super:free` | — |
+| `claude-fable-5.1` | `anthropic/claude-fable-5.1` | 1,000,000 |
 | `claude-fable-5` | `anthropic/claude-fable-5` | 1,000,000 |
 | `claude-opus-5` | `anthropic/claude-opus-5` | 1,000,000 |
 | `claude-opus-4.8` | `anthropic/claude-opus-4.8` | 1,000,000 |
@@ -120,7 +122,7 @@ Aliases are ordered by popularity (most-used first). A `—` window means the si
 <!-- anchor: udbixmag -->
 ### `ADAPTIVE_THINKING_ONLY` semantics
 
-`ADAPTIVE_THINKING_ONLY` is keyed by **resolved** Anthropic model id (`claude-fable-5`, `claude-sonnet-5`, `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`). For a member the model itself fixes the thinking knob: the adapter must **not** push a fixed thinking budget — it leaves the model on its native adaptive thinking. The **adaptive-only?** column in the claude-code table is just a view of this class. This couples to M07 resume-immutability: a thinking knob the adapter never sets cannot drift across a resume.
+`ADAPTIVE_THINKING_ONLY` is keyed by **resolved** Anthropic model id (`claude-fable-5-1`, `claude-fable-5`, `claude-sonnet-5`, `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`). For a member the model itself fixes the thinking knob: the adapter must **not** push a fixed thinking budget — it leaves the model on its native adaptive thinking. The **adaptive-only?** column in the claude-code table is just a view of this class. This couples to M07 resume-immutability: a thinking knob the adapter never sets cannot drift across a resume.
 
 <!-- anchor: 0ebwiey1 -->
 ### Context windows and M08

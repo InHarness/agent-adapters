@@ -81,6 +81,10 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     // resolved id. `models.test.ts` pins the two lists together — a member
     // missing here leaves the UI offering a budget the model rejects at 400.
     modelOverrides: {
+      'fable-5.1': {
+        values: ['adaptive'],
+        description: 'Fable 5.1 supports adaptive thinking only (fixed budget not allowed).',
+      },
       'fable-5': {
         values: ['adaptive'],
         description: 'Fable 5 supports adaptive thinking only (fixed budget not allowed).',
