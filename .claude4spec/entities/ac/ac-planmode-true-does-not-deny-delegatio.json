@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.260Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-planmode-true-does-not-deny-delegatio",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "title": "planMode: true does not deny delegation, so a plan-mode run can still spawn a research subagent.",
+  "updatedAt": "2026-09-22T14:45:15.260Z",
+  "verifies": []
+}

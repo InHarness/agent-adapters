@@ -22,7 +22,7 @@ Operators need to see *what configuration an adapter actually resolved* — mode
 <!-- anchor: 0tycjmv6 -->
 ## Unified Contract (L1)
 
-- **`adapter_ready` event** — `{ type:'adapter_ready', sdkConfig }`. Emitted **exactly once** per run, and it is the **first non-`warning` event** on the stream. Consumers can rely on it as the signal that startup negotiation (model resolution, provider wiring, capability detection) is complete.
+- **`adapter_ready` event** — `{ type:'adapter_ready', sdkConfig }`. Emitted **exactly once** per run, and it is the **first non-`warning` event** on the stream. Consumers can rely on it as the signal that startup negotiation (model resolution, provider wiring, capability detection) is complete. Where an adapter **pins** an SDK option the consumer cannot set — `A01`'s `crossSessionInbound: 'refuse'` is the standing case — the pinned value appears in the redacted `sdkConfig`, so a posture the consumer did not choose is at least one they can observe.
 - **Redacted payload** — `sdkConfig` is passed through `redactSecrets` before emission, so no field reaching the consumer carries a live credential.
 - **Ordering** — startup `warning` events (e.g. an unsupported capability being degraded) are emitted **before** `adapter_ready`, so the readiness marker also delimits "all startup warnings have now been seen".
 

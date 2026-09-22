@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-22T14:45:15.215Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-the-delegation-tools-are-present-in-t",
+  "status": "active",
+  "tags": [
+    "a01",
+    "m18"
+  ],
+  "title": "The delegation tools are present in the options.tools allow-list the adapter builds whenever a deny-group is set.",
+  "updatedAt": "2026-09-22T14:45:15.215Z",
+  "verifies": []
+}

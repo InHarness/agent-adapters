@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.200Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-subagent-started-resumed-true-never",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "title": "A subagent_started { resumed: true } never precedes the subagent_completed of the cycle it re-enters.",
+  "updatedAt": "2026-09-22T14:45:15.200Z",
+  "verifies": []
+}

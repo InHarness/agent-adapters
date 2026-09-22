@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-22T14:45:15.261Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-denying-delegation-on-gemini-excludes",
+  "status": "active",
+  "tags": [
+    "a04",
+    "m18"
+  ],
+  "title": "Denying delegation on gemini excludes the subagent tool names, so a denied read cannot be laundered through a spawned agent.",
+  "updatedAt": "2026-09-22T14:45:15.261Z",
+  "verifies": []
+}

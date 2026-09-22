@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.207Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-settled-taskid-that-sees-a-second-t",
+  "status": "active",
+  "tags": [
+    "m17"
+  ],
+  "title": "A settled taskId that sees a second task_started returns to the in-flight set.",
+  "updatedAt": "2026-09-22T14:45:15.207Z",
+  "verifies": []
+}

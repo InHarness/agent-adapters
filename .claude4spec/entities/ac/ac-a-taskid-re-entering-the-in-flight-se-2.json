@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.211Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-taskid-re-entering-the-in-flight-se-2",
+  "status": "active",
+  "tags": [
+    "m17"
+  ],
+  "title": "A taskId re-entering the in-flight set has its finished mark cleared, so a pending grace window does not arm inside the new cycle.",
+  "updatedAt": "2026-09-22T14:45:15.211Z",
+  "verifies": []
+}

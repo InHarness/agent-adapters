@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.232Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-splitbysubagent-places-both-cycles-of",
+  "status": "active",
+  "tags": [
+    "m09"
+  ],
+  "title": "splitBySubagent places both cycles of a re-entered subagent in a single bucket keyed on subagentTaskId.",
+  "updatedAt": "2026-09-22T14:45:15.232Z",
+  "verifies": []
+}

@@ -39,7 +39,7 @@ M18 owns the group vocabulary, the preset registry (`planMode` is one), the per-
 One optional field on `RuntimeExecuteParams` (defined in M01, see <section_ref anchor="8do90d06"/>):
 
 - `disallowedToolGroups?: ToolGroup[]` — the classes of built-in capability this run may not use.
-- `type ToolGroup = 'shell' | 'file-read' | 'file-write' | 'web'`
+- `type ToolGroup = 'shell' | 'file-read' | 'file-write' | 'web' | 'delegation'`
 
 Group definitions are normative — an adapter maps identifiers to these meanings, not the reverse:
 
@@ -47,6 +47,7 @@ Group definitions are normative — an adapter maps identifiers to these meaning
 - **file-read** — reading, listing or searching files.
 - **file-write** — creating, editing or deleting files, and persisting memory.
 - **web** — fetching URLs and web search.
+- **delegation** — spawning, listing or messaging a helper agent: the subagent-spawning tool under every alias (`Task`, `Agent`), and the tools that continue or enumerate one (`SendMessage`, `ListAgents`, and `ListAgents`' current alias `ListPeers`). Denying it is how a consumer closes the delegation escape surface outright rather than relying on deny-propagation into each definition — and it is what stops a spawned helper from laundering a read the parent just denied. Semver: widening a normative union type is **minor** for producers, but consumers exhaustively switching on `ToolGroup` break, so M12 classifies it.
 
 Contract semantics (stated explicitly — ambiguity here is a security hole):
 
@@ -54,6 +55,8 @@ Contract semantics (stated explicitly — ambiguity here is a security hole):
 - **Deny-only and additive.** The field is unioned with any preset-derived groups (L3); a preset can never be weakened by omitting it here.
 - **Validation.** An unknown group string is refused pre-dispatch with the same error class as an unenforceable group; duplicates collapse; order is insignificant.
 - **The consumer contract is deny-shaped; the adapter side is allow-shaped.** Each adapter derives a **residual allow-list** from the requested groups wherever its SDK offers one, and uses deny entries only as a backstop. The invariant this buys: *a built-in the library has never heard of is blocked, not allowed.* A deny-list alone is fail-open by construction — every SDK release that adds a tool silently widens the run. An adapter with no allow-list primitive is deny-only and is therefore capped at `soft` strength (L2).
+- **Fail-closed applies to the unknown, not to the unclassified.** The invariant above is about a built-in the library has *never heard of*. A built-in the library **does** know, which carries no capability of any denied group, **is preserved** in the residual allow-list — a deny removes a class of capability, never an unrelated tool that merely shares a construction pass with it. Delegation and task-tracking tools are the standing instances: denying `file-write` must not cost the run its ability to plan, and denying any group must not cost it its ability to delegate or to continue a helper it already spawned.
+- **The rule runs on an inventory, and the inventory is part of the contract.** “Carries no capability of any denied group” is only decidable against a list of the built-ins the library knows, under every current alias, **including the deferred ones no published catalog advertises** (<section_ref anchor="49zu34oc"/>). A built-in absent from that list is, by the invariant above, *unknown* — and therefore blocked. An allow-list built from a hand-kept list therefore fails closed **on every tool the library was never asked to gate**, which is a different failure from the one the invariant intends, and it grows with every SDK release. The gap is measured, not hypothetical: at the claude-code pin the adapter's inventory knows **24** names against a published catalog of **45** — a **29-name shortfall**, and the agent-messaging tools a consumer reports missing are one instance of it. Keeping the inventory current is a schema-drift obligation (L7), not an implementation detail.
 - **A deny outranks `autoApproveTools`.** That field means *auto-approve*, not *restrict*; it can never re-widen a denied group.
 - **Composition with M15 is not orthogonal — it is ordered.** M15 bounds *where* the filesystem may be touched; M18 removes *whether* a class of tool exists. On adapters where both land on the same rule surface, an M18 deny is applied last and is never re-widened by an M15-generated allow rule. The per-adapter mechanics are in L2; M15's edge cases carry the reciprocal statement (<section_ref anchor="x2258xmh"/>).
 
@@ -67,16 +70,19 @@ Contract semantics (stated explicitly — ambiguity here is a security hole):
 
 **Support matrix — capability and strength**
 
-| Adapter | `toolGating` | shell | file-read | file-write | web | Native mechanism |
-| --- | :---: | --- | --- | --- | --- | --- |
-| **claude-code (A01)** | ✅ | soft ⚠ | soft ⚠ | soft | soft | Residual allow-list of built-ins, with a deny backstop that removes the tool from model context. Mechanics in A01 (<section_ref anchor="sw3cwrsm"/>). |
-| **codex (A02)** | ⚠️ partial | **none → throw** | **none → throw** | hard, coarse | hard, coarse | Whole-run sandbox posture plus a web-search toggle; no per-tool primitive. Mechanics in A02 (<section_ref anchor="rdl4n5wk"/>). |
-| **opencode (A03)** | ✅ | hard ⚠ | hard ⚠ | hard ⚠ | hard ⚠ | Server-side permission buckets with a wildcard default; deny is refused before execution, not prompted. Mechanics in A03 (<section_ref anchor="3iaufx4q"/>). |
-| **gemini (A04)** | ✅ | soft ⚠ | soft | soft | soft | Tool-registry exclusion, applied before the approval policy. Mechanics in A04 (<section_ref anchor="oirynpg7"/>). |
+| Adapter | `toolGating` | shell | file-read | file-write | web | delegation | Native mechanism |
+| --- | :---: | --- | --- | --- | --- | --- | --- |
+| **claude-code (A01)** | ✅ | soft ⚠ | soft ⚠ | soft | soft | soft | Residual allow-list of built-ins, with a deny backstop that removes the tool from model context. Mechanics in A01 (<section_ref anchor="sw3cwrsm"/>). |
+| **codex (A02)** | ⚠️ partial | **none → throw** | **none → throw** | hard, coarse | hard, coarse | **none → throw** | Whole-run sandbox posture plus a web-search toggle; no per-tool primitive. Mechanics in A02 (<section_ref anchor="rdl4n5wk"/>). |
+| **opencode (A03)** | ✅ | hard ⚠ | hard ⚠ | hard ⚠ | hard ⚠ | hard ⚠ | Server-side permission buckets with a wildcard default; deny is refused before execution, not prompted. Mechanics in A03 (<section_ref anchor="3iaufx4q"/>). |
+| **gemini (A04)** | ✅ | soft ⚠ | soft | soft | soft | soft | Tool-registry exclusion, applied before the approval policy. Mechanics in A04 (<section_ref anchor="oirynpg7"/>). |
+
+**Adapter-local implication — on A03, `file-read` implies `delegation`.** Opencode carries delegation in the same server-side permission bucket the adapter folds into `file-read` today, and that fold buys a real guarantee: a spawned helper cannot read what the parent was just denied. Giving `delegation` its own group keeps that guarantee as a rule of this adapter — **on opencode, denying `file-read` also denies `delegation`** — rather than relaxing a live guarantee at a minor bump. The cost is stated here, in the section a consumer reads instead of running the adapter: **on opencode the groups are not strictly orthogonal**, which is a narrowing of the independence the degradation rules below otherwise assume. That is a fact about a permission model whose server-side buckets are coarser than this vocabulary, not a defect in the vocabulary — and it is not to be repaired by making the implication universal, which would cost every plan-mode run its research subagents. Mechanics in A03 (<section_ref anchor="3iaufx4q"/>).
 
 **Escape surfaces**
 
 - **A01 `shell`** — a spawned subagent does not inherit the parent's tool denies, and the SDK ships a general-purpose code-execution tool alongside the shell. M06 propagation of the deny-groups into every subagent definition is what closes this; until then the group is `soft` (<section_ref anchor="677rc2wh"/>). The asymmetry with M15 — denies leak across delegation, filesystem scope does not — is by construction rather than an inconsistency: a deny must be propagated because the SDK does not carry it into a subagent, while path-scope needs no propagation because no field of the subagent envelope can express a scope and the one SDK field that could re-open one is never set (<section_ref anchor="6fh6yq89"/>).
+- **A01 `shell` — what propagation leaves open.** Propagating the deny-groups into every subagent definition closes the escape above, but the delegation tools themselves are what create the subagent in the first place. A consumer who wants no delegated execution at all denies `delegation` outright rather than relying on propagation to carry a `shell` deny into each helper it spawns.
 - **A01 `file-read`** — the SDK documents that native builds may serve search through the shell rather than the dedicated search tools, so a read deny is bypassable whenever `shell` is allowed.
 - **A01 `web`** — a built-in MCP web-fetch identifier that the deny mechanism does not reliably filter.
 - **A03 (all groups)** — the permission schema ends in a catch-all, so an unknown, mistyped or not-yet-supported bucket name is accepted and **silently ignored, with no validation error**. Enforcement is hard only against a server version known to consume that bucket; against an older server it degrades to a no-op with no signal. The adapter therefore reports `hard` only for buckets it has confirmed. See L7 for the version skew that makes this live.
@@ -99,7 +105,7 @@ Contract semantics (stated explicitly — ambiguity here is a security hole):
 <!-- anchor: c0b6eyl5 -->
 ## Configuration & Extensibility (L3)
 
-- **Preset registry.** Presets are library-built deny-lists so consumers do not hand-assemble them. `planMode: true` → `['file-write', 'shell']` — reads and web stay available, because plan mode must still research. The registry is canon here and is exposed as a named constant through L4 so consumers can inspect and extend it. Every adapter's plan-mode handling goes through the deny-group path; there are no per-adapter plan-mode special cases.
+- **Preset registry.** Presets are library-built deny-lists so consumers do not hand-assemble them. `planMode: true` → `['file-write', 'shell']` — reads and web stay available, because plan mode must still research. `delegation` is deliberately **not** in that list either: plan mode must still be able to delegate its research to a helper. The registry is canon here and is exposed as a named constant through L4 so consumers can inspect and extend it. Every adapter's plan-mode handling goes through the deny-group path; there are no per-adapter plan-mode special cases.
 - **A preset is not a weaker mode.** It desugars into exactly the same deny-groups and inherits fail-closed — one semantics, no special case for the path the consumer arrived by. The consequence is a behavioral change on the adapter that previously ignored plan mode with a console warning: it now throws. The documented opt-out is an explicit empty `disallowedToolGroups`.
 - **Resume immutability.** A capability gate must not shrink or grow mid-session. `disallowedToolGroups` is a `RuntimeExecuteParams` field, not an `ArchOption` key, so it joins the designated always-immutable set that M07 already maintains for M15's path fields (<section_ref anchor="sjvy01iz"/>).
 
@@ -142,6 +148,7 @@ This module is unusually drift-exposed: it pins identifiers and configuration ke
 - MCP tools are not covered → a filesystem MCP server is **not** blocked by denying `file-read` and `file-write`. Consumers needing that must gate the server itself (M04).
 - Subagents → a deny that does not propagate into subagent definitions is not a deny at all; M06 carries the propagation.
 - Background tasks under a `shell` deny → M17's capability is disabled for that run rather than failing at the first task.
+- A task inspector or stopper is one tool under several names: the SDK canonicalises `BashOutput` / `AgentOutput` / `BashOutputTool` / `AgentOutputTool` → `TaskOutput`, and `KillBash` / `KillShell` → `TaskStop`. It is classified as **`shell`**, consistent with `shell`'s definition naming background-process inspection — and an adapter naming only some of those spellings gates the tool under one name while leaving it reachable under another. The consequence a consumer must know: a run that denies `shell` cannot read its subagents' task output either, because the inspector is one tool serving both. A run that wants delegated work but no shell denies `shell` and accepts that; a run that wants neither denies `shell` and `delegation`.
 - A group requested on an adapter with no primitive → nothing runs. Partial application is never offered, because a half-applied capability gate reads as a whole one.
 - Resume with a changed `disallowedToolGroups` → a resume violation, like the M15 path fields.
 - An SDK adds a built-in the library does not know → blocked, on adapters with an allow-list primitive; on deny-only adapters it is allowed, which is exactly why those are capped at `soft`.

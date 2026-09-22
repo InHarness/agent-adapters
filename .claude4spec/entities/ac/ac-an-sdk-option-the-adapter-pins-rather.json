@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.230Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-an-sdk-option-the-adapter-pins-rather",
+  "status": "active",
+  "tags": [
+    "m14"
+  ],
+  "title": "An SDK option the adapter pins rather than the consumer setting it appears in the redacted sdkConfig on adapter_ready.",
+  "updatedAt": "2026-09-22T14:45:15.230Z",
+  "verifies": []
+}

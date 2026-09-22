@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.199Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-the-first-subagent-started-for-a-task",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "title": "The first subagent_started for a taskId carries no resumed marker.",
+  "updatedAt": "2026-09-22T14:45:15.199Z",
+  "verifies": []
+}

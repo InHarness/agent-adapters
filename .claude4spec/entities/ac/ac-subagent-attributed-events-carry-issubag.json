@@ -7,7 +7,7 @@
   "tags": [
     "m06"
   ],
-  "title": "Subagent-attributed events carry isSubagent and subagentTaskId so the stream can be partitioned by subagent.",
-  "updatedAt": "2026-06-29T13:11:24.000Z",
+  "title": "Subagent-attributed events carry isSubagent and subagentTaskId so the stream can be partitioned by subagent, and that attribution survives re-entry: a resumed agent's events resolve from the original spawn's tool-use id.",
+  "updatedAt": "2026-09-22T14:44:49.364Z",
   "verifies": []
 }

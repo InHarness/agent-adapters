@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.186Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-subagent-re-entered-mid-run-emits-a",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "title": "A subagent re-entered mid-run emits a second subagent_started carrying the same taskId as its first.",
+  "updatedAt": "2026-09-22T14:45:15.186Z",
+  "verifies": []
+}

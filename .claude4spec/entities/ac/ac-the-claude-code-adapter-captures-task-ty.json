@@ -8,7 +8,7 @@
     "a01",
     "m17"
   ],
-  "title": "The claude-code adapter captures task_type on task_started into a per-task map and routes later task_progress / task_notification for that task_id accordingly: 'shell' / 'monitor' / 'workflow' to background_task_*, subagent kinds to subagent_*; unknown or absent task_type defaults to the subagent path.",
-  "updatedAt": "2026-07-24T09:32:36.000Z",
+  "title": "The claude-code adapter captures task_type on task_started into a per-task map and routes later task_progress / task_notification for that task_id accordingly: 'shell' / 'monitor' / 'workflow' to background_task_*, subagent kinds to subagent_*; unknown or absent task_type defaults to the subagent path, and a second task_started for a task_id already in the map refreshes that entry rather than leaving it stale.",
+  "updatedAt": "2026-09-22T14:44:49.346Z",
   "verifies": []
 }

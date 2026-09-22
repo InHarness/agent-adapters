@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.218Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-denying-shell-denies-the-task-inspect",
+  "status": "active",
+  "tags": [
+    "m18-edge"
+  ],
+  "title": "Denying shell denies the task inspector under both its canonical and its legacy spellings.",
+  "updatedAt": "2026-09-22T14:45:15.218Z",
+  "verifies": []
+}

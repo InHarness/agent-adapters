@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-22T12:44:12.126Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-a-run-parked-on-an-unanswered-user-in",
+  "status": "active",
+  "tags": [
+    "m01",
+    "m01-edge"
+  ],
+  "title": "A run parked on an unanswered user_input_request does not expire on the idle clock: idleTimeoutMs does not advance while the request is open, however long the human takes to answer.",
+  "updatedAt": "2026-09-22T12:44:12.126Z",
+  "verifies": []
+}

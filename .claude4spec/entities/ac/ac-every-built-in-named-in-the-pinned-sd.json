@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.214Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-every-built-in-named-in-the-pinned-sd",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "title": "Every built-in named in the pinned SDK's published tool-input schemas is present in the adapter's known-built-in inventory.",
+  "updatedAt": "2026-09-22T14:45:15.214Z",
+  "verifies": []
+}

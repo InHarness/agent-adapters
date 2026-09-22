@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.193Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-the-second-subagent-started-for-a-re",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "title": "The second subagent_started for a re-entered subagent carries the toolUseId of the tool call that re-entered it, not the original spawn's.",
+  "updatedAt": "2026-09-22T14:45:15.193Z",
+  "verifies": []
+}

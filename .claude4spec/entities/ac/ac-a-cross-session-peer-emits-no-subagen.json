@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.206Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-a-cross-session-peer-emits-no-subagen",
+  "status": "active",
+  "tags": [
+    "m06-edge"
+  ],
+  "title": "A cross-session peer emits no subagent_* event on the unified stream.",
+  "updatedAt": "2026-09-22T14:45:15.206Z",
+  "verifies": []
+}

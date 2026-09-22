@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.205Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-an-agent-team-teammate-emits-no-subag",
+  "status": "active",
+  "tags": [
+    "m06-edge"
+  ],
+  "title": "An agent-team teammate emits no subagent_* event on the unified stream.",
+  "updatedAt": "2026-09-22T14:45:15.205Z",
+  "verifies": []
+}

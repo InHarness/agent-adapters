@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-22T14:45:15.217Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-with-a-deny-group-active-on-claude-co",
+  "status": "active",
+  "tags": [
+    "a01",
+    "m18-edge"
+  ],
+  "title": "With a deny-group active on claude-code, the model can continue a subagent it already spawned.",
+  "updatedAt": "2026-09-22T14:45:15.217Z",
+  "verifies": []
+}

@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.201Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-resumed-subagent-s-deltas-resolve-s",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "title": "A resumed subagent's deltas resolve subagentTaskId to the original spawn's taskId.",
+  "updatedAt": "2026-09-22T14:45:15.201Z",
+  "verifies": []
+}

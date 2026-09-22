@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.229Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-an-inbound-turn-from-another-local-se",
+  "status": "active",
+  "tags": [
+    "a01-edge"
+  ],
+  "title": "An inbound turn from another local session never reaches the model.",
+  "updatedAt": "2026-09-22T14:45:15.229Z",
+  "verifies": []
+}

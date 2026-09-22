@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T12:44:12.108Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-with-timeoutms-absent-no-adapter-arms",
+  "status": "active",
+  "tags": [
+    "m01"
+  ],
+  "title": "With timeoutMs absent no adapter arms a wall-clock timer and no fallback default applies, so elapsed time alone never ends a run — a bound armed on something other than run start, such as M17's background hold cap, is unaffected.",
+  "updatedAt": "2026-09-22T12:44:12.108Z",
+  "verifies": []
+}

@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.203Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-a-run-terminated-between-a-subagent-s",
+  "status": "active",
+  "tags": [
+    "m06-edge"
+  ],
+  "title": "A run terminated between a subagent's settlement and its re-entry synthesizes no closing event for that subagent.",
+  "updatedAt": "2026-09-22T14:45:15.203Z",
+  "verifies": []
+}

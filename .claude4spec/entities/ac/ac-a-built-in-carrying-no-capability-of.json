@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.212Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-built-in-carrying-no-capability-of",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "title": "A built-in carrying no capability of any denied group is present in the residual allow-list the adapter sends the SDK.",
+  "updatedAt": "2026-09-22T14:45:15.212Z",
+  "verifies": []
+}

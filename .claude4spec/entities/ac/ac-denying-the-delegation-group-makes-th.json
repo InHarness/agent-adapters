@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.232Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-denying-the-delegation-group-makes-th",
+  "status": "active",
+  "tags": [
+    "m18"
+  ],
+  "title": "Denying the delegation group makes the subagent-spawning and agent-messaging tools unusable for the whole run under every current alias.",
+  "updatedAt": "2026-09-22T14:45:15.232Z",
+  "verifies": []
+}

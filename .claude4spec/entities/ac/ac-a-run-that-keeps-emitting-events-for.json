@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-22T12:44:12.121Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-a-run-that-keeps-emitting-events-for",
+  "status": "active",
+  "tags": [
+    "m01",
+    "m01-edge"
+  ],
+  "title": "A run that keeps emitting events for longer than timeoutMs still terminates at that budget measured from run start: no event, frame, tool result or progress notification re-arms the backstop.",
+  "updatedAt": "2026-09-22T12:44:12.121Z",
+  "verifies": []
+}

@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.223Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-the-pinned-crosssessioninbound-surviv",
+  "status": "active",
+  "tags": [
+    "a01"
+  ],
+  "title": "The pinned crossSessionInbound survives alongside the path-scope permission settings the adapter also writes to options.settings.",
+  "updatedAt": "2026-09-22T14:45:15.223Z",
+  "verifies": []
+}

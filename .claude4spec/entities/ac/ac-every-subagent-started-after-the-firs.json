@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T14:45:15.197Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-every-subagent-started-after-the-firs",
+  "status": "active",
+  "tags": [
+    "m06"
+  ],
+  "title": "Every subagent_started after the first for a given taskId carries resumed: true.",
+  "updatedAt": "2026-09-22T14:45:15.197Z",
+  "verifies": []
+}
