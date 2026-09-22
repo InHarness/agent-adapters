@@ -2,7 +2,7 @@
 // resetting) while work is in flight, and never re-arms on ordinary events.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createIdleClock, createIdleHandle, observeIdle } from './idle-clock.js';
+import { createIdleClock, createIdleHandle, observeAndYield, observeIdle } from './idle-clock.js';
 import type { UnifiedEvent } from './types.js';
 
 beforeEach(() => {
@@ -87,6 +87,19 @@ describe('createIdleClock', () => {
     expect(onExpire).toHaveBeenCalledOnce();
   });
 
+  it('a user_input_request is outstanding the moment it is observed, until its key ends', () => {
+    const { c, onExpire } = clock(100);
+    c.observe({
+      type: 'user_input_request',
+      request: { requestId: 'r1', source: 'model-tool', origin: 'x', questions: [] },
+    } as UnifiedEvent);
+    vi.advanceTimersByTime(10_000);
+    expect(onExpire).not.toHaveBeenCalled();
+    c.end('uin:r1');
+    vi.advanceTimersByTime(100);
+    expect(onExpire).toHaveBeenCalledOnce();
+  });
+
   it('absent (or non-positive) idleMs creates no timer at all', () => {
     const spy = vi.spyOn(globalThis, 'setTimeout');
     for (const idleMs of [undefined, 0, -1]) {
@@ -110,14 +123,36 @@ describe('createIdleClock', () => {
   });
 });
 
+describe('observeAndYield', () => {
+  it('stops the clock while the consumer holds the event', async () => {
+    const { c, onExpire } = clock(100);
+    const it = observeAndYield(c, text);
+    await it.next(); // the consumer now holds the event
+    vi.advanceTimersByTime(10_000);
+    expect(onExpire).not.toHaveBeenCalled();
+    await it.next(); // handed back
+    vi.advanceTimersByTime(100);
+    expect(onExpire).toHaveBeenCalledOnce();
+  });
+
+  it('an event that ends the run disposes the clock before it is yielded', async () => {
+    const { c, onExpire } = clock(100);
+    const it = observeAndYield(c, { type: 'result' } as UnifiedEvent, true);
+    await it.next();
+    await it.next();
+    vi.advanceTimersByTime(10_000);
+    expect(onExpire).not.toHaveBeenCalled();
+  });
+});
+
 describe('observeIdle', () => {
   it('feeds each event to the clock before yielding it, and disposes on exit', async () => {
     const handle = createIdleHandle();
     const seen: string[] = [];
     handle.clock = {
       observe: (e) => seen.push(`observe:${e.type}`),
-      begin() {},
-      end() {},
+      begin: (k) => seen.push(`begin:${k}`),
+      end: (k) => seen.push(`end:${k}`),
       dispose: () => seen.push('dispose'),
     };
     async function* source(): AsyncGenerator<UnifiedEvent> {
@@ -125,6 +160,16 @@ describe('observeIdle', () => {
       yield toolUse('t');
     }
     for await (const e of observeIdle(handle, source())) seen.push(`yield:${e.type}`);
-    expect(seen).toEqual(['observe:text_delta', 'yield:text_delta', 'observe:tool_use', 'yield:tool_use', 'dispose']);
+    expect(seen).toEqual([
+      'observe:text_delta',
+      'begin:consumer',
+      'yield:text_delta',
+      'end:consumer',
+      'observe:tool_use',
+      'begin:consumer',
+      'yield:tool_use',
+      'end:consumer',
+      'dispose',
+    ]);
   });
 });

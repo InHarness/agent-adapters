@@ -24,7 +24,7 @@ import type {
   ImageInput,
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
-import { createIdleClock } from '../idle-clock.js';
+import { createIdleClock, createIdleHandle, observeIdle, type IdleHandle } from '../idle-clock.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -152,6 +152,12 @@ export class CodexAdapter implements RuntimeAdapter {
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
+    // The idle clock (M01) is fed every event the session yields.
+    const idle = createIdleHandle();
+    yield* observeIdle(idle, this.runSession(params, idle));
+  }
+
+  private async *runSession(params: RuntimeExecuteParams, idle: IdleHandle): AsyncIterable<UnifiedEvent> {
     // subagentTaskId on delta-like events is never populated — Codex SDK has
     // no subagent concept. See .claude/skills/codex-sdk/SKILL.md:73.
     this.abortController = new AbortController();
@@ -404,18 +410,18 @@ export class CodexAdapter implements RuntimeAdapter {
     // `item.completed`, so the unified stream never shows a tool call in flight; the
     // outstanding work is tracked from `item.started` instead. Codex has no subagents,
     // background tasks or user input, so that is the whole of it.
-    let idleExpired = false;
-    const idleClock = createIdleClock({
+    idle.clock = createIdleClock({
       idleMs: params.idleTimeoutMs,
       onExpire: () => {
-        idleExpired = true;
+        idle.expired = true;
         this.abortController?.abort();
       },
     });
+    const idleClock = idle.clock;
     const terminalError = () =>
       timedOut
         ? new AdapterTimeoutError('codex', params.timeoutMs!)
-        : idleExpired
+        : idle.expired
           ? new AdapterIdleTimeoutError('codex', params.idleTimeoutMs!)
           : new AdapterAbortError('codex');
 
@@ -615,7 +621,6 @@ export class CodexAdapter implements RuntimeAdapter {
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);
-      idleClock.dispose();
       await mirrored?.cleanupMirror().catch((err) =>
         console.warn('[agent-adapters] codex mirrored skill cleanup failed', err),
       );

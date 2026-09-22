@@ -600,6 +600,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
           yield { type: 'user_input_request', request: req };
           if (!params.onUserInput) {
             resolve({ action: 'decline' });
+            idle.clock.end(`uin:${req.requestId}`);
             continue;
           }
           // An unanswered request is outstanding work: the idle clock stops until it
@@ -628,14 +629,17 @@ export class OpencodeAdapter implements RuntimeAdapter {
         userInputWaker = null;
         if (winner.kind === 'wake') continue;
         pendingNext = null;
-        if (winner.value.done) break outer;
-        const event = winner.value.value;
-
+        // Checked before `done`: stopping the run kills the server, and an SSE stream
+        // that then ends cleanly instead of throwing would otherwise fall through to
+        // the ordinary "stream ended" exit — no result and no error for a run that a
+        // timeout, an idle expiry or abort() ended.
         if (signal.aborted) {
           yield* flushOpenSubagent();
           yield { type: 'error', error: terminalError(), phase: 'runtime' };
           return;
         }
+        if (winner.value.done) break outer;
+        const event = winner.value.value;
 
         const evt = event as { type: string; properties?: Record<string, unknown> };
 

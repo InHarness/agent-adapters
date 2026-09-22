@@ -103,6 +103,12 @@ export function createIdleClock(deps: {
         case 'background_task_completed':
           remove(`bg:${event.taskId}`);
           break;
+        case 'user_input_request':
+          // Outstanding from the moment it exists — not from when the consumer pulls
+          // the next event and the adapter starts awaiting the answer. The adapter
+          // ends this same key (`uin:<requestId>`) once the answer is in.
+          add(`uin:${event.request.requestId}`);
+          break;
         case 'result': {
           // A turn has ended, so no tool call of it is still in flight. Drop tool
           // keys whose result was never emitted, so they cannot pause the clock
@@ -139,10 +145,44 @@ export function createIdleHandle(): IdleHandle {
   return { clock: NOOP_CLOCK, expired: false };
 }
 
+/** Key held while the consumer has an event in hand — see {@link observeAndYield}. */
+const CONSUMER_KEY = 'consumer';
+
+/**
+ * Feed `event` to the clock, then yield it with the clock stopped for as long as the
+ * consumer holds it. The engine is not idle while the consumer is still busy with
+ * what it already produced (a slow DB write, a UI round trip): that time is the
+ * consumer's, and billing it as a stall would kill runs whose engine is healthy.
+ *
+ * `endsRun` — this event is the run's last word (a one-shot adapter's `result`):
+ * the clock is disposed before the yield, so nothing after it (the consumer's
+ * handling, engine shutdown) can turn a finished run into an idle expiry.
+ */
+export async function* observeAndYield(
+  clock: IdleClock,
+  event: UnifiedEvent,
+  endsRun = false,
+): AsyncGenerator<UnifiedEvent> {
+  clock.observe(event);
+  if (endsRun) {
+    clock.dispose();
+    yield event;
+    return;
+  }
+  clock.begin(CONSUMER_KEY);
+  try {
+    yield event;
+  } finally {
+    clock.end(CONSUMER_KEY);
+  }
+}
+
 /**
  * Pass `source` through, feeding each event to the handle's clock BEFORE it is
  * yielded: a `tool_use` or `subagent_started` makes work outstanding the moment it
- * exists, not when the consumer gets round to reading it. Disposes the clock on exit.
+ * exists, not when the consumer gets round to reading it. The clock is stopped while
+ * the consumer holds an event, and disposed at the run's `result` — these adapters
+ * are one-shot, so a `result` is their last word. Disposes the clock on exit.
  */
 export async function* observeIdle(
   handle: IdleHandle,
@@ -150,8 +190,7 @@ export async function* observeIdle(
 ): AsyncGenerator<UnifiedEvent> {
   try {
     for await (const event of source) {
-      handle.clock.observe(event);
-      yield event;
+      yield* observeAndYield(handle.clock, event, event.type === 'result');
     }
   } finally {
     handle.clock.dispose();

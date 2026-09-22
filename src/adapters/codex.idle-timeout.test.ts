@@ -87,4 +87,21 @@ describe('codex — idleTimeoutMs', () => {
     expect(errs[0]).toMatchObject({ phase: 'runtime' });
     expect((errs[0] as { error: Error }).error).toBeInstanceOf(AdapterIdleTimeoutError);
   });
+
+  it('a slow consumer is not an idle engine — before or after the result', async () => {
+    currentEvents = [
+      { type: 'thread.started', thread_id: 'T-idle' },
+      { type: 'item.completed', item: { type: 'agent_message', id: 'm-1', text: 'hi' } },
+      turnCompleted,
+    ];
+    const { CodexAdapter } = await import('./codex.js');
+    const events: UnifiedEvent[] = [];
+    for await (const e of new CodexAdapter().execute(createTestParams({ idleTimeoutMs: IDLE_MS }))) {
+      events.push(e);
+      await new Promise((r) => setTimeout(r, 3 * IDLE_MS));
+    }
+
+    expect(events.filter((e) => e.type === 'error')).toEqual([]);
+    expect(events.some((e) => e.type === 'result')).toBe(true);
+  });
 });

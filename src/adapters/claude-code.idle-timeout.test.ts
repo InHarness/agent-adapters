@@ -223,6 +223,60 @@ describe('claude-code — idleTimeoutMs expires a run that is silent with nothin
   });
 });
 
+describe('claude-code — the idle clock never turns a delivered result into a failure', () => {
+  it('a slow consumer is not an idle engine', async () => {
+    script = async function* ({ prompt }) {
+      await openInput(prompt);
+      yield sdk({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } });
+      yield resultMessage();
+    };
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const events: UnifiedEvent[] = [];
+    for await (const e of new ClaudeCodeAdapter().execute(createTestParams({ idleTimeoutMs: IDLE_MS }))) {
+      events.push(e);
+      // A DB write, a UI round trip — the consumer's time, not the engine's.
+      await sleep(WAIT_MS);
+    }
+
+    expect(errors(events)).toEqual([]);
+    expect(events.some((e) => e.type === 'result')).toBe(true);
+  });
+
+  it('the M17 grace window after the result does not advance the idle clock', async () => {
+    script = async function* ({ prompt }) {
+      const input = await openInput(prompt);
+      // A subagent that settles inside the turn arms the short grace hold at `result`.
+      yield sdk({ type: 'system', subtype: 'task_started', task_id: 's-1', task_type: 'agent', description: 'd', tool_use_id: 'toolu_s' });
+      yield sdk({ type: 'system', subtype: 'task_notification', task_id: 's-1', status: 'completed', summary: 'done' });
+      yield resultMessage();
+      // The engine never wakes: the CLI exits once the grace window closes the channel.
+      await input.next();
+    };
+
+    const { events, elapsedMs } = await run({
+      idleTimeoutMs: IDLE_MS,
+      architectureConfig: { claude_backgroundGraceMs: WAIT_MS },
+    });
+
+    expect(elapsedMs).toBeGreaterThanOrEqual(WAIT_MS - 10);
+    expect(errors(events)).toEqual([]);
+    expect(events.some((e) => e.type === 'result')).toBe(true);
+  });
+
+  it('a slow SDK shutdown after the final result does not advance the idle clock', async () => {
+    script = async function* ({ prompt }) {
+      await openInput(prompt);
+      yield resultMessage();
+      await sleep(WAIT_MS); // the CLI taking its time to exit
+    };
+
+    const { events, elapsedMs } = await run({ idleTimeoutMs: IDLE_MS });
+
+    expect(elapsedMs).toBeGreaterThanOrEqual(WAIT_MS - 10);
+    expect(errors(events)).toEqual([]);
+  });
+});
+
 describe('claude-code — timeoutMs is the absolute backstop', () => {
   it('a run that keeps emitting events still terminates at timeoutMs measured from run start', async () => {
     script = async function* ({ prompt, options }) {

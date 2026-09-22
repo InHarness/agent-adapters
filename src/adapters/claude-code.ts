@@ -41,7 +41,7 @@ import { checkPeerSdkVersion } from '../sdk-version.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
-import { createIdleClock, type IdleClock } from '../idle-clock.js';
+import { createIdleClock, observeAndYield, type IdleClock } from '../idle-clock.js';
 import { validateSubagents, mapSubagentStatus } from '../subagents.js';
 import { probePathScope, getClaudeSandboxConfig } from '../path-scope.js';
 import {
@@ -54,6 +54,7 @@ import type { ToolGroup } from '../tool-groups.js';
 import {
   createTaskRegistry,
   createBackgroundHold,
+  isMainModelActivity,
   projectBackgroundTasks,
   BACKGROUND_WAKEUP_GRACE_MS,
   MAX_BACKGROUND_HOLD_MS,
@@ -960,6 +961,9 @@ export type { TaskKind, TaskRegistry, BackgroundHold, HoldExpiry } from './claud
 
 // --- Adapter ---
 
+/** Idle-clock key held while the M17 hold is parked on the engine's wake-up. */
+const HOLD_IDLE_KEY = 'hold';
+
 /**
  * Everything about ONE `execute()` that a later `abort()`/`pushMessage()` has to be
  * able to reach.
@@ -1104,9 +1108,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     try {
       // Observed BEFORE the yield: a `user_input_request` or `tool_use` makes work
       // outstanding the moment it exists, not when the consumer gets round to it.
+      // The clock is stopped while the consumer holds the event. A `result` is not
+      // the run's last word here (queued pushes, the M17 hold) — runSession stops
+      // the clock itself once it decides the run is winding down.
       for await (const event of this.runSession(params, run)) {
-        run.idleClock.observe(event);
-        yield event;
+        yield* observeAndYield(run.idleClock, event);
       }
     } finally {
       run.idleClock.dispose();
@@ -1859,6 +1865,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       //    surface a typed AdapterBackgroundHoldExpiredError.
       onExpire: (reason) => {
         if (reason === 'grace') {
+          // The ordinary end of the run — nothing can go idle any more.
+          run.idleClock.dispose();
           inputChannel.close();
           return;
         }
@@ -1990,6 +1998,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           if (!effectiveUserInputHandler) {
             // Defensive: bridges are only registered when a handler exists.
             settleUnanswered(pending, 'decline');
+            run.idleClock.end(`uin:${pending.req.requestId}`);
             continue;
           }
           try {
@@ -2077,6 +2086,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         // Runs BEFORE the switch, so state this message is about to change (a task
         // settling, say) is re-evaluated by that branch's own hold.touch() call.
         hold.touch(event);
+        // The engine took the wake-up: the hold has released, and the continuation
+        // turn is ordinary engine work the idle clock governs again.
+        if (isMainModelActivity(event)) run.idleClock.end(HOLD_IDLE_KEY);
 
         if (run.abortController.signal.aborted) {
           yield* endRunTerminally();
@@ -2586,13 +2598,21 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
               // keep open: SDK consumes the next queued message as a new turn
               hold.end();
+              run.idleClock.end(HOLD_IDLE_KEY);
             } else if (
               resultEvent.subtype === 'success' &&
               (engineHoldsSession || tasks.touchedATask())
             ) {
               hold.begin();
+              // Parked on the engine's wake-up, bounded by the hold's own grace and
+              // cap. That wait is the hold's to judge: an idle expiry inside it would
+              // report a run that already delivered its result as a failure.
+              run.idleClock.begin(HOLD_IDLE_KEY);
             } else {
               hold.end();
+              // The run is over; the SDK only has to shut down. Nothing past this
+              // point may turn a delivered result into an idle expiry.
+              run.idleClock.dispose();
               inputChannel.close();
             }
             // The decision for this turn is made, so the settlements that fed it have
