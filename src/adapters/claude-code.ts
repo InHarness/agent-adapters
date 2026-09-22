@@ -1759,8 +1759,14 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
      * patched it finished but before it notified. See the task_started branch.
      */
     const patchedStatusById = new Map<string, unknown>();
-    /** Ids whose previous cycle was closed at re-entry, so its late notification is owed. */
-    const staleNotificationOwed = new Set<string>();
+    /**
+     * Ids whose previous cycle was closed at re-entry, so its late notification is
+     * owed — mapped to that cycle's `tool_use_id`, which the notification echoes, so a
+     * stale notification is told apart from the live cycle's by id, never by timing.
+     */
+    const staleNotificationOwed = new Map<string, string>();
+    /** The `tool_use_id` of each subagent's currently reported cycle. */
+    const cycleToolUseIdById = new Map<string, string>();
     /**
      * Whether this run has already reported an unrecognized SDK task status. The M06
      * drift signal is at most ONE `warning` per run, however many unknown statuses
@@ -2605,8 +2611,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                     status: mapSubagentStatus(previousPatchedStatus, SDK_TASK_STATUS_MAP).status,
                   };
                   patchedStatusById.delete(taskId);
-                  staleNotificationOwed.add(taskId);
+                  staleNotificationOwed.set(taskId, cycleToolUseIdById.get(taskId) ?? '');
                 }
+                cycleToolUseIdById.set(taskId, toolUseId);
                 yield {
                   type: 'subagent_started',
                   taskId,
@@ -2644,22 +2651,33 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
               const kind = tasks.kind(taskId);
-              if (staleNotificationOwed.has(taskId)) {
-                staleNotificationOwed.delete(taskId);
-                if (!patchedStatusById.has(taskId)) {
-                  // The PREVIOUS cycle's late notification: that cycle was already
-                  // closed at re-entry, and the live cycle has not even been patched
-                  // finished yet (the engine patches before it notifies). Settling here
-                  // would drop a running task from the tracked set and arm grace under it.
+              if (teammateTaskIds.has(taskId)) {
+                // Teammate — see task_started above. Never settled: the registry never
+                // started it, and a settle would count as "touched a task" and hold the run.
+                break;
+              }
+              const staleToolUseId = staleNotificationOwed.get(taskId);
+              if (staleToolUseId !== undefined) {
+                const notifiedToolUseId = e.tool_use_id as string | undefined;
+                // Matched by `tool_use_id` when both sides carry one; otherwise the first
+                // notification after re-entry is taken as the stale one — a missed live
+                // notification is closed by termination synthesis, whereas letting a stale
+                // one through would close the live cycle twice.
+                const isStale =
+                  staleToolUseId && notifiedToolUseId ? notifiedToolUseId === staleToolUseId : true;
+                if (isStale) {
+                  // The PREVIOUS cycle's late notification: that cycle was already closed
+                  // at re-entry. Settling here would report the live cycle's completion
+                  // with the old cycle's result, or drop a running task from the tracked
+                  // set and arm grace under it.
+                  staleNotificationOwed.delete(taskId);
                   hold.touch(event);
                   break;
                 }
               }
               patchedStatusById.delete(taskId);
               tasks.settle(taskId);
-              if (teammateTaskIds.has(taskId)) {
-                // Teammate — see task_started above.
-              } else if (kind?.isBackground && shellDenied) {
+              if (kind?.isBackground && shellDenied) {
                 // See task_started above — background capability is off.
               } else if (kind?.isBackground) {
                 yield {
@@ -2710,7 +2728,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
               const status = (e.patch as Record<string, unknown> | undefined)?.status;
-              if (typeof status === 'string' && /^(completed|failed|stopped|cancell?ed)$/.test(status)) {
+              if (teammateTaskIds.has(taskId)) {
+                // Teammate — see task_started above. The hold does not track it.
+              } else if (typeof status === 'string' && /^(completed|failed|stopped|cancell?ed)$/.test(status)) {
                 tasks.markFinished(taskId);
                 if (!tasks.kind(taskId)?.isBackground) patchedStatusById.set(taskId, status);
                 hold.touch(event);

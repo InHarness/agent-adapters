@@ -75,8 +75,8 @@ function taskUpdatedCompleted(taskId: string): SDKMessage {
   return sdk({ type: 'system', subtype: 'task_updated', task_id: taskId, patch: { status: 'completed' } });
 }
 
-function taskNotification(taskId: string, status = 'completed'): SDKMessage {
-  return sdk({ type: 'system', subtype: 'task_notification', task_id: taskId, status, summary: 'done' });
+function taskNotification(taskId: string, status = 'completed', extra: Record<string, unknown> = {}): SDKMessage {
+  return sdk({ type: 'system', subtype: 'task_notification', task_id: taskId, status, summary: 'done', ...extra });
 }
 
 function subagentDelta(parentToolUseId: string, text: string): SDKMessage {
@@ -240,9 +240,10 @@ describe('claude-code — the hold does not expire inside a re-entered cycle', (
       observed.closedEarly = closed;
       yield subagentDelta('toolu_A', 'resumed work');
       // The first cycle's notification, arriving only now — or never.
-      if (lateFirstNotification) yield taskNotification('T');
+      // Notifications echo their cycle's tool_use_id, as on the wire (0.3.263).
+      if (lateFirstNotification) yield taskNotification('T', 'completed', { tool_use_id: 'toolu_A' });
       yield taskUpdatedCompleted('T');
-      yield taskNotification('T');
+      yield taskNotification('T', 'completed', { tool_use_id: 'toolu_S' });
       yield resultMessage();
       await closing;
     };
@@ -284,10 +285,43 @@ describe('claude-code — the hold does not expire inside a re-entered cycle', (
     expect(completions(events)).toHaveLength(1);
     expect(assertSubagentLifecycle(events).passed).toBe(true);
   });
+
+  it.each([
+    ['matched by tool_use_id', true],
+    ['without tool_use_id on the notifications', false],
+  ])(
+    'a stale notification landing AFTER the live cycle was patched does not close it twice (%s)',
+    async (_label, withIds) => {
+      // Cycle 1 patched → re-entry (cycle 1 closed there) → cycle 2 patched → only NOW
+      // cycle 1's late notification → cycle 2's own notification.
+      const ids = (id: string) => (withIds ? { tool_use_id: id } : {});
+      script = async function* ({ prompt }) {
+        const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+        await input.next();
+        yield taskStarted('T', 'toolu_A');
+        yield taskUpdatedCompleted('T');
+        yield taskStarted('T', 'toolu_S', { is_backgrounded: true });
+        yield taskUpdatedCompleted('T');
+        yield sdk({ ...taskNotification('T', 'failed', ids('toolu_A')), summary: 'stale' });
+        yield sdk({ ...taskNotification('T', 'completed', ids('toolu_S')), summary: 'live' });
+        yield resultMessage();
+      };
+      const events = await run();
+
+      expect(starts(events).map((e) => e.resumed)).toEqual([undefined, true]);
+      // One close per cycle: cycle 1 at re-entry, cycle 2 from ITS notification.
+      expect(completions(events).map((e) => [e.status, e.summary])).toEqual([
+        ['completed', undefined],
+        ['completed', 'live'],
+      ]);
+      expect(assertSubagentLifecycle(events).assertions.filter((a) => !a.passed)).toEqual([]);
+    },
+  );
 });
 
 describe('claude-code — teammates are not subagents', () => {
   it('emits nothing on the unified stream for an in-process teammate task', async () => {
+    const GRACE = 5_000;
     script = async function* ({ prompt }) {
       const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
       await input.next();
@@ -296,8 +330,13 @@ describe('claude-code — teammates are not subagents', () => {
       yield taskUpdatedCompleted('mate-1');
       yield taskNotification('mate-1');
       yield resultMessage();
+      // Pending until the adapter closes the channel — a teammate must not park the
+      // run in the background hold's grace window.
+      await input.next();
     };
-    const events = await run();
+    const t0 = Date.now();
+    const events = await run({ architectureConfig: { claude_backgroundGraceMs: GRACE } });
+    expect(Date.now() - t0, 'the teammate held the run open for the grace window').toBeLessThan(GRACE / 2);
 
     expect(events.filter((e) => e.type.startsWith('subagent_') || e.type.startsWith('background_task_'))).toEqual(
       [],
