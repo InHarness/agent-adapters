@@ -242,6 +242,35 @@ describe('claude-code — the idle clock never turns a delivered result into a f
     expect(events.some((e) => e.type === 'result')).toBe(true);
   });
 
+  it('a streaming-input channel waiting for the next push does not advance the idle clock', async () => {
+    // 0.9.13: an open streamingInput channel is outstanding work — a slow producer on
+    // the consumer's side, not an engine gone quiet. Only timeoutMs runs between pushes.
+    script = async function* ({ prompt }) {
+      const input = await openInput(prompt);
+      yield resultMessage({ result: 'first' });
+      const next = await input.next();
+      if (next.done) return;
+      yield resultMessage({ result: 'second' });
+      await input.next();
+    };
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+    const events: UnifiedEvent[] = [];
+    let pushed = false;
+    for await (const e of adapter.execute(createTestParams({ idleTimeoutMs: IDLE_MS, streamingInput: true }))) {
+      events.push(e);
+      if (e.type === 'result' && !pushed) {
+        pushed = true;
+        // The producer takes its time composing the next message.
+        await sleep(WAIT_MS);
+        expect(adapter.pushMessage('and another thing')).toBe(true);
+      }
+    }
+
+    expect(errors(events)).toEqual([]);
+    expect(events.filter((e) => e.type === 'result')).toHaveLength(2);
+  });
+
   it('the M17 grace window after the result does not advance the idle clock', async () => {
     script = async function* ({ prompt }) {
       const input = await openInput(prompt);

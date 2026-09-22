@@ -20,6 +20,7 @@ import type {
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
 import { createIdleClock, createIdleHandle, observeIdle, type IdleHandle } from '../idle-clock.js';
+import { createRunCaps, capExpiryError } from '../run-caps.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -720,12 +721,26 @@ export class GeminiAdapter implements RuntimeAdapter {
         this.stopRun();
       },
     });
+    // The per-unit caps (toolCallTimeoutMs, subagentTimeoutMs): expiry stops the run
+    // down the same path; flushOpenSubagents() closes open threads before the error.
+    // Subagent lifecycle is synthesized from threadId here, so the subagent cap is
+    // worth exactly what that synthesis is worth.
+    idle.caps = createRunCaps({
+      toolCallMs: params.toolCallTimeoutMs,
+      subagentMs: params.subagentTimeoutMs,
+      onExpire: (expiry) => {
+        idle.capExpired = expiry;
+        this.stopRun();
+      },
+    });
     const terminalError = () =>
       timedOut
         ? new AdapterTimeoutError('gemini', params.timeoutMs!)
         : idle.expired
           ? new AdapterIdleTimeoutError('gemini', params.idleTimeoutMs!)
-          : new AdapterAbortError('gemini');
+          : idle.capExpired
+            ? capExpiryError('gemini', idle.capExpired, params)
+            : new AdapterAbortError('gemini');
 
     // Track subagent state via threadId
     const activeSubagents = new Set<string>();
@@ -847,6 +862,7 @@ export class GeminiAdapter implements RuntimeAdapter {
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           } finally {
             idle.clock.end(inputKey);
+            idle.caps.inputAnswered(req.requestId);
           }
           await publishAnswer(correlationId, res);
         }

@@ -1,6 +1,6 @@
 {
   "name": "@inharness-ai/agent-adapters",
-  "version": "0.9.12",
+  "version": "0.9.13",
   "description": "Unified TypeScript interface for AI agent SDKs — Claude Code, Codex, OpenCode, Gemini",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -91,6 +91,7 @@
     "test:e2e:claude:opus-4.6": "E2E_CLAUDE_MODEL=opus-4.6 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:opus-4.7": "E2E_CLAUDE_MODEL=opus-4.7 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:opus-4.8": "E2E_CLAUDE_MODEL=opus-4.8 vitest run --config vitest.config.e2e.ts claude-code",
+    "test:e2e:claude:opus-5.5": "E2E_CLAUDE_MODEL=opus-5.5 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:opus-5": "E2E_CLAUDE_MODEL=opus-5 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:claude:haiku-4.5": "E2E_CLAUDE_MODEL=haiku-4.5 vitest run --config vitest.config.e2e.ts claude-code",
     "test:e2e:codex": "vitest run --config vitest.config.e2e.ts codex",
@@ -128,7 +129,7 @@
     }
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.251",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.280",
     "@openai/codex-sdk": "^0.120.0",
     "@opencode-ai/sdk": "^1.4.6",
     "@google/gemini-cli-core": "^0.38.0",

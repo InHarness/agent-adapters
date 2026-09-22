@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from './utils.js';
 import type { UnifiedEvent, NormalizedMessage } from './types.js';
 
@@ -20,6 +20,39 @@ describe('collectEvents', () => {
     ];
     const collected = await collectEvents(fromArray(events));
     expect(collected).toHaveLength(2);
+  });
+
+  it('applies no default bound: a stream emitting for many minutes returns every event', async () => {
+    // 0.9.13 withdrew the implicit 120s default — omitting a bound is a guarantee.
+    vi.useFakeTimers();
+    try {
+      async function* steady(): AsyncIterable<UnifiedEvent> {
+        for (let i = 0; i < 30; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 60_000)); // 30 minutes total
+          yield { type: 'text_delta', text: String(i), isSubagent: false };
+        }
+      }
+      const pending = collectEvents(steady());
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      expect(await pending).toHaveLength(30);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects when an explicit bound elapses before the stream ends', async () => {
+    vi.useFakeTimers();
+    try {
+      async function* hang(): AsyncIterable<UnifiedEvent> {
+        await new Promise(() => {});
+      }
+      const pending = collectEvents(hang(), 1_000);
+      const assertion = expect(pending).rejects.toThrow('collectEvents timed out after 1000ms');
+      await vi.advanceTimersByTimeAsync(1_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

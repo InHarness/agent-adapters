@@ -25,6 +25,7 @@ import type {
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
 import { createIdleClock, createIdleHandle, observeIdle, type IdleHandle } from '../idle-clock.js';
+import { createRunCaps, capExpiryError } from '../run-caps.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -107,6 +108,24 @@ function extractCodexErrorMessage(raw: unknown, fallback = 'Codex error'): strin
  * between its `item.started` and `item.completed`.
  */
 const NON_TOOL_ITEM_TYPES: ReadonlySet<ThreadItem['type']> = new Set(['agent_message', 'reasoning', 'todo_list', 'error']);
+
+/**
+ * The unified `toolName` an item surfaces as, or `undefined` for items that never
+ * become a `tool_use`. Shared by `item.started` (which arms the tool-call cap — the
+ * unified stream only shows the call once it has completed) and `item.completed`.
+ */
+function codexToolName(item: ThreadItem): string | undefined {
+  switch (item.type) {
+    case 'command_execution':
+      return 'shell';
+    case 'file_change':
+      return 'file';
+    case 'mcp_tool_call':
+      return `mcp__${item.server}__${item.tool}`;
+    default:
+      return undefined;
+  }
+}
 
 const CODEX_USAGE_LRU_CAP = 256;
 const codexSessionLastUsage = new Map<string, UsageStats>();
@@ -418,12 +437,25 @@ export class CodexAdapter implements RuntimeAdapter {
       },
     });
     const idleClock = idle.clock;
+    // The per-unit caps. Codex has no subagents, so only toolCallTimeoutMs can apply;
+    // a call is armed at `item.started` for the same reason the idle clock is.
+    idle.caps = createRunCaps({
+      toolCallMs: params.toolCallTimeoutMs,
+      subagentMs: params.subagentTimeoutMs,
+      onExpire: (expiry) => {
+        idle.capExpired = expiry;
+        this.abortController?.abort();
+      },
+    });
+    const caps = idle.caps;
     const terminalError = () =>
       timedOut
         ? new AdapterTimeoutError('codex', params.timeoutMs!)
         : idle.expired
           ? new AdapterIdleTimeoutError('codex', params.idleTimeoutMs!)
-          : new AdapterAbortError('codex');
+          : idle.capExpired
+            ? capExpiryError('codex', idle.capExpired, params)
+            : new AdapterAbortError('codex');
 
     let lastErrorMessage: string | null = null;
 
@@ -447,6 +479,8 @@ export class CodexAdapter implements RuntimeAdapter {
         switch (event.type) {
           case 'item.started': {
             if (!NON_TOOL_ITEM_TYPES.has(event.item.type)) idleClock.begin(`item:${event.item.id}`);
+            const toolName = codexToolName(event.item);
+            if (toolName) caps.beginToolCall(event.item.id, toolName);
             break;
           }
 
@@ -498,7 +532,7 @@ export class CodexAdapter implements RuntimeAdapter {
             } else if (item.type === 'mcp_tool_call') {
               yield {
                 type: 'tool_use',
-                toolName: `mcp__${item.server}__${item.tool}`,
+                toolName: codexToolName(item)!,
                 toolUseId: item.id,
                 input: item.arguments,
                 isSubagent: false,

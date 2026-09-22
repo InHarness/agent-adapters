@@ -10,6 +10,7 @@
 // never touch it. Only transitions of the outstanding set start or stop it.
 
 import type { UnifiedEvent } from './types.js';
+import { createRunCaps, type RunCaps, type CapExpiry } from './run-caps.js';
 
 export interface IdleClock {
   /** Derive outstanding work from a unified event. Call BEFORE the event is yielded. */
@@ -139,10 +140,19 @@ export function createIdleClock(deps: {
 export interface IdleHandle {
   clock: IdleClock;
   expired: boolean;
+  /** The per-unit caps (`toolCallTimeoutMs`, `subagentTimeoutMs`), fed the same events. */
+  caps: RunCaps;
+  /** Set when a per-unit cap expired — carried so every exit reports the same reason. */
+  capExpired: CapExpiry | null;
 }
 
 export function createIdleHandle(): IdleHandle {
-  return { clock: NOOP_CLOCK, expired: false };
+  return {
+    clock: NOOP_CLOCK,
+    expired: false,
+    caps: createRunCaps({ toolCallMs: undefined, subagentMs: undefined, onExpire: () => {} }),
+    capExpired: null,
+  };
 }
 
 /** Key held while the consumer has an event in hand — see {@link observeAndYield}. */
@@ -182,7 +192,8 @@ export async function* observeAndYield(
  * yielded: a `tool_use` or `subagent_started` makes work outstanding the moment it
  * exists, not when the consumer gets round to reading it. The clock is stopped while
  * the consumer holds an event, and disposed at the run's `result` — these adapters
- * are one-shot, so a `result` is their last word. Disposes the clock on exit.
+ * are one-shot, so a `result` is their last word. The handle's per-unit caps see
+ * the same events at the same point. Disposes both on exit.
  */
 export async function* observeIdle(
   handle: IdleHandle,
@@ -190,9 +201,11 @@ export async function* observeIdle(
 ): AsyncGenerator<UnifiedEvent> {
   try {
     for await (const event of source) {
+      handle.caps.observe(event);
       yield* observeAndYield(handle.clock, event, event.type === 'result');
     }
   } finally {
     handle.clock.dispose();
+    handle.caps.dispose();
   }
 }

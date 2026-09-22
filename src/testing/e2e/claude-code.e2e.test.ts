@@ -1225,15 +1225,20 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     //
     // A backgrounded `sleep 180` outlives every bound this case can observe, and while
     // the engine babysits it the only frames are heartbeats — which deliberately do not
-    // re-arm the cap (see isBackgroundProgress in claude-code.background-hold.ts). So the
-    // cap is the only thing that can end this run.
+    // re-arm the cap (only frames routed into a tracked task's background_task_* family
+    // do; see MAX_BACKGROUND_HOLD_MS in claude-code.background-hold.ts). So the cap is the
+    // only thing that can end this run.
     //
     // CAP_MS is chosen against two clocks: comfortably above the option's documented
-    // floor (`min: 5000`, src/options.ts) and far below collectEvents()'s 120s default,
-    // which starts at run start while the cap only arms at the first held `result`. An
-    // equal-or-larger cap would have the harness reject the run before the bound could
-    // surface — the test would then be timing out, not observing a regression.
+    // floor (`min: 5000`, src/options.ts) and far below the explicit stream bound this
+    // case passes to collectEvents(), which starts at run start while the cap only arms
+    // at the first held `result`. An equal-or-larger cap would have the harness reject
+    // the run before the bound could surface — the test would then be timing out, not
+    // observing a regression. (collectEvents() has no default bound since 0.9.13, so the
+    // bound is passed explicitly — as any consumer that wants one must.)
     const CAP_MS = 8_000;
+    /** The stream bound this case passes to collectEvents(), below the test timeout. */
+    const HOLD_CAP_STREAM_BOUND_MS = 120_000;
 
     it('claude_backgroundHoldCapMs ends a run whose background work never settles', async (ctx) => {
       const adapter = createAdapter('claude-code');
@@ -1245,6 +1250,9 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
           maxTurns: 6,
           architectureConfig: { claude_backgroundHoldCapMs: CAP_MS },
         }),
+        // An explicit stream bound — collectEvents() has none of its own since 0.9.13.
+        // Sized the way the levers' docs ask: well above the cap it has to let surface.
+        HOLD_CAP_STREAM_BOUND_MS,
       );
 
       const sequence = events.map((e) => e.type).join(' → ');
@@ -1269,7 +1277,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       }
 
       assertBackgroundHoldExpired(events, CAP_MS);
-      // DELIBERATELY ABOVE `collectEvents()`'s own 120s default (src/utils.ts). The two
+      // DELIBERATELY ABOVE the explicit 120s stream bound passed above. The two
       // clocks race and vitest's starts earlier — at the test, before the CLI is even
       // spawned — so an equal budget would always be the one to fire, replacing the
       // helper's diagnosis with an opaque `Test timed out`. Worse, vitest's timeout does

@@ -502,7 +502,7 @@ export const BACKGROUND_BASH_SYSTEM_PROMPT =
 // AdapterBackgroundHoldExpiredError) rather than reaping it, so an hour is an hour of
 // orphan on whatever machine ran the suite if the CLI ever fails to clean up after
 // itself. `sleep 180` is chosen to keep the property exact — it outlives the 8s cap
-// AND `collectEvents()`'s 120s budget by a wide margin, so it cannot settle inside any
+// AND the test's own timeout budget by a wide margin, so it cannot settle inside any
 // bound this test can observe — while capping the worst-case litter at three minutes.
 //
 // Same "do not wait, do not poll" instruction as BACKGROUND_THEN_QUESTION_PROMPT, and
@@ -630,9 +630,10 @@ export function assertHeldResultContinuation(events: UnifiedEvent[]): void {
  * Two properties, and both matter (M17, `ac-the-control-channel-hold-is-bounded-a-ta`):
  *
  *  - the run ended at all. `collectEvents()` returning is that proof — it drains the
- *    generator to `done`, so a hold that never let go would surface as its 120s
- *    rejection instead of as a call to this helper. Keep the configured cap well
- *    below that, or the harness times out before the bound can be observed.
+ *    generator to `done`, so a hold that never let go would surface as the rejection
+ *    of the explicit stream bound the caller passes instead of as a call to this
+ *    helper. Keep the configured cap well below that bound, or the harness times out
+ *    before the cap can be observed.
  *  - it ended LOUDLY, naming the bound it hit. A run that just stopped, as if the
  *    backgrounded task had completed, is the failure this pins: the consumer would
  *    have no way to tell an abandoned `sleep` from a finished one.

@@ -44,6 +44,8 @@ export {
   AdapterInitError,
   AdapterTimeoutError,
   AdapterIdleTimeoutError,
+  AdapterToolCallTimeoutError,
+  AdapterSubagentTimeoutError,
   AdapterAbortError,
   AdapterBackgroundHoldExpiredError,
   AdapterToolPolicyError,

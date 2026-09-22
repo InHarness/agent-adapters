@@ -93,6 +93,10 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
         values: ['adaptive'],
         description: 'Sonnet 5 supports adaptive thinking only (fixed budget not allowed).',
       },
+      'opus-5.5': {
+        values: ['adaptive'],
+        description: 'Opus 5.5 supports adaptive thinking only — always on, cannot be disabled at any effort.',
+      },
       'opus-5': {
         values: ['adaptive'],
         description: 'Opus 5 supports adaptive thinking only (fixed budget not allowed).',
@@ -136,6 +140,13 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     resumeImmutableReason:
       'Reasoning effort is locked once a session has started — it shaped the prior turn\'s immutable thinking blocks. Start a new session to change it.',
     modelOverrides: {
+      // Silent-regression trap: Opus 5.5's own default effort is `medium`, one level
+      // below every other model (Opus 5 included). The adapter never sends `effort`
+      // unless configured, so switching the model id alone drops a level.
+      'opus-5.5': {
+        default: 'medium',
+        description: 'Reasoning effort level. Opus 5.5 defaults to "medium" (every other model defaults to "high").',
+      },
       'opus-4.8': {
         values: ['low', 'medium', 'high', 'max'],
         description: 'Reasoning effort level. Opus 4.8 additionally supports "max".',
@@ -190,11 +201,13 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     max: 600000,
     step: 5000,
     description:
-      'Cap on holding the session for background work that stops making progress (a backgrounded `sleep 3600`). ' +
-      'Measured from the last sign that the work itself is moving — subagent output and task lifecycle frames re-arm ' +
-      'it, engine heartbeats do not — so a long subagent stretch is not cut off. Expiry ENDS the run with a typed ' +
-      'AdapterBackgroundHoldExpiredError; it never leaves the session open with a closed control channel. Keep it ' +
-      'below the timeout your consumer applies to the stream, or the run is rejected before that error is emitted. ' +
+      'Cap on holding the session for unsettled background work (a backgrounded `sleep 3600`). Expires after this ' +
+      'long with no lifecycle event (started / progress / completed) from a tracked background task — only those ' +
+      're-arm it; engine heartbeats and subagent output do not, and an open subagent is bounded by subagentTimeoutMs ' +
+      'instead. A build that keeps reporting progress is not cut off. Expiry ENDS the run with a typed ' +
+      'AdapterBackgroundHoldExpiredError; it never leaves the session open with a closed control channel. 90s is the ' +
+      'measured starting point. If you apply a timeout to the stream, raise it and this cap together, never either ' +
+      'alone — the cap must stay below it, or the run is rejected before that error is emitted. ' +
       'Set to null to disarm the cap and let your own timeoutMs be the only bound; a 0 or a negative is read as a ' +
       'mistake and falls back to the default.',
   },

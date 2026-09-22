@@ -21,6 +21,7 @@ import type {
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
 import { createIdleClock, createIdleHandle, observeIdle, type IdleHandle } from '../idle-clock.js';
+import { createRunCaps, capExpiryError } from '../run-caps.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -539,12 +540,24 @@ export class OpencodeAdapter implements RuntimeAdapter {
         this.abortController?.abort();
       },
     });
+    // The per-unit caps (toolCallTimeoutMs, subagentTimeoutMs): expiry stops the run
+    // down the same path; flushOpenSubagent() closes the subagent before the error.
+    idle.caps = createRunCaps({
+      toolCallMs: params.toolCallTimeoutMs,
+      subagentMs: params.subagentTimeoutMs,
+      onExpire: (expiry) => {
+        idle.capExpired = expiry;
+        this.abortController?.abort();
+      },
+    });
     const terminalError = () =>
       timedOut
         ? new AdapterTimeoutError('opencode', params.timeoutMs!)
         : idle.expired
           ? new AdapterIdleTimeoutError('opencode', params.idleTimeoutMs!)
-          : new AdapterAbortError('opencode');
+          : idle.capExpired
+            ? capExpiryError('opencode', idle.capExpired, params)
+            : new AdapterAbortError('opencode');
 
     // OpenCode's SSE does not attach a task/call ID to text/reasoning deltas.
     // We correlate by ordering: deltas observed between a task tool's
@@ -649,6 +662,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
           if (!params.onUserInput) {
             resolve({ action: 'decline' });
             idle.clock.end(`uin:${req.requestId}`);
+            idle.caps.inputAnswered(req.requestId);
             continue;
           }
           // An unanswered request is outstanding work: the idle clock stops until it
@@ -683,6 +697,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           } finally {
             idle.clock.end(inputKey);
+            idle.caps.inputAnswered(req.requestId);
           }
         }
 
