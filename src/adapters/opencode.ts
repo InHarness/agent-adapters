@@ -168,6 +168,25 @@ export class OpencodeAdapter implements RuntimeAdapter {
 
   abort(): void {
     this.abortController?.abort();
+    // abort() alone must kill the spawned server (M13 "no dangling SDK process"),
+    // even if the consumer never pulls the stream again to reach the finally.
+    this.closeServer();
+  }
+
+  /**
+   * Shut the spawned OpenCode server down. Idempotent — the handle is cleared
+   * before it is invoked, so abort(), the abort-signal listener and the finally can
+   * all call it. Fire-and-forget: never await an engine-side round-trip on the
+   * teardown path, and a throwing close must not stop teardown.
+   */
+  private closeServer(): void {
+    const close = this.serverClose;
+    this.serverClose = null;
+    try {
+      close?.();
+    } catch {
+      /* best-effort */
+    }
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
@@ -179,6 +198,17 @@ export class OpencodeAdapter implements RuntimeAdapter {
   private async *runSession(params: RuntimeExecuteParams, idle: IdleHandle): AsyncIterable<UnifiedEvent> {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
+    // timeoutMs and idle expiry stop the run by aborting the controller, not via
+    // abort(); this makes every stop path kill the server too.
+    signal.addEventListener('abort', () => this.closeServer(), { once: true });
+    // Settles when this run is aborted (abort(), timeoutMs, idle expiry). Raced
+    // against everything the loop can park on — the SSE stream and the consumer's
+    // user-input handler — so a stop is enforceable even when the other side never
+    // responds (M13). Never rejects.
+    const abortPromise = new Promise<'abort'>((resolve) => {
+      if (signal.aborted) resolve('abort');
+      else signal.addEventListener('abort', () => resolve('abort'), { once: true });
+    });
 
     // Merge provider-resolved config with user-supplied config
     const config = { ...this._providerConfig, ...params.architectureConfig };
@@ -376,6 +406,8 @@ export class OpencodeAdapter implements RuntimeAdapter {
       });
       client = result.client;
       this.serverClose = result.server.close;
+      // An abort that landed while the server was starting found no handle to close.
+      if (signal.aborted) this.closeServer();
     } catch (err) {
       await mirrored?.cleanupMirror().catch(() => {});
       await materialized?.cleanup().catch(() => {});
@@ -624,13 +656,27 @@ export class OpencodeAdapter implements RuntimeAdapter {
           const inputKey = `uin:${req.requestId}`;
           idle.clock.begin(inputKey);
           try {
-            const res = await params.onUserInput(req);
-            resolve(res);
+            // Race the consumer's handler against abort. A host that answers from a
+            // UI resolves only when a human replies — which may be never — so awaiting
+            // it bare parks the run, and the server it spawned, forever (M13).
+            const outcome = await Promise.race([
+              params.onUserInput(req).then((res) => ({ kind: 'answer' as const, res })),
+              abortPromise.then(() => ({ kind: 'abort' as const })),
+            ]).finally(() => idle.clock.end(inputKey));
+            if (outcome.kind === 'abort') {
+              // Answer `cancel` so the question subscription's promise settles (it
+              // rejects the question best-effort, unawaited here), and everything
+              // still queued behind it too.
+              resolve({ action: 'cancel' });
+              for (const p of pendingUserInputs.splice(0)) p.resolve({ action: 'cancel' });
+              yield* flushOpenSubagent();
+              yield { type: 'error', error: terminalError(), phase: 'runtime' };
+              return;
+            }
+            resolve(outcome.res);
           } catch (err) {
             resolve({ action: 'cancel' });
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
-          } finally {
-            idle.clock.end(inputKey);
           }
         }
 
@@ -638,12 +684,20 @@ export class OpencodeAdapter implements RuntimeAdapter {
         const wake = new Promise<'wake'>((resolve) => {
           userInputWaker = () => resolve('wake');
         });
+        // The abort arm matters when the SSE stream goes quiet instead of ending
+        // once the run is stopped.
         const winner = await Promise.race([
           pendingNext.then((r) => ({ kind: 'sdk' as const, value: r })),
           wake.then(() => ({ kind: 'wake' as const })),
+          abortPromise.then(() => ({ kind: 'abort' as const })),
         ]);
         userInputWaker = null;
         if (winner.kind === 'wake') continue;
+        if (winner.kind === 'abort') {
+          yield* flushOpenSubagent();
+          yield { type: 'error', error: terminalError(), phase: 'runtime' };
+          return;
+        }
         pendingNext = null;
         // Checked before `done`: stopping the run kills the server, and an SSE stream
         // that then ends cleanly instead of throwing would otherwise fall through to
@@ -930,8 +984,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
     } finally {
       v2SubscriptionCancel?.();
       clearTimeout(timeoutId);
-      this.serverClose?.();
-      this.serverClose = null;
+      this.closeServer();
       await mirrored?.cleanupMirror().catch((err) =>
         console.warn('[agent-adapters] opencode mirrored skill cleanup failed', err),
       );
