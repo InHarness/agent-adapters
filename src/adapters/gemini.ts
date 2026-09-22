@@ -225,6 +225,20 @@ const GEMINI_TOOL_GROUPS: Record<ToolGroup, string[]> = {
   // M18 classes as a write.
   'file-write': ['write_file', 'replace', 'save_memory'],
   web: ['web_fetch', 'google_web_search'],
+  // The SDK's own subagent tools, registered from its agent registry OUTSIDE the
+  // enumerated built-in set (like the background-process tools above), so no
+  // other group names them. `codebase_investigator` reads the codebase: until
+  // these were named, a `file-read` deny was bypassable through a spawned helper
+  // with no way to close it. Denying `delegation` closes it; denying `file-read`
+  // alone still does not — see the file-read escape surface in src/tool-groups.ts.
+  // Names verified against gemini-cli-core 0.38.2.
+  //
+  // Forward note: at `^0.38.0` `excludeTools` — the only gating primitive this
+  // adapter uses — is DEPRECATED in favour of the Policy Engine (`coreTools`,
+  // `mainAgentTools`, `allowedTools`, and its ALLOW / DENY / ASK_USER rules). Those
+  // positive lists are the only route by which gemini's strength could rise from
+  // 'soft' to 'hard'.
+  delegation: ['codebase_investigator', 'cli_help', 'generalist', 'confucius'],
 };
 
 /** Tool names to exclude for a set of denied groups. */
@@ -284,12 +298,15 @@ export class GeminiAdapter implements RuntimeAdapter {
       return;
     }
 
-    // gemini-cli-core has no concept of defining subagents — surface once so callers know.
+    // An ADAPTER limitation, not an SDK gap: gemini-cli-core ships an agent registry,
+    // an agent-definition shape and named subagent tools of its own — this adapter
+    // simply does not translate a consumer `SubagentDefinition` per call. Surface once.
     if (params.subagents?.length) {
       yield {
         type: 'warning',
         message:
-          'gemini adapter: subagents are not supported — gemini-cli-core has no subagent definition mechanism. The `subagents` field is ignored.',
+          'gemini adapter: consumer-defined subagents are not supported — this adapter does not translate a ' +
+          '`SubagentDefinition` into gemini-cli-core\'s agent registry. The `subagents` field is ignored.',
       };
     }
 

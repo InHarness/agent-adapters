@@ -51,11 +51,19 @@ import { AdapterToolPolicyError } from './types.js';
  * - `file-read` — reading, listing or searching files.
  * - `file-write` — creating, editing or deleting files, and persisting memory.
  * - `web` — fetching URLs and web search.
+ * - `delegation` — spawning, listing or messaging a helper agent: the
+ *   subagent-spawning tool under every alias, and the tools that continue or
+ *   enumerate one. Denying it closes the whole delegation surface directly,
+ *   instead of relying on deny-propagation into each spawned helper — which is
+ *   what stops a helper from laundering a capability the parent denied.
+ *
+ * Widening this union is a breaking change for a consumer that switches on it
+ * exhaustively — `delegation` arrived in 0.9.12.
  */
-export type ToolGroup = 'shell' | 'file-read' | 'file-write' | 'web';
+export type ToolGroup = 'shell' | 'file-read' | 'file-write' | 'web' | 'delegation';
 
 /** The complete group vocabulary. Anything outside it refuses the run. */
-export const TOOL_GROUPS: readonly ToolGroup[] = ['shell', 'file-read', 'file-write', 'web'];
+export const TOOL_GROUPS: readonly ToolGroup[] = ['shell', 'file-read', 'file-write', 'web', 'delegation'];
 
 /**
  * Enforcement strength for one group on one adapter.
@@ -79,6 +87,8 @@ export type ToolGatingStrength = 'hard' | 'soft' | 'none';
  * The documented opt-out is an explicit empty `disallowedToolGroups`.
  *
  * Reads and web stay available — plan mode must still be able to research.
+ * `delegation` is deliberately NOT in the preset: a plan-mode run may still
+ * hand its research to a helper (which inherits the same denies).
  */
 export const PLAN_MODE_DENY_GROUPS: readonly ToolGroup[] = ['file-write', 'shell'];
 
@@ -126,6 +136,7 @@ const CLAUDE_CODE_MATRIX: GroupMatrix = {
       'a built-in MCP web-fetch identifier the deny mechanism does not reliably filter',
     ],
   },
+  delegation: { strength: 'soft', escapeSurfaces: [] },
 };
 
 // codex: `ThreadOptions` has a whole-run `sandboxMode` and a web-search toggle,
@@ -144,6 +155,8 @@ const CODEX_MATRIX: GroupMatrix = {
   // out loud on every run that denies file-write without denying shell.
   'file-write': { strength: 'hard', escapeSurfaces: [] },
   web: { strength: 'hard', escapeSurfaces: [] },
+  // No subagent primitive the adapter can remove.
+  delegation: NONE,
 };
 
 // opencode: the strongest of the four. Server-side `permission` buckets with a
@@ -160,6 +173,10 @@ const OPENCODE_MATRIX: GroupMatrix = {
   'file-read': { strength: 'hard', escapeSurfaces: [] },
   'file-write': { strength: 'hard', escapeSurfaces: [] },
   web: { strength: 'hard', escapeSurfaces: [] },
+  // The `task` bucket. Adapter-local rule: denying `file-read` ALSO denies this
+  // group on opencode, because the server folds delegation into the read
+  // permission — see src/adapters/opencode.ts.
+  delegation: { strength: 'hard', escapeSurfaces: [] },
 };
 
 // gemini: exclusion happens when the tool registry is built, BEFORE the
@@ -173,9 +190,16 @@ const GEMINI_DENY_ONLY =
   '`excludeTools` is deny-only with no allow-list counterpart, so a built-in added by a peer-SDK bump stays available until the group mapping names it';
 const GEMINI_MATRIX: GroupMatrix = {
   shell: { strength: 'soft', escapeSurfaces: [GEMINI_DENY_ONLY] },
-  'file-read': { strength: 'soft', escapeSurfaces: [GEMINI_DENY_ONLY] },
+  'file-read': {
+    strength: 'soft',
+    escapeSurfaces: [
+      GEMINI_DENY_ONLY,
+      'the SDK\'s own subagent tools (e.g. `codebase_investigator`) read the codebase, so with `delegation` still allowed this deny is bypassable through a spawned helper — deny `delegation` too for a boundary',
+    ],
+  },
   'file-write': { strength: 'soft', escapeSurfaces: [GEMINI_DENY_ONLY] },
   web: { strength: 'soft', escapeSurfaces: [GEMINI_DENY_ONLY] },
+  delegation: { strength: 'soft', escapeSurfaces: [GEMINI_DENY_ONLY] },
 };
 
 /** No known primitive — every group refuses. The safe default for a custom
@@ -185,6 +209,7 @@ const UNKNOWN_MATRIX: GroupMatrix = {
   'file-read': NONE,
   'file-write': NONE,
   web: NONE,
+  delegation: NONE,
 };
 
 function matrixFor(architecture: string): GroupMatrix {

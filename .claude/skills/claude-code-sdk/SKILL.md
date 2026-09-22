@@ -70,9 +70,9 @@ This is the **reference adapter** — closest to the UnifiedEvent semantics, bec
 | `stream_event` → `thinking_delta` | `thinking` | incremental, `replace` omitted/false; `subagentTaskId` resolved same way as `text_delta` |
 | `assistant` | `assistant_message` | full `NormalizedMessage`, content blocks mapped |
 | `user` (tool_result inside) | `assistant_message` (role user) + `tool_result` per block | each `tool_result` block's `is_error` is passed through to both `ContentBlock.toolResult.isError` and `UnifiedEvent.tool_result.isError` |
-| `system` subtype=`task_started` | `subagent_started` | `taskId` from event, `toolUseId` from parent Task call |
+| `system` subtype=`task_started` | `subagent_started` | `taskId` from event, `toolUseId` from the spawning call. A repeat for a known `task_id` is a `SendMessage` re-entry → `resumed: true`, `toolUseId` = the SendMessage call (deltas keep the original `parent_tool_use_id`). `task_type: 'in_process_teammate'` → nothing emitted |
 | `system` subtype=`task_progress` | `subagent_progress` | |
-| `system` subtype=`task_notification` | `subagent_progress` | same mapping |
+| `system` subtype=`task_notification` | `subagent_completed` | status mapped onto the unified vocabulary |
 | `system` subtype=`compact_boundary` | `flush` | |
 | `tool_use_summary` | `tool_use` + synthetic `tool_result` | accumulated; `isSubagent` flagged |
 | `canUseTool('AskUserQuestion', ...)` | `user_input_request` (source=`'model-tool'`) | adapter intercepts, calls `onUserInput` |
@@ -278,3 +278,12 @@ Constants (in `src/adapters/claude-code.ts`):
 - `src/testing/e2e/claude-code.e2e.test.ts` — expected event shape per scenario
 - `src/models.ts:ADAPTIVE_THINKING_ONLY` — thinking-mode gate
 - `package.json` — pinned `@anthropic-ai/claude-agent-sdk` version
+
+## Delegation, re-entry and cross-session posture (0.9.12)
+
+- `SendMessage` / `ListAgents` (alias `ListPeers`) are **deferred** built-ins — reachable only via `ToolSearch` (`select:SendMessage`), listed in no published SDK catalog. They sit in the `delegation` tool group with `Agent`/`Task`, so any *other* deny-group keeps them in `options.tools`.
+- The built-in inventory (`CLAUDE_CODE_TOOL_GROUPS` + `CLAUDE_CODE_UNGATED_BUILTINS`) is hand-kept. On every pin bump, run the unit drift guard (parses `sdk-tools.d.ts`) **and** the live `sdk-surface-probe` e2e leg 1 (`system:init` tools) — the latter found `DesignSync`, which has no published schema.
+- `crossSessionInbound: 'refuse'` is pinned via `options.settings` (a `Settings` key, not a query option), merged with path-scope `permissions`. Visible in `adapter_ready.sdkConfig`.
+- Outbound `SendMessage` is gated by an unconditional **PreToolUse hook** (not `canUseTool` — `bypassPermissions`/`dontAsk` never consult it): `to` must be a task id / ≥6-char unambiguous id prefix / spawn `name` of a subagent this run started. Verified live on 0.3.263.
+- Re-entry and the hold: `TaskRegistry.start()` clears the finished mark, and the adapter re-`touch`es the hold after `start` (the pre-switch touch parks against the stale registry).
+

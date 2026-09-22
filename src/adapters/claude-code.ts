@@ -55,6 +55,7 @@ import {
   createTaskRegistry,
   createBackgroundHold,
   isMainModelActivity,
+  isTeammateTaskType,
   projectBackgroundTasks,
   BACKGROUND_WAKEUP_GRACE_MS,
   MAX_BACKGROUND_HOLD_MS,
@@ -164,20 +165,59 @@ const TASK_NON_TODO_INPUT_KEYS = new Set([
  * Built-ins belonging to each gated group. Renamed/relocated built-ins list
  * EVERY spelling: a deny that names only one of two live aliases silently fails
  * to fire, and on the allow-list side an unlisted alias silently disappears.
+ *
+ * The alias authority is the SDK's own canonicalisation map (at 0.3.263:
+ * `Task`→`Agent`, `KillShell`/`KillBash`→`TaskStop`,
+ * `BashOutput`/`AgentOutput`/`BashOutputTool`/`AgentOutputTool`→`TaskOutput`,
+ * `ListPeers`→`ListAgents`, `Brief`→`SendUserMessage`, and the MCP-resource
+ * `…Tool` spellings). Audit this table, and CLAUDE_CODE_UNGATED_BUILTINS below,
+ * on every pin bump — the inventory is maintained by hand, and the unit guard in
+ * claude-code.tool-gating.test.ts fails when the SDK's published tool-input
+ * schemas name a tool this inventory does not know.
  */
 export const CLAUDE_CODE_TOOL_GROUPS: Record<ToolGroup, string[]> = {
   // A background-process inspection tool IS shell — it reads the output of an
-  // OS command. `KillBash` was renamed `KillShell`; both are named.
-  shell: ['Bash', 'BashOutput', 'KillBash', 'KillShell'],
+  // OS command. The task inspector/stopper is ONE tool serving shells and
+  // subagents alike, so a `shell` deny also takes away reading a subagent's task
+  // output; a run that wants delegation without shell accepts that. `Monitor`
+  // streams a shell command's output; `REPL` is general-purpose code execution.
+  shell: [
+    'Bash',
+    'TaskOutput',
+    'BashOutput',
+    'AgentOutput',
+    'BashOutputTool',
+    'AgentOutputTool',
+    'TaskStop',
+    'KillBash',
+    'KillShell',
+    'Monitor',
+    'REPL',
+  ],
   'file-read': ['Read', 'Grep', 'Glob', 'NotebookRead'],
-  // `save_memory`-equivalent persistence counts as a write.
-  'file-write': ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'],
+  // `save_memory`-equivalent persistence counts as a write; so does creating or
+  // leaving a git worktree, which writes a directory tree.
+  'file-write': ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'EnterWorktree', 'ExitWorktree'],
   web: ['WebFetch', 'WebSearch'],
+  // Spawning (`Agent`, legacy `Task` — the system:init list still says 'Task'),
+  // continuing (`SendMessage`) and enumerating (`ListAgents`, alias `ListPeers`)
+  // a helper, plus the tools that start agent work of their own (`Workflow`
+  // orchestrates subagents, `RemoteTrigger` starts a remote agent run).
+  // `SendMessage`/`ListAgents` are DEFERRED — reachable only through the
+  // `ToolSearch` discovery gate, listed in no published SDK catalog — so they
+  // must be named here explicitly: an inventory derived from what the SDK
+  // advertises would omit them and strand every subagent the run spawned.
+  delegation: ['Agent', 'Task', 'SendMessage', 'ListAgents', 'ListPeers', 'Workflow', 'RemoteTrigger'],
 };
 
 /**
- * Built-ins that belong to no gated group and stay available whatever is denied:
- * task tracking, tool discovery, asking the user, and delegation.
+ * Built-ins that carry no capability of any gated group and stay available
+ * whatever is denied: task tracking, tool discovery, asking the user, plan-mode
+ * transitions, scheduling, MCP-resource access (MCP is never gated by group),
+ * and host-surface tools. Fail-closed applies to the UNKNOWN, not to the
+ * unclassified: a deny removes a capability class, never an unrelated tool that
+ * happened to share a construction pass — denying `file-write` must not cost
+ * the run its ability to plan.
  *
  * `Skill` is NOT here — it is conditional. A skill routinely instructs the model
  * to run shell commands, so leaving the tool available under a `shell` deny
@@ -185,25 +225,41 @@ export const CLAUDE_CODE_TOOL_GROUPS: Record<ToolGroup, string[]> = {
  * kept otherwise (without it, inline skills materialized as a local plugin can
  * never be opened — the SDK reports "No such tool available: Skill").
  *
- * `Task`/`Agent`: the tool was renamed Task→Agent (Claude Code v2.1.63); the SDK
- * emits 'Agent' in tool_use blocks but the system:init tools list still uses
- * 'Task', so both names must be present to expose it across SDK versions.
- * Delegation stays available under a deny because the run's denies are
- * propagated into every subagent definition (see buildSubagentTools below) —
- * without that propagation "deny the shell" would mean "deny the shell until the
- * model delegates".
- *
- * `ToolSearch` is presumed to be the discovery gate future models will use to
- * find deferred built-ins, including the TaskCreate/TaskUpdate family. It does
- * not appear anywhere in the pinned SDK today — this entry is precautionary.
- * Whitelisting a tool name the SDK doesn't recognize is harmless.
+ * `ToolSearch` is the discovery gate through which the model loads deferred
+ * built-ins (`SendMessage`, `ListAgents`, the TaskCreate/TaskUpdate family).
  */
 export const CLAUDE_CODE_UNGATED_BUILTINS: string[] = [
   ...CLAUDE_CODE_TASK_TRACKING_TOOLS,
   'ToolSearch',
   'AskUserQuestion',
-  'Task',
-  'Agent',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'ListMcpResourcesTool',
+  'ListMcpResources',
+  'ReadMcpResourceTool',
+  'ReadMcpResource',
+  'ReadMcpResourceDirTool',
+  'ReadMcpResourceDir',
+  'RefreshMcpTools',
+  'SendUserMessage',
+  'Brief',
+  'ReportFindings',
+  'SendFeedback',
+  'ClaudeDesign',
+  'Projects',
+  'ShowOnboardingRolePicker',
+  'ReadNotifications',
+  'ProposeSkills',
+  'ProposeGoal',
+  'Artifact',
+  'PushNotification',
+  // Exposed at system:init on 0.3.263 but absent from sdk-tools.d.ts — found by the
+  // `sdk-surface-probe` e2e scenario, which is the only thing that can see such names.
+  'DesignSync',
 ];
 
 /** Every built-in this library knows about. */
@@ -252,8 +308,8 @@ export function buildClaudeCodeToolPolicy(
  * Returns the definition's fields unchanged when the run denies nothing.
  *
  * **The narrowing covers BUILT-INS ONLY — an `mcp__*` name passes through.**
- * Tool groups are four (`shell`, `file-read`, `file-write`, `web`) and every
- * name they contain is a built-in, so an MCP tool is not something a group can
+ * Every name in a tool group (`shell`, `file-read`, `file-write`, `web`, `delegation`)
+ * is a built-in, so an MCP tool is not something a group can
  * deny; M06 says a subagent inherits the run's MCP servers "filtered by its own
  * toolset", which requires those names to survive this intersection or the
  * filter has nothing left to filter with. Dropping them anyway was a bug: a
@@ -284,6 +340,25 @@ export function subagentToolPolicy(
     : toolPolicy.allow;
   const disallowedTools = [...new Set([...(agent.disallowedTools ?? []), ...toolPolicy.deny])];
   return { tools, disallowedTools };
+}
+
+/**
+ * The outbound `SendMessage` predicate (M06/A01): does `to` resolve to a subagent
+ * this run spawned? Accepts the task id, the `name` the model gave at spawn, or an
+ * unambiguous prefix of a task id (the SDK's own listings show a short id). Anything
+ * else — a peer session, a teammate, another session's agent — is not this run's to
+ * address.
+ */
+export function isOwnSubagentAddress(
+  to: unknown,
+  ownTaskIds: ReadonlySet<string>,
+  ownAgentNames: ReadonlySet<string>,
+): boolean {
+  if (typeof to !== 'string' || to.length === 0) return false;
+  if (ownTaskIds.has(to) || ownAgentNames.has(to)) return true;
+  if (to.length < 6) return false;
+  const matches = [...ownTaskIds].filter((id) => id.startsWith(to));
+  return matches.length === 1;
 }
 
 // --- Debug logging ---
@@ -1161,6 +1236,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // Instead switch to a default-deny `dontAsk` mode confined by explicit allow/deny
     // rules (built in the path-scope block below). Outside path-scope — and under a
     // HARD OS sandbox, where the kernel enforces — we keep `bypassPermissions`.
+    // The subagents THIS run spawned — the only legitimate `SendMessage` targets.
+    // Filled on every subagent `task_started` and on every `Agent`/`Task` spawn's
+    // `name` (the PreToolUse hook below); read by that hook's outbound predicate.
+    const ownTaskIds = new Set<string>();
+    const ownAgentNames = new Set<string>();
+
     const pathScope = probePathScope('claude-code', params);
     const softScope = pathScope.requested && pathScope.strength === 'soft';
 
@@ -1378,6 +1459,71 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           };
         }
       }
+    }
+
+    // Cross-session ingress (M14/A01) — PINNED, not configurable. `crossSessionInbound`
+    // is a `Settings` key, and left unset it follows permission-mode parity: a
+    // `bypassPermissions` library run would auto-accept an inbound turn from any other
+    // bypass session on the machine. A library embedded in someone else's process is
+    // not the layer that decides to accept traffic from another session, so every run
+    // refuses. MERGED into whatever the path-scope branch above wrote (its
+    // `permissions` must survive) — and never via `managedSettings`, which drops a
+    // non-allowlisted key silently. The pinned value reaches the consumer through the
+    // redacted `sdkConfig` on `adapter_ready`, so a posture they could not choose is
+    // at least one they can see.
+    options.settings = {
+      ...((options.settings as Record<string, unknown> | undefined) ?? {}),
+      crossSessionInbound: 'refuse',
+    } as Options['settings'];
+
+    // Outbound peer messaging (M06/A01) — a `query()` run registers as an addressable
+    // peer, and `SendMessage({to})` can inject a prompt into ANY session of the same
+    // user. The same tool is how the model re-enters a subagent it spawned, so the
+    // gate cannot be the tool list (nor a `delegation` deny — both close re-entry
+    // too); it is a predicate on the argument. A `to` naming a task this run started
+    // (by task id, id prefix, or the `name` given at spawn) is allowed; anything else
+    // is denied with a reason the model can act on.
+    //
+    // A PreToolUse hook rather than `canUseTool`: our runs are `bypassPermissions` or
+    // `dontAsk`, and neither consults `canUseTool` for an ordinary tool — a predicate
+    // there would never fire. Hooks run in every permission mode. The same hook
+    // records the `name` of every `Agent`/`Task` spawn, since that is the handle the
+    // model is told to address.
+    {
+      const existingHooks = (options.hooks ?? {}) as Record<string, unknown[]>;
+      options.hooks = {
+        ...existingHooks,
+        PreToolUse: [
+          ...(existingHooks.PreToolUse ?? []),
+          {
+            hooks: [
+              async (input: unknown) => {
+                const { tool_name: toolName, tool_input: toolInput } = input as {
+                  tool_name?: string;
+                  tool_input?: Record<string, unknown>;
+                };
+                if ((toolName === 'Agent' || toolName === 'Task') && typeof toolInput?.name === 'string') {
+                  ownAgentNames.add(toolInput.name);
+                }
+                if (toolName !== 'SendMessage') return { continue: true };
+                const to = toolInput?.to;
+                if (isOwnSubagentAddress(to, ownTaskIds, ownAgentNames)) return { continue: true };
+                return {
+                  continue: true,
+                  hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'deny',
+                    permissionDecisionReason:
+                      `SendMessage to ${JSON.stringify(to)} is not allowed: this run may only address ` +
+                      'its own subagents (the agents it spawned with the Agent tool). Messaging other ' +
+                      'sessions, peers or teammates is disabled.',
+                  },
+                };
+              },
+            ],
+          },
+        ],
+      } as Options['hooks'];
     }
 
     // Background-task disable lever (M17, L3). The SDK exposes no option to
@@ -1604,6 +1750,23 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // workflow → `background_task_*` (M17). See ./claude-code.background-hold.ts
     // for the settlement invariant this registry enforces.
     const tasks = createTaskRegistry();
+    /** Agent-team teammates seen on the task channel — never surfaced (M06). */
+    const teammateTaskIds = new Set<string>();
+    /**
+     * The status the engine's `task_updated` patch reported for a subagent whose
+     * `task_notification` has not landed yet. Needed for the one re-entry shape that
+     * would otherwise NEST two cycles: the model re-enters a helper after the engine
+     * patched it finished but before it notified. See the task_started branch.
+     */
+    const patchedStatusById = new Map<string, unknown>();
+    /**
+     * Ids whose previous cycle was closed at re-entry, so its late notification is
+     * owed — mapped to that cycle's `tool_use_id`, which the notification echoes, so a
+     * stale notification is told apart from the live cycle's by id, never by timing.
+     */
+    const staleNotificationOwed = new Map<string, string>();
+    /** The `tool_use_id` of each subagent's currently reported cycle. */
+    const cycleToolUseIdById = new Map<string, string>();
     /**
      * Whether this run has already reported an unrecognized SDK task status. The M06
      * drift signal is at most ONE `warning` per run, however many unknown statuses
@@ -1707,15 +1870,20 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
      * terminal reasons below, an SDK iterator throw, and the ordinary loop exit — for
      * the same reason `terminalRuntimeError()` above is one closure: those exit paths
      * used to hold copies of the same ternary, and that is exactly how a fifth path
-     * gets half the teardown. Its own `flushedSubagents` guard makes it idempotent, so
-     * two paths overlapping (a throw after a partial flush) still cannot double-close.
+     * gets half the teardown. It settles every task it closes, so two paths
+     * overlapping (a throw after a partial flush) still cannot double-close.
+     *
+     * The guarantee is AT MOST ONCE PER `taskId` PER TERMINATION, not per `taskId` for
+     * the whole run: a re-entered subagent (`SendMessage`) legitimately carries a
+     * second lifecycle pair under the same id, so a run-wide "already closed this id"
+     * set would leave a re-opened cycle unpaired. What is closed is exactly what is
+     * unpaired at this moment — a subagent that settled and had not yet been
+     * re-entered is not in flight, and nothing is synthesized for it.
      */
-    const flushedSubagents = new Set<string>();
     const flushOpenSubagents = function* (): Generator<UnifiedEvent> {
       for (const taskId of [...tasks.inFlight]) {
         if (tasks.kind(taskId)?.isBackground) continue;
-        if (flushedSubagents.has(taskId)) continue;
-        flushedSubagents.add(taskId);
+        tasks.settle(taskId);
         yield { type: 'subagent_completed', taskId, status: 'aborted' };
       }
     };
@@ -2387,7 +2555,27 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const taskId = e.task_id as string;
               const toolUseId = (e.tool_use_id as string) ?? '';
               const description = (e.description as string) ?? '';
+              if (isTeammateTaskType(e.task_type)) {
+                // A teammate is not a subagent (M06): this run did not spawn it, so
+                // nothing reaches the unified stream and the hold does not track it.
+                // Later frames for the id are dropped via `teammateTaskIds`.
+                teammateTaskIds.add(taskId);
+                break;
+              }
+              // Re-entry: the model continued a backgrounded subagent with
+              // `SendMessage`. The SDK re-uses the `task_id` and sets `tool_use_id`
+              // to the SendMessage call; `task_started` carries no marker of its own,
+              // so `resumed` is derived from "this id has been seen before".
+              const isReentry = tasks.kind(taskId) !== undefined;
+              // Still in flight = the previous cycle has not been notified yet.
+              const previousCycleOpen = isReentry && tasks.inFlight.has(taskId);
+              const previousPatchedStatus = patchedStatusById.get(taskId);
               const kind = tasks.start(taskId, e.task_type, description);
+              // `hold.touch` ran above, BEFORE the registry knew the id was live
+              // again — so if everything had settled it re-armed grace inside this
+              // new cycle. Touch again now the id is back in flight: that parks on
+              // the long bound (grace disarmed) and re-arms the cap.
+              hold.touch(event);
               if (kind.isBackground && shellDenied) {
                 // A background task IS a shell task, and this run has no shell.
                 // M18 says the capability is simply OFF — a skip, not a
@@ -2402,14 +2590,45 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   description,
                 };
               } else {
+                // ADDITIVE on re-entry: the resumed agent's messages keep the ORIGINAL
+                // spawn's `parent_tool_use_id`, so that key must survive; the
+                // SendMessage id is added beside it, not in place of it.
                 if (toolUseId) subagentTaskIdByParentToolUseId.set(toolUseId, taskId);
-                yield { type: 'subagent_started', taskId, description, toolUseId };
+                ownTaskIds.add(taskId);
+                if (previousCycleOpen && previousPatchedStatus === undefined) {
+                  // Re-entered while the previous cycle is still RUNNING (no finished
+                  // patch): there is no cycle boundary to report — the open cycle simply
+                  // continues. Emitting a start here would nest two pairs.
+                  break;
+                }
+                if (previousCycleOpen) {
+                  // Patched finished, not yet notified. Pairs sequence and never nest,
+                  // so close the previous cycle NOW with the status the engine patched,
+                  // and swallow its notification if it lands late (see task_notification).
+                  yield {
+                    type: 'subagent_completed',
+                    taskId,
+                    status: mapSubagentStatus(previousPatchedStatus, SDK_TASK_STATUS_MAP).status,
+                  };
+                  patchedStatusById.delete(taskId);
+                  staleNotificationOwed.set(taskId, cycleToolUseIdById.get(taskId) ?? '');
+                }
+                cycleToolUseIdById.set(taskId, toolUseId);
+                yield {
+                  type: 'subagent_started',
+                  taskId,
+                  description,
+                  toolUseId,
+                  ...(isReentry ? { resumed: true } : {}),
+                };
               }
             } else if (subtype === 'task_progress') {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
               const kind = tasks.kind(taskId);
-              if (kind?.isBackground && shellDenied) {
+              if (teammateTaskIds.has(taskId)) {
+                // Teammate — see task_started above.
+              } else if (kind?.isBackground && shellDenied) {
                 // See task_started above — background capability is off.
               } else if (kind?.isBackground) {
                 yield {
@@ -2432,6 +2651,31 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
               const kind = tasks.kind(taskId);
+              if (teammateTaskIds.has(taskId)) {
+                // Teammate — see task_started above. Never settled: the registry never
+                // started it, and a settle would count as "touched a task" and hold the run.
+                break;
+              }
+              const staleToolUseId = staleNotificationOwed.get(taskId);
+              if (staleToolUseId !== undefined) {
+                const notifiedToolUseId = e.tool_use_id as string | undefined;
+                // Matched by `tool_use_id` when both sides carry one; otherwise the first
+                // notification after re-entry is taken as the stale one — a missed live
+                // notification is closed by termination synthesis, whereas letting a stale
+                // one through would close the live cycle twice.
+                const isStale =
+                  staleToolUseId && notifiedToolUseId ? notifiedToolUseId === staleToolUseId : true;
+                if (isStale) {
+                  // The PREVIOUS cycle's late notification: that cycle was already closed
+                  // at re-entry. Settling here would report the live cycle's completion
+                  // with the old cycle's result, or drop a running task from the tracked
+                  // set and arm grace under it.
+                  staleNotificationOwed.delete(taskId);
+                  hold.touch(event);
+                  break;
+                }
+              }
+              patchedStatusById.delete(taskId);
               tasks.settle(taskId);
               if (kind?.isBackground && shellDenied) {
                 // See task_started above — background capability is off.
@@ -2484,8 +2728,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               const e = event as Record<string, unknown>;
               const taskId = e.task_id as string;
               const status = (e.patch as Record<string, unknown> | undefined)?.status;
-              if (typeof status === 'string' && /^(completed|failed|stopped|cancell?ed)$/.test(status)) {
+              if (teammateTaskIds.has(taskId)) {
+                // Teammate — see task_started above. The hold does not track it.
+              } else if (typeof status === 'string' && /^(completed|failed|stopped|cancell?ed)$/.test(status)) {
                 tasks.markFinished(taskId);
+                if (!tasks.kind(taskId)?.isBackground) patchedStatusById.set(taskId, status);
                 hold.touch(event);
               }
             } else if (subtype === 'compact_boundary') {

@@ -205,3 +205,111 @@ describe('claude-code tool gating — refusal', () => {
     await expect(run({ disallowedToolGroups: ['nope' as 'shell'] })).resolves.toBeDefined();
   });
 });
+
+describe('claude-code tool gating — the delegation group (0.9.12)', () => {
+  const DELEGATION_CONTINUATION = ['SendMessage', 'ListAgents', 'ListPeers'];
+
+  it('keeps the delegation family in the allow-list when another group is denied', async () => {
+    // Without these the model can SPAWN a helper under a deny but never CONTINUE it —
+    // measured at 0.3.263: `SendMessage: false` at system:init, and the model reports
+    // the tool does not exist. They are deferred (discovery-gate only), so they must be
+    // named explicitly rather than derived from any catalog.
+    await run({ disallowedToolGroups: ['file-write'] });
+    const tools = capturedOptions?.tools as string[];
+    expect(tools).toEqual(expect.arrayContaining(['Agent', 'Task', ...DELEGATION_CONTINUATION]));
+  });
+
+  it('denying `delegation` removes spawn AND continuation, with a backstop naming every alias', async () => {
+    await run({ disallowedToolGroups: ['delegation'] });
+    const tools = capturedOptions?.tools as string[];
+    for (const t of ['Agent', 'Task', ...DELEGATION_CONTINUATION]) expect(tools).not.toContain(t);
+    expect(capturedOptions?.disallowedTools).toEqual(
+      expect.arrayContaining(['Agent', 'Task', ...DELEGATION_CONTINUATION]),
+    );
+    // A deny removes a capability class, not unrelated tools: reads and planning stay.
+    expect(tools).toEqual(expect.arrayContaining(['Read', 'Bash', 'TodoWrite', 'ExitPlanMode']));
+  });
+
+  it('planMode does not deny delegation — a plan-mode run may still delegate its research', async () => {
+    await run({ planMode: true });
+    const tools = capturedOptions?.tools as string[];
+    expect(tools).toEqual(expect.arrayContaining(['Agent', ...DELEGATION_CONTINUATION]));
+    expect(tools).not.toContain('Bash');
+    expect(tools).not.toContain('Write');
+  });
+
+  it('classifies the task inspector/stopper as `shell`, under every alias the SDK canonicalises', async () => {
+    await run({ disallowedToolGroups: ['shell'] });
+    const deny = capturedOptions?.disallowedTools as string[];
+    expect(deny).toEqual(
+      expect.arrayContaining([
+        'TaskOutput',
+        'BashOutput',
+        'AgentOutput',
+        'BashOutputTool',
+        'AgentOutputTool',
+        'TaskStop',
+        'KillBash',
+        'KillShell',
+      ]),
+    );
+    // ...and with shell allowed they are present — previously they were stripped by
+    // any deny at all, because the inventory did not know their canonical names.
+    await run({ disallowedToolGroups: ['web'] });
+    expect(capturedOptions?.tools).toEqual(expect.arrayContaining(['TaskOutput', 'TaskStop']));
+  });
+
+  it('keeps every known built-in with no denied capability in the residual allow-list', async () => {
+    const { claudeCodeKnownBuiltins, CLAUDE_CODE_TOOL_GROUPS } = await import('./claude-code.js');
+    await run({ disallowedToolGroups: ['web'] });
+    const tools = new Set(capturedOptions?.tools as string[]);
+    const web = new Set(CLAUDE_CODE_TOOL_GROUPS.web);
+    const missing = claudeCodeKnownBuiltins().filter((t) => !web.has(t) && !tools.has(t));
+    expect(missing).toEqual([]);
+  });
+});
+
+describe('claude-code built-in inventory — drift guard against the pinned SDK', () => {
+  it('knows every tool the SDK publishes an input schema for', async () => {
+    // The residual allow-list is only correct against a COMPLETE inventory: a name the
+    // inventory does not know is a gate that fails closed on it at the next deny.
+    // At 0.9.11 the inventory knew 24 names against a catalog of 45. This guard fails
+    // on the next pin bump that adds a tool, which is when the table must be audited.
+    const { readFileSync } = await import('node:fs');
+    // The package's `exports` map hides both package.json and sdk-tools.d.ts from
+    // resolution, so read the installed copy by path.
+    const dts = readFileSync(
+      new URL('../../node_modules/@anthropic-ai/claude-agent-sdk/sdk-tools.d.ts', import.meta.url),
+      'utf8',
+    );
+    const start = dts.indexOf('export type ToolInputSchemas');
+    const union = dts.slice(start, dts.indexOf(';', start));
+    const schemaNames = [...union.matchAll(/\|\s*(\w+)Input\b/g)].map((m) => m[1]);
+    expect(schemaNames.length, 'parsed the ToolInputSchemas union').toBeGreaterThan(40);
+
+    // Schema names that differ from the tool name the model sees.
+    const TOOL_NAME: Record<string, string | null> = {
+      FileRead: 'Read',
+      FileEdit: 'Edit',
+      FileWrite: 'Write',
+      ListMcpResources: 'ListMcpResourcesTool',
+      ReadMcpResource: 'ReadMcpResourceTool',
+      ReadMcpResourceDir: 'ReadMcpResourceDirTool',
+      // The generic MCP tool-call schema — every MCP tool is `mcp__*`, never gated by group.
+      Mcp: null,
+    };
+    const { claudeCodeKnownBuiltins } = await import('./claude-code.js');
+    const known = new Set(claudeCodeKnownBuiltins());
+    const unknown = schemaNames
+      .map((n) => (n in TOOL_NAME ? TOOL_NAME[n] : n))
+      .filter((n): n is string => n !== null && !known.has(n));
+    expect(unknown, 'add these to CLAUDE_CODE_TOOL_GROUPS or CLAUDE_CODE_UNGATED_BUILTINS').toEqual([]);
+  });
+
+  it('assigns every known built-in to at most one place', async () => {
+    const { claudeCodeKnownBuiltins } = await import('./claude-code.js');
+    const all = claudeCodeKnownBuiltins();
+    const dupes = all.filter((t, i) => all.indexOf(t) !== i);
+    expect(dupes).toEqual([]);
+  });
+});

@@ -11,6 +11,10 @@ import { createAdapter } from '../../factory.js';
 import { collectEvents } from '../../utils.js';
 import { resolveModel } from '../../models.js';
 import { probeToolGating } from '../../tool-groups.js';
+import type { ToolGroup } from '../../tool-groups.js';
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { buildClaudeCodeToolPolicy, claudeCodeKnownBuiltins } from '../../adapters/claude-code.js';
 import {
   assertSimpleText,
   assertToolUse,
@@ -314,6 +318,98 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       assertAtLeastOneSubagentTaskIdPopulated(events);
     }
   });
+
+  // ACCEPTANCE for the `subagents` scenario's RE-ENTRY leg (M06 × M17, 0.9.12). The
+  // model continues a backgrounded helper with `SendMessage` → a second lifecycle pair
+  // for the same `taskId`, its start marked `resumed`, and the session held open until
+  // the resumed helper reports. The gated row is the A01 edge case: with a deny-group
+  // set, the allow-list the adapter builds must still carry the delegation family.
+  const REENTRY_PROMPT =
+    'Step 1: use the Agent tool to start a helper agent in the background (run_in_background: true) ' +
+    'named "counter". Its prompt: "Reply with exactly the word ALPHA and nothing else." ' +
+    'Step 2: wait until it reports. Step 3: continue that SAME agent with the SendMessage tool ' +
+    '(to: "counter"), asking it to reply with exactly the word BETA. If SendMessage is not loaded, ' +
+    'load it with ToolSearch ("select:SendMessage") first. Do not start a second agent. ' +
+    'Step 4: wait for its reply, then answer with just DONE.';
+  it.each<[string, ToolGroup[]]>([
+    ['ungated', []],
+    ['under a web deny', ['web']],
+  ])('re-enters a backgrounded subagent with SendMessage (%s)', async (_label, deny, ctx) => {
+    const adapter = createAdapter('claude-code');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt: REENTRY_PROMPT,
+        model: MODEL,
+        maxTurns: 12,
+        ...(deny.length ? { disallowedToolGroups: deny } : {}),
+      }),
+      280_000,
+    );
+    const starts = events.filter(
+      (e): e is Extract<UnifiedEvent, { type: 'subagent_started' }> => e.type === 'subagent_started',
+    );
+    const resumed = starts.filter((e) => e.resumed === true);
+    const toolNames = events.filter((e) => e.type === 'tool_use').map((e) => (e as { toolName: string }).toolName);
+    if (resumed.length === 0) {
+      // The gated row must at least have SEEN SendMessage — a model reporting the tool
+      // does not exist is the defect this leg guards, not an inconclusive run.
+      if (deny.length && toolNames.includes('ToolSearch')) {
+        const lastText = events.filter((e) => e.type === 'text_delta').map((e) => (e as { text: string }).text).join('');
+        expect(lastText, 'the model could not reach SendMessage under the allow-list').not.toMatch(
+          /no (such )?tool|does not exist|isn.t available|not available/i,
+        );
+      }
+      console.warn(
+        `[INCONCLUSIVE] re-entry leg (${_label}): the model never re-entered a helper. ` +
+          `Tools: ${toolNames.join(', ')}`,
+      );
+      ctx.skip();
+    }
+    const first = starts.find((e) => e.taskId === resumed[0].taskId && !e.resumed);
+    expect(first, 'a resumed start has an earlier first start for the same taskId').toBeDefined();
+    expect(resumed[0].toolUseId).not.toBe(first!.toolUseId);
+    // Held until the resumed helper reported: its cycle closed with its own status,
+    // not a synthesized `aborted`, and the run ended without a terminal error.
+    const closes = events.filter(
+      (e): e is Extract<UnifiedEvent, { type: 'subagent_completed' }> =>
+        e.type === 'subagent_completed' && e.taskId === resumed[0].taskId,
+    );
+    expect(closes.length).toBeGreaterThanOrEqual(2);
+    expect(closes[closes.length - 1].status).not.toBe('aborted');
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    const lifecycle = assertSubagentLifecycle(events);
+    expect(lifecycle.passed, lifecycle.assertions.filter((a) => !a.passed).map((a) => a.message).join('; ')).toBe(true);
+  }, 300_000);
+
+  // ACCEPTANCE (A01, 0.9.12): outbound peer messaging is gated on the ARGUMENT. A
+  // `SendMessage` whose `to` is not a subagent this run spawned is denied — the tool
+  // stays in the catalog (it is how re-entry works). Runs under `bypassPermissions`,
+  // which is exactly why the gate is a PreToolUse hook and not `canUseTool`.
+  it('denies SendMessage to an address that is not one of this run\'s subagents', async (ctx) => {
+    const adapter = createAdapter('claude-code');
+    const events = await collectEvents(
+      adapter.execute({
+        prompt:
+          'Load the SendMessage tool with ToolSearch ("select:SendMessage"), then call SendMessage with ' +
+          'to: "not-a-real-session-4242" and message: "hello". Then quote the tool result verbatim.',
+        model: MODEL,
+        maxTurns: 5,
+      }),
+      180_000,
+    );
+    const send = events.find(
+      (e): e is Extract<UnifiedEvent, { type: 'tool_use' }> => e.type === 'tool_use' && e.toolName === 'SendMessage',
+    );
+    if (!send) {
+      console.warn('[INCONCLUSIVE] outbound gate: the model never called SendMessage');
+      ctx.skip();
+    }
+    const result = events.find(
+      (e): e is Extract<UnifiedEvent, { type: 'tool_result' }> =>
+        e.type === 'tool_result' && e.toolUseId === send!.toolUseId,
+    );
+    expect(result?.summary ?? '', 'the deny reason reached the model').toMatch(/only address its own subagents/);
+  }, 200_000);
 
   it('defines a custom subagent the model can invoke', async () => {
     const adapter = createAdapter('claude-code');
@@ -1760,6 +1856,74 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       }
     }, 120_000);
   });
+});
+
+// --- M12 scenario: sdk-surface-probe (A01 verified-pin evidence, 0.9.12) ---
+// The ONE documented exception to "every e2e scenario drives the adapter": this calls
+// the peer SDK's `query()` DIRECTLY, because what it records is evidence for the
+// verified-pin log — what the ENGINE exposes at this pin — and an observation taken
+// through our own mapping layer cannot tell an adapter bug from an SDK change. It
+// asserts nothing about UnifiedEvent, and keeps the same skip-without-credentials
+// contract as everything else here (SKIP_CLAUDE_E2E).
+describe.skipIf(SKIP)(`sdk-surface-probe [${MODEL}]`, () => {
+  async function initTools(options: Record<string, unknown>, prompt = 'Reply with just OK.') {
+    let tools: string[] | undefined;
+    const messages: SDKMessage[] = [];
+    for await (const m of query({
+      prompt,
+      options: {
+        model: FULL_MODEL_ID,
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        settings: { crossSessionInbound: 'refuse' },
+        ...options,
+      } as Parameters<typeof query>[0]['options'],
+    })) {
+      messages.push(m);
+      if (m.type === 'system' && (m as { subtype?: string }).subtype === 'init') {
+        tools = (m as { tools?: string[] }).tools;
+      }
+    }
+    return { tools: tools ?? [], messages };
+  }
+
+  it('leg 1: every built-in an unrestricted run exposes is covered by the adapter inventory', async () => {
+    const { tools } = await initTools({ maxTurns: 1 });
+    expect(tools.length, 'system:init reported no tools').toBeGreaterThan(0);
+    const known = new Set(claudeCodeKnownBuiltins());
+    const unknown = tools.filter((t) => !t.startsWith('mcp__') && !known.has(t));
+    console.log(`[sdk-surface-probe] system:init tools (${tools.length}): ${tools.join(', ')}`);
+    expect(unknown, 'exposed built-ins the inventory does not know — each is stripped by the next deny').toEqual([]);
+  }, 120_000);
+
+  it('leg 3: under the allow-list the adapter builds for a deny, the delegation family stays reachable', async () => {
+    const policy = buildClaudeCodeToolPolicy(['web'])!;
+    const { tools } = await initTools({ maxTurns: 1, tools: policy.allow, disallowedTools: policy.deny });
+    for (const t of ['SendMessage', 'ListAgents']) {
+      expect(tools, `${t} missing under the gated allow-list`).toContain(t);
+    }
+  }, 120_000);
+
+  it('leg 2: the discovery gate resolves SendMessage, and re-entry re-uses the task_id with a new tool_use_id', async (ctx) => {
+    const { messages } = await initTools(
+      { maxTurns: 12 },
+      'Start a helper with the Agent tool in the background (run_in_background: true), named "probe", ' +
+        'prompt "Reply ALPHA". After it reports, load SendMessage with ToolSearch ("select:SendMessage") ' +
+        'and send the same agent (to: "probe") the message "Reply BETA". Wait for it, then say DONE.',
+    );
+    const started = messages.filter(
+      (m) => m.type === 'system' && (m as { subtype?: string }).subtype === 'task_started',
+    ) as unknown as { task_id: string; tool_use_id?: string; is_backgrounded?: boolean }[];
+    const byId = new Map<string, typeof started>();
+    for (const t of started) byId.set(t.task_id, [...(byId.get(t.task_id) ?? []), t]);
+    const reentered = [...byId.values()].find((list) => list.length >= 2);
+    if (!reentered) {
+      console.warn(`[INCONCLUSIVE] sdk-surface-probe leg 2: no re-entry observed (${started.length} task_started)`);
+      ctx.skip();
+    }
+    expect(reentered![1].tool_use_id).not.toBe(reentered![0].tool_use_id);
+    expect(reentered![1].is_backgrounded).toBe(true);
+  }, 300_000);
 });
 
 // --- M12 scenario: sdk-version-gate (verified-range evidence) ---

@@ -95,7 +95,7 @@ describe('codex tool gating — sandboxMode composes narrowest-wins', () => {
 });
 
 describe('codex tool gating — refusal is total and pre-dispatch', () => {
-  it.each(['shell', 'file-read'] as const)(
+  it.each(['shell', 'file-read', 'delegation'] as const)(
     'refuses %s, which ThreadOptions cannot express at all',
     async (group) => {
       const events = await run({ disallowedToolGroups: [group] });
