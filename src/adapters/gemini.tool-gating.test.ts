@@ -65,6 +65,20 @@ describe('gemini excludeTools derivation', () => {
     expect(excluded).not.toContain('web_fetch');
   });
 
+  // The SDK's own subagent tools sit outside the enumerated built-in set; until they
+  // were named, a `file-read` deny was bypassable through a spawned helper.
+  it('excludes the SDK\'s own subagent tools for delegation', () => {
+    const excluded = geminiExcludedTools(['delegation']);
+    for (const tool of ['codebase_investigator', 'cli_help', 'generalist', 'confucius']) {
+      expect(excluded).toContain(tool);
+    }
+    expect(excluded).not.toContain('read_file');
+  });
+
+  it('leaves delegation available under the plan-mode preset', () => {
+    expect(geminiExcludedTools([...PLAN_MODE_DENY_GROUPS])).not.toContain('codebase_investigator');
+  });
+
   it('covers every group in the vocabulary', () => {
     for (const group of TOOL_GROUPS) {
       expect(geminiExcludedTools([group]).length, group).toBeGreaterThan(0);

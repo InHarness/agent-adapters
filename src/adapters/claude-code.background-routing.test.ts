@@ -292,10 +292,13 @@ describe('claude-code — claude_disallowBackgroundBash (M17 L3 lever)', () => {
     const hooks = capturedOptions?.hooks as
       | { PreToolUse?: { matcher?: string; hooks: ((input: unknown) => Promise<unknown>)[] }[] }
       | undefined;
-    return hooks?.PreToolUse?.[0];
+    // The Bash lever is the only PreToolUse entry carrying a `matcher` — the
+    // unconditional outbound-SendMessage gate (claude-code.cross-session.test.ts)
+    // matches every tool.
+    return hooks?.PreToolUse?.find((h) => h.matcher === 'Bash');
   }
 
-  it('off by default — no hooks are synthesized', async () => {
+  it('off by default — no Bash hook is synthesized', async () => {
     expect(await hookFor({})).toBeUndefined();
   });
 

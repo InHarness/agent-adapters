@@ -56,6 +56,18 @@ export function classifyTaskType(raw: unknown): { taskType: BackgroundTaskType; 
 }
 
 /**
+ * An agent-team teammate is NOT a subagent (M06): it is not an agent this run
+ * spawned, so it gets no `subagent_*` lifecycle, nothing on the unified stream,
+ * and no place in the hold's tracked set. Its `task_started` carries this kind
+ * (spelling confirmed in the bundled CLI at 0.3.263). Cross-session peers never
+ * reach the task channel at all — they arrive as a user turn whose origin has no
+ * sender task id, which `crossSessionInbound: 'refuse'` keeps out of the run.
+ */
+export function isTeammateTaskType(raw: unknown): boolean {
+  return typeof raw === 'string' && /(^|_)teammate$/.test(raw);
+}
+
+/**
  * Is this message the MAIN model producing again? Used while the session is held
  * open: it is the difference between "the engine took the wake-up and a turn is
  * running" and "still parked". Subagent traffic (`parent_tool_use_id` set) does not
@@ -129,7 +141,16 @@ export function isBackgroundProgress(event: SDKMessage): boolean {
  * waking the model for another turn.
  */
 export interface TaskRegistry {
-  /** Register a `task_started`; returns the kind captured for it. */
+  /**
+   * Register a `task_started`; returns the kind captured for it.
+   *
+   * A second `task_started` for a known id is a RE-ENTRY (the model continued a
+   * backgrounded subagent with `SendMessage`): the kind entry is REFRESHED, the id
+   * returns to the in-flight set, and its finished mark is CLEARED. Both bits
+   * matter — if the engine had patched the task finished but not yet notified it,
+   * the id is still in the set with the mark on, so "everything tracked has
+   * settled" would read true inside a live cycle and grace would arm under it.
+   */
   start(taskId: string, rawTaskType: unknown, description: string): TaskKind;
   /**
    * The kind captured at `task_started`, or `undefined` for an id we never saw
@@ -193,6 +214,8 @@ export function createTaskRegistry(): TaskRegistry {
       // settling one by one, each waking the model, is exactly the shape the
       // consumer reported — so both are tracked.
       inFlight.add(taskId);
+      // A re-entered task is running again, whatever the previous cycle reported.
+      finished.delete(taskId);
       return kind;
     },
     kind: (taskId) => kindById.get(taskId),

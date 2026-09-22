@@ -118,12 +118,28 @@ function getAvailablePort(): number {
 // real vocabulary IS the escape surface described above.
 const OPENCODE_PERMISSION_BUCKETS: Record<ToolGroup, string[]> = {
   shell: ['bash'],
-  // The DELEGATION bucket is deliberately part of file-read: without it a
-  // subagent launders exactly the reads the parent just denied.
-  'file-read': ['read', 'list', 'grep', 'glob', 'codesearch', 'task'],
+  'file-read': ['read', 'list', 'grep', 'glob', 'codesearch'],
   'file-write': ['edit', 'write', 'patch'],
   web: ['webfetch', 'websearch'],
+  // `task` is the server's delegation bucket. See the fold below: a `file-read`
+  // deny also denies it on this adapter.
+  delegation: ['task'],
 };
+
+/**
+ * The effective deny set on opencode. ADAPTER-LOCAL on purpose: denying
+ * `file-read` also denies `delegation`, because the server's permission model
+ * folds delegation into the read permission — without it a subagent launders
+ * exactly the reads the parent just denied. On opencode the groups are therefore
+ * not strictly orthogonal. This is NOT lifted into shared logic: generalised, it
+ * would cost every plan-mode run its research subagents.
+ */
+export function opencodeEffectiveDeniedGroups(deniedGroups: readonly ToolGroup[]): ToolGroup[] {
+  if (deniedGroups.includes('file-read') && !deniedGroups.includes('delegation')) {
+    return [...deniedGroups, 'delegation'];
+  }
+  return [...deniedGroups];
+}
 
 /**
  * Derive the server-side permission map for a run.
@@ -137,7 +153,7 @@ export function buildOpencodePermissions(
 ): Record<string, string> {
   if (deniedGroups.length === 0) return { edit: 'allow', bash: 'allow' };
   const permission: Record<string, string> = { '*': 'allow' };
-  for (const group of deniedGroups) {
+  for (const group of opencodeEffectiveDeniedGroups(deniedGroups)) {
     for (const bucket of OPENCODE_PERMISSION_BUCKETS[group]) permission[bucket] = 'deny';
   }
   return permission;

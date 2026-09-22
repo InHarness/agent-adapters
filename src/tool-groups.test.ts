@@ -70,6 +70,25 @@ describe('probeToolGating', () => {
     expect(probeToolGating('claude-code', ['shell', 'shell'])).toHaveLength(1);
   });
 
+  it('reports `delegation` per adapter: soft on claude-code and gemini, hard on opencode, refused on codex', () => {
+    const strength = (arch: string) => probeToolGating(arch, ['delegation'])[0].strength;
+    expect(strength('claude-code')).toBe('soft');
+    expect(strength('gemini')).toBe('soft');
+    expect(strength('opencode')).toBe('hard');
+    expect(strength('codex')).toBe('none');
+    expect(checkToolPolicy('codex', { disallowedToolGroups: ['delegation'] })).toBeDefined();
+  });
+
+  it('keeps delegation out of the plan-mode preset', () => {
+    expect(PLAN_MODE_DENY_GROUPS).toEqual(['file-write', 'shell']);
+    expect(resolveDeniedGroups({ planMode: true }).groups).not.toContain('delegation');
+  });
+
+  it('names the gemini file-read laundering route through the SDK\'s own subagents', () => {
+    const [report] = probeToolGating('gemini', ['file-read']);
+    expect(report.escapeSurfaces.join(' ')).toMatch(/codebase_investigator/);
+  });
+
   it('reports codex shell and file-read as unenforceable (no primitive at all)', () => {
     for (const group of ['shell', 'file-read'] as const) {
       const [report] = probeToolGating('codex', [group]);

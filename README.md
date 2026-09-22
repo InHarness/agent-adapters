@@ -266,9 +266,9 @@ All adapters produce the same event types:
 | `tool_use` | Tool invocation started |
 | `tool_result` | Tool invocation completed |
 | `assistant_message` | Full normalized message |
-| `subagent_started` | Subagent task began |
+| `subagent_started` | Subagent lifecycle cycle began. `resumed: true` when the model re-entered a helper it already spawned (claude-code `SendMessage`) — same `taskId`, new `toolUseId`. Only agents *this run* spawned: teammates and cross-session peers emit nothing |
 | `subagent_progress` | Subagent progress update |
-| `subagent_completed` | Subagent task finished |
+| `subagent_completed` | Subagent cycle finished — one per `subagent_started`, so a re-entered agent closes more than once; its terminator is the **last** completion for its `taskId` |
 | `result` | Terminal event — output, rawMessages, usage (BILLING tokens), contextSize (CONTEXT WINDOW utilization) |
 | `user_message` | A message pushed into the live session mid-turn (streaming-input mode — see [Mid-turn message injection](#mid-turn-message-injection)) |
 | `error` | Error event |
@@ -298,6 +298,8 @@ for await (const event of adapter.execute(params)) {
 **Secret redaction.** Field names matching `/apikey|api_key|token|secret|password|authorization|credential|bearer/i` have their string values replaced with `'[REDACTED]'`. Redaction is recursive through nested objects and arrays, so MCP `env` entries like `GITHUB_TOKEN` and `headers: { Authorization: 'Bearer ...' }` are also scrubbed. The payload is therefore safe to log at info level. A secret stashed under a non-matching custom field name (e.g. `{ myCustom: 'sk-xxx' }`) won't be caught — use conventional field names for credentials.
 
 If the adapter had to drop or override options (e.g. Codex emits a `warning` when `mcpServers` is provided), those `warning` events fire *before* `adapter_ready`, so the ordering reads as: "here is what I threw away → here is what I kept".
+
+Options an adapter **pins** — ones you cannot set — are visible here too, so a posture you did not choose is at least one you can see. The standing case: claude-code pins `settings.crossSessionInbound: 'refuse'` on every run, so an inbound turn from another local Claude session never reaches the model. It also confines outbound `SendMessage` to subagents the run itself spawned. Agent teams and cross-session peer messaging are not supported.
 
 <!-- anchor: 05ijf13u -->
 ## MCP servers
@@ -648,7 +650,9 @@ for await (const delta of filterByType(stream, 'text_delta')) {
 // Stop after result/error
 for await (const event of takeUntilResult(stream)) { ... }
 
-// Separate main and subagent events
+// Separate main and subagent events (a re-entered subagent's cycles all land in
+// `subagent`, in stream order — group by `taskId` and treat the LAST
+// `subagent_completed` for an id as that agent's end)
 const { main, subagent } = await splitBySubagent(stream);
 
 // Get just the text output
@@ -992,7 +996,7 @@ Remove whole **classes** of built-in capability from a single run, declared once
 engine-neutral terms and realized by each adapter with its own SDK primitive.
 
 ```ts
-type ToolGroup = 'shell' | 'file-read' | 'file-write' | 'web';
+type ToolGroup = 'shell' | 'file-read' | 'file-write' | 'web' | 'delegation';
 
 await collectEvents(adapter.execute({
   prompt: 'Summarise this repo.',
@@ -1008,6 +1012,18 @@ await collectEvents(adapter.execute({
 | `file-read` | reading, listing or searching files |
 | `file-write` | creating, editing or deleting files, and persisting memory |
 | `web` | fetching URLs and web search |
+| `delegation` | spawning, listing or messaging a helper agent (claude-code `Agent`/`Task`, `SendMessage`, `ListAgents`/`ListPeers`) — added in 0.9.12 |
+
+> **0.9.12 widened the union.** A consumer that `switch`es exhaustively on `ToolGroup`
+> must add a `delegation` arm.
+
+Denying `delegation` closes the delegation surface directly instead of relying on
+deny-propagation into each spawned helper. Denying any *other* group leaves it intact, so a
+gated run can still continue a subagent it already spawned. On opencode a `file-read` deny
+**also** denies `delegation` (the server folds delegation into its read permission). On
+claude-code the task inspector/stopper (`TaskOutput` / `TaskStop`) is one tool for shells and
+subagents alike and is classified `shell`: a run that denies `shell` cannot read its
+subagents' task output either.
 
 **It is fail-closed.** An adapter with no primitive for a requested group **refuses the
 run before dispatch** — you get a single `{ type: 'error', error: AdapterToolPolicyError,
@@ -1040,17 +1056,21 @@ for (const r of probeToolGating('codex', ['shell', 'web'])) {
 A group with a documented escape surface is **never** reported `hard` — the probe reports
 `soft` and names the surface.
 
-| adapter | `shell` | `file-read` | `file-write` | `web` | mechanism |
-|---|---|---|---|---|---|
-| claude-code | soft | soft | soft | soft | residual allow-list on `options.tools` + `disallowedTools` backstop |
-| codex | **refuses** | **refuses** | hard (coarse) | hard | `sandboxMode: 'read-only'` + the web-search toggle |
-| opencode | hard | hard | hard | hard | server-side `permission` buckets with a `'*'` default |
-| gemini | soft | soft | soft | soft | `excludeTools`, applied when the tool registry is built |
+| adapter | `shell` | `file-read` | `file-write` | `web` | `delegation` | mechanism |
+|---|---|---|---|---|---|---|
+| claude-code | soft | soft | soft | soft | soft | residual allow-list on `options.tools` + `disallowedTools` backstop |
+| codex | **refuses** | **refuses** | hard (coarse) | hard | **refuses** | `sandboxMode: 'read-only'` + the web-search toggle |
+| opencode | hard | hard | hard | hard | hard | server-side `permission` buckets with a `'*'` default |
+| gemini | soft | soft | soft | soft | soft | `excludeTools`, applied when the tool registry is built |
+
+On gemini a `file-read` deny alone is still bypassable through the SDK's own
+`codebase_investigator` subagent — deny `delegation` too for a read boundary.
 
 #### Plan mode is a preset over this
 
 `planMode: true` desugars into `disallowedToolGroups: ['file-write', 'shell']` (reads and
-web stay available — plan mode must still be able to research) and inherits the
+web stay available — plan mode must still be able to research, and `delegation` stays
+available so it can hand that research to a helper) and inherits the
 fail-closed posture. Preset and explicit groups are **unioned**, so plan mode can be
 widened but never weakened. The exported constant is `PLAN_MODE_DENY_GROUPS`.
 

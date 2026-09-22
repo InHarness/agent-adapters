@@ -54,6 +54,31 @@ describe('isMainModelActivity', () => {
 });
 
 describe('createTaskRegistry', () => {
+  it('a re-entered task returns to flight AND loses its finished mark (0.9.12)', () => {
+    // Two independent bits per id. The engine patched T finished but has not notified
+    // it when the model re-enters it: T is still in the set WITH the mark, so
+    // "everything tracked has settled" would read true inside a live cycle.
+    const r = createTaskRegistry();
+    r.start('T', 'local_agent', 'first');
+    r.markFinished('T');
+    expect(r.noWorkLeftRunning()).toBe(true);
+
+    r.start('T', 'local_agent', 'second');
+    expect([...r.inFlight]).toEqual(['T']);
+    expect(r.noWorkLeftRunning(), 'the finished mark must not survive re-entry').toBe(false);
+  });
+
+  it('a settled task re-entered is back in flight, and its kind entry is refreshed', () => {
+    const r = createTaskRegistry();
+    r.start('T', 'local_agent', 'first');
+    r.settle('T');
+    expect(r.inFlight.has('T')).toBe(false);
+
+    r.start('T', 'local_agent', 'resumed');
+    expect(r.inFlight.has('T')).toBe(true);
+    expect(r.kind('T')?.description).toBe('resumed');
+  });
+
   it('settles on the NOTIFICATION, and remembers the kind after settlement', () => {
     // The invariant the whole hold rests on: a task's tool_result lands at dispatch,
     // so only its notification may shrink the in-flight set.
@@ -225,6 +250,25 @@ describe('createBackgroundHold', () => {
     // truncation. The hold itself closes nothing either way.
     expect(expiries).toEqual(['grace']);
     expect(woken).toBe(1);
+  });
+
+  it('re-entry inside the grace window re-arms both bounds — grace does not fire under the live cycle', () => {
+    // settle → grace armed → SendMessage → a second `task_started` for the same id.
+    // Grace expiry closes the control transport, so it must not fire while the
+    // re-entered cycle runs; the cap bounds the cycle instead.
+    const { registry, hold } = makeHold();
+    registry.start('T', 'local_agent', 'first');
+    registry.markFinished('T');
+    hold.begin();
+    vi.advanceTimersByTime(BACKGROUND_WAKEUP_GRACE_MS / 2);
+
+    registry.start('T', 'local_agent', 'resumed');
+    hold.touch(sdk({ type: 'system', subtype: 'task_started', task_id: 'T' }));
+    vi.advanceTimersByTime(BACKGROUND_WAKEUP_GRACE_MS * 2);
+    expect(expiries, 'grace armed inside the re-entered cycle').toEqual([]);
+
+    vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS);
+    expect(expiries).toEqual(['cap']);
   });
 
   it('work still running is bounded by the cap, not the grace window', () => {

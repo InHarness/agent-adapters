@@ -96,7 +96,8 @@ describe('claude-code path scoping', () => {
     await collectEvents(adapter.execute(createTestParams({ cwd: '/work' })));
     expect(capturedOptions?.permissionMode).toBe('bypassPermissions');
     expect(capturedOptions?.allowDangerouslySkipPermissions).toBe(true);
-    expect(capturedOptions?.settings).toBeUndefined();
+    // Only the cross-session pin (M14) — no confinement rules.
+    expect(capturedOptions?.settings).toEqual({ crossSessionInbound: 'refuse' });
     expect(capturedOptions?.settingSources).toBeUndefined();
     expect(capturedOptions?.additionalDirectories).toBeUndefined();
   });

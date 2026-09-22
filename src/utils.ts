@@ -91,6 +91,12 @@ export async function* takeUntilResult(
 /**
  * Split events into main agent events and subagent events.
  * Returns two arrays after consuming the full stream.
+ *
+ * The split is by attribution, not by lifecycle pair: a re-entered subagent's
+ * second cycle (`subagent_started { resumed: true }`) lands in the same
+ * `subagent` array in stream order — nothing is split or re-created per cycle.
+ * To group by agent, key on `taskId` / `subagentTaskId`; the terminator for an
+ * agent is the LAST `subagent_completed` for its `taskId`, not the first.
  */
 export async function splitBySubagent(
   stream: AsyncIterable<UnifiedEvent>,

@@ -230,7 +230,23 @@ export type UnifiedEvent =
   | { type: 'tool_result'; toolUseId: string; summary: string; isSubagent: boolean; isError?: boolean; subagentTaskId?: string }
   | { type: 'thinking'; text: string; isSubagent: boolean; replace?: boolean; subagentTaskId?: string }
   | { type: 'assistant_message'; message: NormalizedMessage }
-  | { type: 'subagent_started'; taskId: string; description: string; toolUseId: string }
+  /**
+   * A subagent lifecycle cycle opened. `taskId` identifies the AGENT; `toolUseId`
+   * identifies the INVOCATION. One `taskId` may carry several sequential
+   * start/completed pairs: when the model re-enters a backgrounded helper
+   * (claude-code `SendMessage`), a second `subagent_started` arrives with the SAME
+   * `taskId`, the re-entering call's `toolUseId`, and `resumed: true`.
+   *
+   * `resumed` is absent on the first start for a `taskId` and `true` on every later
+   * one. It is on the wire because it cannot be derived downstream: a re-entered
+   * agent's deltas keep resolving `subagentTaskId` to the same `taskId`, so
+   * attribution alone cannot tell the cycles apart. Pairs sequence, they never nest
+   * — a resumed start never precedes the completion of the cycle it re-enters.
+   *
+   * Only agents THIS run spawned appear here: an agent-team teammate or a
+   * cross-session peer emits nothing on the unified stream.
+   */
+  | { type: 'subagent_started'; taskId: string; description: string; toolUseId: string; resumed?: boolean }
   | { type: 'subagent_progress'; taskId: string; description: string; lastToolName?: string }
   /**
    * A subagent's lifecycle ended. `status` carries one of the four values of
@@ -239,11 +255,16 @@ export type UnifiedEvent =
    * producers, not a compile-time constraint), so a consumer's exhaustive
    * `switch` gets no compiler warning when a value is added: read the CHANGELOG.
    *
-   * At most ONE of these per `subagent_started`, and never zero: a run-level
-   * termination closes every subagent the adapter still has open with
-   * `status: 'aborted'` before the stream ends. That synthesized completion
-   * reports that THIS RUN stopped tracking the subagent — not that the helper
-   * agent's own execution ended.
+   * Exactly ONE of these per `subagent_started` — per CYCLE, not per `taskId`: a
+   * re-entered agent closes each cycle separately, so a consumer treating the first
+   * completion for a `taskId` as final will see that agent's events after it. The
+   * agent's terminator is the LAST completion for its `taskId`.
+   *
+   * Never zero: a run-level termination closes every cycle still open at that
+   * moment with `status: 'aborted'` before the stream ends (at most once per
+   * `taskId` per termination). A subagent that settled and had not been re-entered
+   * gets nothing synthesized. The synthesized completion reports that THIS RUN
+   * stopped tracking the subagent — not that the helper agent's own execution ended.
    */
   | { type: 'subagent_completed'; taskId: string; status: string; summary?: string; usage?: UsageStats }
   /**

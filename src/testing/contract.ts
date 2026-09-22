@@ -265,6 +265,12 @@ export function assertNoBackgroundTasks(events: UnifiedEvent[]): ContractResult 
  *      the adapter opened; it never leaves a started event without its counterpart.
  *   2. AT MOST ONCE — no `subagent_started` is matched by two completions.
  *
+ * Both are per CYCLE: one `taskId` may carry several sequential pairs when the
+ * model re-enters a helper, each re-entry's start marked `resumed: true`. The
+ * pairs must sequence (a resumed start never precedes the previous cycle's
+ * completion) and the marker must be exact — absent on the first start, true on
+ * every later one.
+ *
  * Splitting them would let the exact defect this exists to catch through: pairing
  * alone passes a termination flush that re-closes subagents which already reported
  * their own completion, and at-most-once alone passes a flush that closes nothing.
@@ -281,17 +287,35 @@ export function assertNoBackgroundTasks(events: UnifiedEvent[]): ContractResult 
 export function assertSubagentLifecycle(events: UnifiedEvent[]): ContractResult {
   const assertions: ContractAssertion[] = [];
 
-  const started = events.filter(
-    (e): e is Extract<UnifiedEvent, { type: 'subagent_started' }> => e.type === 'subagent_started',
-  );
   const completed = events.filter(
     (e): e is Extract<UnifiedEvent, { type: 'subagent_completed' }> => e.type === 'subagent_completed',
   );
 
-  const completionsById = new Map<string, number>();
-  for (const e of completed) completionsById.set(e.taskId, (completionsById.get(e.taskId) ?? 0) + 1);
+  // Walk the stream in order, one open/closed state per `taskId`. The unit is the
+  // CYCLE, not the id: a re-entered subagent (`resumed: true`) legitimately carries a
+  // second start/completed pair under the same `taskId`, so counting completions per
+  // id would call a correct re-entry "closed twice". Pairs sequence, never nest.
+  const open = new Set<string>();
+  const everStarted = new Set<string>();
+  const doubled: string[] = [];
+  const orphanCompletions: string[] = [];
+  const nested: string[] = [];
+  const badResumed: string[] = [];
+  for (const e of events) {
+    if (e.type === 'subagent_started') {
+      if (open.has(e.taskId)) nested.push(e.taskId);
+      const seen = everStarted.has(e.taskId);
+      if (seen !== (e.resumed === true)) badResumed.push(`${e.taskId}(resumed=${String(e.resumed)})`);
+      open.add(e.taskId);
+      everStarted.add(e.taskId);
+    } else if (e.type === 'subagent_completed') {
+      if (open.has(e.taskId)) open.delete(e.taskId);
+      else if (everStarted.has(e.taskId)) doubled.push(e.taskId);
+      else orphanCompletions.push(e.taskId);
+    }
+  }
 
-  const unclosed = started.filter((e) => !completionsById.has(e.taskId)).map((e) => e.taskId);
+  const unclosed = [...open];
   assertions.push(
     assert(
       'every subagent_started is closed before the stream ends',
@@ -301,7 +325,6 @@ export function assertSubagentLifecycle(events: UnifiedEvent[]): ContractResult 
     ),
   );
 
-  const doubled = [...completionsById.entries()].filter(([, n]) => n > 1).map(([id, n]) => `${id}×${n}`);
   assertions.push(
     assert(
       'no subagent_started is closed twice',
@@ -311,14 +334,27 @@ export function assertSubagentLifecycle(events: UnifiedEvent[]): ContractResult 
     ),
   );
 
-  const orphanCompletions = [...completionsById.keys()].filter(
-    (id) => !started.some((e) => e.taskId === id),
-  );
   assertions.push(
     assert(
       'no subagent_completed without its subagent_started',
       orphanCompletions.length === 0,
       `Completions with no matching start: ${orphanCompletions.join(', ')}`,
+    ),
+  );
+
+  assertions.push(
+    assert(
+      'lifecycle pairs for one taskId sequence, never nest',
+      nested.length === 0,
+      `A second subagent_started arrived while the previous cycle was still open: ${nested.join(', ')}`,
+    ),
+  );
+
+  assertions.push(
+    assert(
+      '`resumed` is absent on a taskId\'s first start and true on every later one',
+      badResumed.length === 0,
+      `Mismarked starts: ${badResumed.join(', ')}`,
     ),
   );
 

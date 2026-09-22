@@ -8,7 +8,7 @@
 // in the running opencode 1.4.6 server.
 
 import { describe, it, expect } from 'vitest';
-import { buildOpencodePermissions } from './opencode.js';
+import { buildOpencodePermissions, opencodeEffectiveDeniedGroups } from './opencode.js';
 import { PLAN_MODE_DENY_GROUPS, TOOL_GROUPS } from '../tool-groups.js';
 
 // Confirmed against the opencode 1.4.6 binary, whose own read-only agent preset
@@ -67,7 +67,21 @@ describe('opencode permission derivation', () => {
   });
 
   it('denies the delegation bucket too, so a subagent cannot launder the reads', () => {
+    // The adapter-local fold: on opencode a `file-read` deny also denies `delegation`.
     expect(buildOpencodePermissions(['file-read']).task).toBe('deny');
+    expect(opencodeEffectiveDeniedGroups(['file-read'])).toEqual(['file-read', 'delegation']);
+  });
+
+  it('maps `delegation` onto the server\'s task bucket, and nothing else', () => {
+    const p = buildOpencodePermissions(['delegation']);
+    expect(p.task).toBe('deny');
+    expect(p.read).toBeUndefined();
+    expect(p.bash).toBeUndefined();
+  });
+
+  it('keeps delegation under the plan-mode preset — the fold is file-read only', () => {
+    expect(buildOpencodePermissions([...PLAN_MODE_DENY_GROUPS]).task).toBeUndefined();
+    expect(opencodeEffectiveDeniedGroups(['shell', 'file-write'])).toEqual(['shell', 'file-write']);
   });
 
   it('leaves untouched groups to the wildcard rather than denying them', () => {
