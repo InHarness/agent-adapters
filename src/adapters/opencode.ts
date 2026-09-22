@@ -19,7 +19,8 @@ import type {
   UserInputQuestion,
   ImageInput,
 } from '../types.js';
-import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
+import { createIdleClock, createIdleHandle, observeIdle, type IdleHandle } from '../idle-clock.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -154,6 +155,12 @@ export class OpencodeAdapter implements RuntimeAdapter {
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
+    // The idle clock (M01) is fed every event the session yields.
+    const idle = createIdleHandle();
+    yield* observeIdle(idle, this.runSession(params, idle));
+  }
+
+  private async *runSession(params: RuntimeExecuteParams, idle: IdleHandle): AsyncIterable<UnifiedEvent> {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
 
@@ -475,6 +482,21 @@ export class OpencodeAdapter implements RuntimeAdapter {
         this.abortController?.abort();
       }, params.timeoutMs);
     }
+    // The idle clock (M01): advances only while nothing is outstanding; expiry stops
+    // the run down the same path as the backstop.
+    idle.clock = createIdleClock({
+      idleMs: params.idleTimeoutMs,
+      onExpire: () => {
+        idle.expired = true;
+        this.abortController?.abort();
+      },
+    });
+    const terminalError = () =>
+      timedOut
+        ? new AdapterTimeoutError('opencode', params.timeoutMs!)
+        : idle.expired
+          ? new AdapterIdleTimeoutError('opencode', params.idleTimeoutMs!)
+          : new AdapterAbortError('opencode');
 
     // OpenCode's SSE does not attach a task/call ID to text/reasoning deltas.
     // We correlate by ordering: deltas observed between a task tool's
@@ -580,12 +602,18 @@ export class OpencodeAdapter implements RuntimeAdapter {
             resolve({ action: 'decline' });
             continue;
           }
+          // An unanswered request is outstanding work: the idle clock stops until it
+          // is answered.
+          const inputKey = `uin:${req.requestId}`;
+          idle.clock.begin(inputKey);
           try {
             const res = await params.onUserInput(req);
             resolve(res);
           } catch (err) {
             resolve({ action: 'cancel' });
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
+          } finally {
+            idle.clock.end(inputKey);
           }
         }
 
@@ -605,11 +633,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
 
         if (signal.aborted) {
           yield* flushOpenSubagent();
-          if (timedOut) {
-            yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!), phase: 'runtime' };
-          } else {
-            yield { type: 'error', error: new AdapterAbortError('opencode'), phase: 'runtime' };
-          }
+          yield { type: 'error', error: terminalError(), phase: 'runtime' };
           return;
         }
 
@@ -878,11 +902,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
       v2SubscriptionCancel?.();
       if (signal.aborted) {
         yield* flushOpenSubagent();
-        if (timedOut) {
-          yield { type: 'error', error: new AdapterTimeoutError('opencode', params.timeoutMs!), phase: 'runtime' };
-        } else {
-          yield { type: 'error', error: new AdapterAbortError('opencode'), phase: 'runtime' };
-        }
+        yield { type: 'error', error: terminalError(), phase: 'runtime' };
         return;
       }
       yield* flushOpenSubagent();

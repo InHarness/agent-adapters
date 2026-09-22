@@ -23,7 +23,8 @@ import type {
   UsageStats,
   ImageInput,
 } from '../types.js';
-import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
+import { createIdleClock } from '../idle-clock.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -100,6 +101,13 @@ function extractCodexErrorMessage(raw: unknown, fallback = 'Codex error'): strin
 // (see UnifiedEvent.result.usage in types.ts), so we track the last cumulative
 // we saw per threadId and yield current_cumulative − prior. LRU-capped to
 // bound long-running process growth.
+/**
+ * Codex items that are not tool calls. Every other item type (command execution,
+ * file change, MCP tool call, web search) is outstanding work for the idle clock
+ * between its `item.started` and `item.completed`.
+ */
+const NON_TOOL_ITEM_TYPES: ReadonlySet<ThreadItem['type']> = new Set(['agent_message', 'reasoning', 'todo_list', 'error']);
+
 const CODEX_USAGE_LRU_CAP = 256;
 const codexSessionLastUsage = new Map<string, UsageStats>();
 
@@ -392,6 +400,24 @@ export class CodexAdapter implements RuntimeAdapter {
         this.abortController?.abort();
       }, params.timeoutMs);
     }
+    // The idle clock (M01). Codex emits `tool_use` and `tool_result` together at
+    // `item.completed`, so the unified stream never shows a tool call in flight; the
+    // outstanding work is tracked from `item.started` instead. Codex has no subagents,
+    // background tasks or user input, so that is the whole of it.
+    let idleExpired = false;
+    const idleClock = createIdleClock({
+      idleMs: params.idleTimeoutMs,
+      onExpire: () => {
+        idleExpired = true;
+        this.abortController?.abort();
+      },
+    });
+    const terminalError = () =>
+      timedOut
+        ? new AdapterTimeoutError('codex', params.timeoutMs!)
+        : idleExpired
+          ? new AdapterIdleTimeoutError('codex', params.idleTimeoutMs!)
+          : new AdapterAbortError('codex');
 
     let lastErrorMessage: string | null = null;
 
@@ -408,17 +434,19 @@ export class CodexAdapter implements RuntimeAdapter {
 
       for await (const event of events) {
         if (this.abortController.signal.aborted) {
-          if (timedOut) {
-            yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!), phase: 'runtime' };
-          } else {
-            yield { type: 'error', error: new AdapterAbortError('codex'), phase: 'runtime' };
-          }
+          yield { type: 'error', error: terminalError(), phase: 'runtime' };
           return;
         }
 
         switch (event.type) {
+          case 'item.started': {
+            if (!NON_TOOL_ITEM_TYPES.has(event.item.type)) idleClock.begin(`item:${event.item.id}`);
+            break;
+          }
+
           case 'item.completed': {
             const item = event.item;
+            idleClock.end(`item:${item.id}`);
 
             if (item.type === 'agent_message') {
               yield { type: 'text_delta', text: item.text, isSubagent: false };
@@ -569,11 +597,7 @@ export class CodexAdapter implements RuntimeAdapter {
       }
     } catch (err) {
       if (this.abortController.signal.aborted) {
-        if (timedOut) {
-          yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!), phase: 'runtime' };
-        } else {
-          yield { type: 'error', error: new AdapterAbortError('codex'), phase: 'runtime' };
-        }
+        yield { type: 'error', error: terminalError(), phase: 'runtime' };
         return;
       }
       // The codex-sdk rethrows `Codex Exec exited with <detail>: <stderr>`
@@ -591,6 +615,7 @@ export class CodexAdapter implements RuntimeAdapter {
       yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
     } finally {
       clearTimeout(timeoutId);
+      idleClock.dispose();
       await mirrored?.cleanupMirror().catch((err) =>
         console.warn('[agent-adapters] codex mirrored skill cleanup failed', err),
       );

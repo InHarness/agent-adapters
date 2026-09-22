@@ -813,7 +813,30 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
    * - **opencode**: ignored. The OpenCode SDK does not expose a turn cap.
    */
   maxTurns?: number;
+  /**
+   * The absolute backstop: bounds the whole `execute()` call, measured from run
+   * start. Armed exactly once and never re-armed — no event, frame, tool result
+   * or progress notification moves it. Under `streamingInput: true` the one
+   * timer spans the whole session; a `pushMessage()` buys no fresh budget.
+   * Expiry ends the run with {@link AdapterTimeoutError} (runtime phase).
+   *
+   * Omitting it is a guarantee, not a default: no adapter arms a wall-clock
+   * timer and no fallback value applies. Bounds armed on something other than
+   * run start (M17's background hold cap) are unaffected.
+   */
   timeoutMs?: number;
+  /**
+   * The idle clock: advances ONLY while nothing is outstanding, and stops
+   * (without resetting — the budget is cumulative) while work is in flight.
+   * Outstanding work is: a `tool_use` with no `tool_result` yet, an open
+   * subagent, an unsettled background task, an unanswered
+   * `user_input_request`, and a nested turn the consumer started from inside
+   * the run. It is not a "last sign of life" timer — ordinary events never
+   * move it. Under `streamingInput: true` it also advances in the gaps between
+   * pushes. Expiry ends the run with {@link AdapterIdleTimeoutError} (runtime
+   * phase). Omitted → no idle clock at all.
+   */
+  idleTimeoutMs?: number;
   architectureConfig?: Record<string, unknown>;
 
   /**
@@ -1062,10 +1085,31 @@ function causeToReason(cause: unknown): string | undefined {
   }
 }
 
+/** `timeoutMs` exceeded — the absolute backstop, armed once at run start. */
 export class AdapterTimeoutError extends AdapterError {
   constructor(adapter: string, timeoutMs: number) {
     super(`${adapter} adapter timed out after ${timeoutMs}ms`, adapter);
     this.name = 'AdapterTimeoutError';
+  }
+}
+
+/**
+ * `idleTimeoutMs` exceeded: the run went quiet while nothing was outstanding —
+ * while it still owed the consumer something. A stall to diagnose rather than a
+ * limit to raise, hence kept apart from {@link AdapterTimeoutError} by class and
+ * by `name`.
+ */
+export class AdapterIdleTimeoutError extends AdapterError {
+  constructor(
+    adapter: string,
+    readonly idleTimeoutMs: number,
+  ) {
+    super(`${adapter} adapter went idle for ${idleTimeoutMs}ms with nothing outstanding`, adapter);
+    this.name = 'AdapterIdleTimeoutError';
+  }
+
+  override toJSON(): Record<string, unknown> {
+    return { ...super.toJSON(), idleTimeoutMs: this.idleTimeoutMs };
   }
 }
 

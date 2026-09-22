@@ -543,14 +543,17 @@ All adapters emit typed errors via the `error` event. The error hierarchy lets y
 import {
   AdapterError,        // base class — all adapter errors extend this
   AdapterInitError,    // SDK initialization failed (missing API key, SDK not installed)
-  AdapterTimeoutError, // execution exceeded timeoutMs
-  AdapterAbortError,   // adapter.abort() was called manually
+  AdapterTimeoutError,     // timeoutMs exceeded — the absolute backstop
+  AdapterIdleTimeoutError, // idleTimeoutMs exceeded — the run stalled with nothing outstanding
+  AdapterAbortError,       // adapter.abort() was called manually
 } from '@inharness-ai/agent-adapters';
 
 for await (const event of adapter.execute(params)) {
   if (event.type === 'error') {
     if (event.error instanceof AdapterTimeoutError) {
       console.log('Timed out — retrying with longer timeout');
+    } else if (event.error instanceof AdapterIdleTimeoutError) {
+      console.log('Engine stalled — go find what hung');
     } else if (event.error instanceof AdapterAbortError) {
       console.log('Aborted by user');
     } else {
@@ -560,7 +563,12 @@ for await (const event of adapter.execute(params)) {
 }
 ```
 
-When `timeoutMs` is set, the adapter emits an `AdapterTimeoutError` event and stops. When `adapter.abort()` is called manually, it emits an `AdapterAbortError` event and stops.
+Two adapter-side clocks bound a run, both optional:
+
+- **`timeoutMs` — the absolute backstop.** It bounds the whole `execute()` call, measured from run start, and is armed exactly once: no event, tool result or `pushMessage()` re-arms it. On expiry the adapter emits `AdapterTimeoutError` and stops. **Omitting it means no wall-clock bound at all** — there is no fallback default.
+- **`idleTimeoutMs` — the idle clock.** It advances only while *nothing is outstanding* and stops (without resetting — the budget is cumulative) while work is in flight. Outstanding work is a `tool_use` still waiting for its `tool_result`, an open subagent, an unsettled background task, or an unanswered `user_input_request`. So a slow tool, a long subagent or a human taking their time never trips it; an engine that went quiet while still owing you something does, with `AdapterIdleTimeoutError`. It is not a "time since last event" timer. Under `streamingInput: true` it also advances in the gaps between pushes.
+
+When `adapter.abort()` is called manually, it emits an `AdapterAbortError` event and stops.
 
 <!-- anchor: whjvx5rk -->
 ## Tree-shakeable imports
@@ -970,7 +978,8 @@ interface RuntimeExecuteParams {
   priorUsage?: UsageStats;                     // codex cross-process resume only — see "Token usage"
   streamingInput?: boolean;                    // open input channel for pushMessage() — see "Mid-turn message injection"
   maxTurns?: number;                           // max conversation turns (claude-code: cumulative across resume)
-  timeoutMs?: number;                          // execution timeout
+  timeoutMs?: number;                          // absolute backstop from run start; absent = no bound
+  idleTimeoutMs?: number;                      // idle clock: advances only while nothing is outstanding
   architectureConfig?: Record<string, unknown>; // architecture-specific config
 }
 ```
