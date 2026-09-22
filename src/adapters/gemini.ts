@@ -250,10 +250,22 @@ export class GeminiAdapter implements RuntimeAdapter {
   architecture = 'gemini' as const;
   private abortFn: (() => Promise<void>) | null = null;
   private aborted = false;
+  /** Per-run stop signal: what the loop races so a stop unparks every await (M13). */
+  private runAbort: AbortController | null = null;
 
   abort(): void {
+    this.stopRun();
+  }
+
+  /**
+   * The one stop path shared by abort(), timeoutMs and idle expiry. The engine-side
+   * `session.abort()` is fire-and-forget — never awaited on the teardown path — and
+   * termination does not depend on it: the run's own signal unparks the loop.
+   */
+  private stopRun(): void {
     this.aborted = true;
-    this.abortFn?.();
+    this.runAbort?.abort();
+    this.abortFn?.().catch(() => {});
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
@@ -263,6 +275,15 @@ export class GeminiAdapter implements RuntimeAdapter {
   }
 
   private async *runSession(params: RuntimeExecuteParams, idle: IdleHandle): AsyncIterable<UnifiedEvent> {
+    const runAbort = new AbortController();
+    this.runAbort = runAbort;
+    // Settles when this run is stopped. Raced against everything the loop can park
+    // on — the SDK's next event and the consumer's user-input handler — so a stop is
+    // enforceable even when the other side never responds (M13). Never rejects.
+    const abortPromise = new Promise<'abort'>((resolve) => {
+      runAbort.signal.addEventListener('abort', () => resolve('abort'), { once: true });
+    });
+
     // Built-in tool gating (M18) — the pre-dispatch gate, before any SDK import.
     const policyError = checkToolPolicy(this.architecture, params);
     if (policyError) {
@@ -681,13 +702,13 @@ export class GeminiAdapter implements RuntimeAdapter {
 
     // Timeout handling
     let timedOut = false;
-    this.aborted = false;
+    // Not a plain reset: a stop that landed during init must still count.
+    this.aborted = runAbort.signal.aborted;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
         timedOut = true;
-        this.aborted = true;
-        this.abortFn?.();
+        this.stopRun();
       }, params.timeoutMs);
     }
     // The idle clock (M01): advances only while nothing is outstanding; expiry stops
@@ -696,8 +717,7 @@ export class GeminiAdapter implements RuntimeAdapter {
       idleMs: params.idleTimeoutMs,
       onExpire: () => {
         idle.expired = true;
-        this.aborted = true;
-        this.abortFn?.();
+        this.stopRun();
       },
     });
     const terminalError = () =>
@@ -734,9 +754,20 @@ export class GeminiAdapter implements RuntimeAdapter {
     };
 
     try {
+      // A stop that landed during init reached no session (abortFn was unset or
+      // pointed at a previous run's). Never start the turn: once sendStream is
+      // pulled, the engine would run it — tools included — with nothing aborting it.
+      if (runAbort.signal.aborted) {
+        yield { type: 'error', error: terminalError(), phase: 'runtime' };
+        return;
+      }
       const imageParts = params.images?.length
         ? await buildGeminiImageParts(params.images)
         : [];
+      if (runAbort.signal.aborted) {
+        yield { type: 'error', error: terminalError(), phase: 'runtime' };
+        return;
+      }
       const eventStream = session.sendStream({
         message: {
           content: [{ type: 'text', text: params.prompt }, ...imageParts],
@@ -745,6 +776,33 @@ export class GeminiAdapter implements RuntimeAdapter {
 
       const sdkIterator = eventStream[Symbol.asyncIterator]();
       let pendingNext: Promise<IteratorResult<AgentEvent>> | null = null;
+
+      /**
+       * Answer an ask_user confirmation on the TOOL_CONFIRMATION_RESPONSE channel
+       * with payload.answers — this is what AskUserTool.shouldConfirmExecute.onConfirm
+       * reads. Returns the publish so the normal path can await it; the stop path
+       * must not (never await an engine round-trip on teardown).
+       */
+      const publishAnswer = (correlationId: string, res: UserInputResponse): Promise<void> => {
+        const bus = geminiConfigRef?.messageBus;
+        if (!bus || !MessageBusType || !ToolConfirmationOutcome) return Promise.resolve();
+        const answersMap: Record<string, string> = {};
+        if (res.action === 'accept' && res.answers) {
+          res.answers.forEach((answer, idx) => {
+            answersMap[String(idx)] = answer.join(', ');
+          });
+        }
+        return bus.publish({
+          type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
+          correlationId,
+          confirmed: res.action === 'accept',
+          outcome:
+            res.action === 'accept'
+              ? ToolConfirmationOutcome.ProceedOnce
+              : ToolConfirmationOutcome.Cancel,
+          payload: res.action === 'accept' ? { answers: answersMap } : undefined,
+        });
+      };
 
       outer: while (true) {
         // Drain pending user-input requests first.
@@ -757,46 +815,60 @@ export class GeminiAdapter implements RuntimeAdapter {
           const inputKey = `uin:${req.requestId}`;
           idle.clock.begin(inputKey);
           try {
-            res = params.onUserInput ? await params.onUserInput(req) : { action: 'decline' };
+            if (params.onUserInput) {
+              // Race the consumer's handler against the stop signal. A host that
+              // answers from a UI resolves only when a human replies — which may be
+              // never — so awaiting it bare parks the run forever (M13).
+              const outcome = await Promise.race([
+                // Promise.resolve().then: a handler that throws synchronously or
+                // returns a plain value behaves like an async one (as `await` did).
+                Promise.resolve()
+                  .then(() => params.onUserInput!(req))
+                  .then((r) => ({ kind: 'answer' as const, res: r })),
+                abortPromise.then(() => ({ kind: 'abort' as const })),
+              ]);
+              if (outcome.kind === 'abort') {
+                // Answer `cancel` so the tool parked on its confirmation settles
+                // instead of leaking — this one and everything queued behind it.
+                // Fire-and-forget: teardown must not wait on the engine.
+                const cancel: UserInputResponse = { action: 'cancel' };
+                publishAnswer(correlationId, cancel).catch(() => {});
+                for (const p of pendingUserInputs.splice(0)) publishAnswer(p.correlationId, cancel).catch(() => {});
+                yield* flushOpenSubagents();
+                yield { type: 'error', error: terminalError(), phase: 'runtime' };
+                return;
+              }
+              res = outcome.res;
+            } else {
+              res = { action: 'decline' };
+            }
           } catch (err) {
             res = { action: 'cancel' };
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           } finally {
             idle.clock.end(inputKey);
           }
-          const bus = geminiConfigRef?.messageBus;
-          if (bus && MessageBusType && ToolConfirmationOutcome) {
-            // Reply on the TOOL_CONFIRMATION_RESPONSE channel with payload.answers
-            // — this is what AskUserTool.shouldConfirmExecute.onConfirm reads.
-            const answersMap: Record<string, string> = {};
-            if (res.action === 'accept' && res.answers) {
-              res.answers.forEach((answer, idx) => {
-                answersMap[String(idx)] = answer.join(', ');
-              });
-            }
-            await bus.publish({
-              type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
-              correlationId,
-              confirmed: res.action === 'accept',
-              outcome:
-                res.action === 'accept'
-                  ? ToolConfirmationOutcome.ProceedOnce
-                  : ToolConfirmationOutcome.Cancel,
-              payload: res.action === 'accept' ? { answers: answersMap } : undefined,
-            });
-          }
+          await publishAnswer(correlationId, res);
         }
 
         if (!pendingNext) pendingNext = sdkIterator.next();
         const wake = new Promise<'wake'>((resolve) => {
           userInputWaker = () => resolve('wake');
         });
+        // The abort arm matters when the engine goes quiet instead of ending its
+        // stream once the run is stopped.
         const winner = await Promise.race([
           pendingNext.then((r) => ({ kind: 'sdk' as const, value: r })),
           wake.then(() => ({ kind: 'wake' as const })),
+          abortPromise.then(() => ({ kind: 'abort' as const })),
         ]);
         userInputWaker = null;
         if (winner.kind === 'wake') continue;
+        if (winner.kind === 'abort') {
+          yield* flushOpenSubagents();
+          yield { type: 'error', error: terminalError(), phase: 'runtime' };
+          return;
+        }
         pendingNext = null;
         if (winner.value.done) break outer;
         const event = winner.value.value;
