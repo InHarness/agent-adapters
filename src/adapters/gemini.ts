@@ -18,7 +18,8 @@ import type {
   ImageInput,
   SubagentStatus,
 } from '../types.js';
-import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
+import { createIdleClock, createIdleHandle, observeIdle, type IdleHandle } from '../idle-clock.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -242,6 +243,12 @@ export class GeminiAdapter implements RuntimeAdapter {
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
+    // The idle clock (M01) is fed every event the session yields.
+    const idle = createIdleHandle();
+    yield* observeIdle(idle, this.runSession(params, idle));
+  }
+
+  private async *runSession(params: RuntimeExecuteParams, idle: IdleHandle): AsyncIterable<UnifiedEvent> {
     // Built-in tool gating (M18) — the pre-dispatch gate, before any SDK import.
     const policyError = checkToolPolicy(this.architecture, params);
     if (policyError) {
@@ -666,6 +673,22 @@ export class GeminiAdapter implements RuntimeAdapter {
         this.abortFn?.();
       }, params.timeoutMs);
     }
+    // The idle clock (M01): advances only while nothing is outstanding; expiry stops
+    // the run down the same path as the backstop.
+    idle.clock = createIdleClock({
+      idleMs: params.idleTimeoutMs,
+      onExpire: () => {
+        idle.expired = true;
+        this.aborted = true;
+        this.abortFn?.();
+      },
+    });
+    const terminalError = () =>
+      timedOut
+        ? new AdapterTimeoutError('gemini', params.timeoutMs!)
+        : idle.expired
+          ? new AdapterIdleTimeoutError('gemini', params.idleTimeoutMs!)
+          : new AdapterAbortError('gemini');
 
     // Track subagent state via threadId
     const activeSubagents = new Set<string>();
@@ -712,11 +735,17 @@ export class GeminiAdapter implements RuntimeAdapter {
           const { req, correlationId } = pendingUserInputs.shift()!;
           yield { type: 'user_input_request', request: req };
           let res: UserInputResponse;
+          // An unanswered request is outstanding work: the idle clock stops until it
+          // is answered.
+          const inputKey = `uin:${req.requestId}`;
+          idle.clock.begin(inputKey);
           try {
             res = params.onUserInput ? await params.onUserInput(req) : { action: 'decline' };
           } catch (err) {
             res = { action: 'cancel' };
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
+          } finally {
+            idle.clock.end(inputKey);
           }
           const bus = geminiConfigRef?.messageBus;
           if (bus && MessageBusType && ToolConfirmationOutcome) {
@@ -899,7 +928,7 @@ export class GeminiAdapter implements RuntimeAdapter {
               yield* flushOpenSubagents();
               yield {
                 type: 'error',
-                error: timedOut ? new AdapterTimeoutError('gemini', params.timeoutMs!) : new AdapterAbortError('gemini'),
+                error: terminalError(),
                 phase: 'runtime',
               };
               return;
@@ -961,11 +990,7 @@ export class GeminiAdapter implements RuntimeAdapter {
     } catch (err) {
       if (this.aborted) {
         yield* flushOpenSubagents();
-        if (timedOut) {
-          yield { type: 'error', error: new AdapterTimeoutError('gemini', params.timeoutMs!), phase: 'runtime' };
-        } else {
-          yield { type: 'error', error: new AdapterAbortError('gemini'), phase: 'runtime' };
-        }
+        yield { type: 'error', error: terminalError(), phase: 'runtime' };
         return;
       }
       yield* flushOpenSubagents();

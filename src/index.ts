@@ -43,6 +43,7 @@ export {
   AdapterError,
   AdapterInitError,
   AdapterTimeoutError,
+  AdapterIdleTimeoutError,
   AdapterAbortError,
   AdapterBackgroundHoldExpiredError,
   AdapterToolPolicyError,

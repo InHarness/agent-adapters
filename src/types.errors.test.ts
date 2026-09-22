@@ -13,6 +13,7 @@ import {
   AdapterAbortError,
   AdapterTimeoutError,
   AdapterBackgroundHoldExpiredError,
+  AdapterIdleTimeoutError,
 } from './types.js';
 
 describe('AdapterInitError', () => {
@@ -131,5 +132,25 @@ describe('AdapterBackgroundHoldExpiredError', () => {
     expect(wire.error.message).toContain('6000ms');
     // Names the lever that changes it, so the message is actionable on its own.
     expect(wire.error.message).toContain('claude_backgroundHoldCapMs');
+  });
+});
+
+describe('AdapterIdleTimeoutError', () => {
+  it('is typed apart from the backstop, by class and by name', () => {
+    // An idle expiry is a stall to diagnose; a backstop expiry is a limit to raise.
+    const idle = new AdapterIdleTimeoutError('codex', 30_000);
+
+    expect(idle).toBeInstanceOf(AdapterError);
+    expect(idle).not.toBeInstanceOf(AdapterTimeoutError);
+    expect(new AdapterTimeoutError('codex', 30_000)).not.toBeInstanceOf(AdapterIdleTimeoutError);
+    expect(idle.name).toBe('AdapterIdleTimeoutError');
+    expect(idle.idleTimeoutMs).toBe(30_000);
+  });
+
+  it('carries idleTimeoutMs through JSON.stringify', () => {
+    const wire = JSON.parse(JSON.stringify(new AdapterIdleTimeoutError('gemini', 5_000)));
+
+    expect(wire).toMatchObject({ name: 'AdapterIdleTimeoutError', adapter: 'gemini', idleTimeoutMs: 5_000 });
+    expect(wire.message).toContain('5000ms');
   });
 });

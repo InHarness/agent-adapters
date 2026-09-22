@@ -23,7 +23,8 @@ import type {
   UsageStats,
   ImageInput,
 } from '../types.js';
-import { AdapterInitError, AdapterTimeoutError, AdapterAbortError } from '../types.js';
+import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
+import { createIdleClock, createIdleHandle, observeIdle, type IdleHandle } from '../idle-clock.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -100,6 +101,13 @@ function extractCodexErrorMessage(raw: unknown, fallback = 'Codex error'): strin
 // (see UnifiedEvent.result.usage in types.ts), so we track the last cumulative
 // we saw per threadId and yield current_cumulative − prior. LRU-capped to
 // bound long-running process growth.
+/**
+ * Codex items that are not tool calls. Every other item type (command execution,
+ * file change, MCP tool call, web search) is outstanding work for the idle clock
+ * between its `item.started` and `item.completed`.
+ */
+const NON_TOOL_ITEM_TYPES: ReadonlySet<ThreadItem['type']> = new Set(['agent_message', 'reasoning', 'todo_list', 'error']);
+
 const CODEX_USAGE_LRU_CAP = 256;
 const codexSessionLastUsage = new Map<string, UsageStats>();
 
@@ -144,6 +152,12 @@ export class CodexAdapter implements RuntimeAdapter {
   }
 
   async *execute(params: RuntimeExecuteParams): AsyncIterable<UnifiedEvent> {
+    // The idle clock (M01) is fed every event the session yields.
+    const idle = createIdleHandle();
+    yield* observeIdle(idle, this.runSession(params, idle));
+  }
+
+  private async *runSession(params: RuntimeExecuteParams, idle: IdleHandle): AsyncIterable<UnifiedEvent> {
     // subagentTaskId on delta-like events is never populated — Codex SDK has
     // no subagent concept. See .claude/skills/codex-sdk/SKILL.md:73.
     this.abortController = new AbortController();
@@ -392,6 +406,24 @@ export class CodexAdapter implements RuntimeAdapter {
         this.abortController?.abort();
       }, params.timeoutMs);
     }
+    // The idle clock (M01). Codex emits `tool_use` and `tool_result` together at
+    // `item.completed`, so the unified stream never shows a tool call in flight; the
+    // outstanding work is tracked from `item.started` instead. Codex has no subagents,
+    // background tasks or user input, so that is the whole of it.
+    idle.clock = createIdleClock({
+      idleMs: params.idleTimeoutMs,
+      onExpire: () => {
+        idle.expired = true;
+        this.abortController?.abort();
+      },
+    });
+    const idleClock = idle.clock;
+    const terminalError = () =>
+      timedOut
+        ? new AdapterTimeoutError('codex', params.timeoutMs!)
+        : idle.expired
+          ? new AdapterIdleTimeoutError('codex', params.idleTimeoutMs!)
+          : new AdapterAbortError('codex');
 
     let lastErrorMessage: string | null = null;
 
@@ -408,17 +440,19 @@ export class CodexAdapter implements RuntimeAdapter {
 
       for await (const event of events) {
         if (this.abortController.signal.aborted) {
-          if (timedOut) {
-            yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!), phase: 'runtime' };
-          } else {
-            yield { type: 'error', error: new AdapterAbortError('codex'), phase: 'runtime' };
-          }
+          yield { type: 'error', error: terminalError(), phase: 'runtime' };
           return;
         }
 
         switch (event.type) {
+          case 'item.started': {
+            if (!NON_TOOL_ITEM_TYPES.has(event.item.type)) idleClock.begin(`item:${event.item.id}`);
+            break;
+          }
+
           case 'item.completed': {
             const item = event.item;
+            idleClock.end(`item:${item.id}`);
 
             if (item.type === 'agent_message') {
               yield { type: 'text_delta', text: item.text, isSubagent: false };
@@ -569,11 +603,7 @@ export class CodexAdapter implements RuntimeAdapter {
       }
     } catch (err) {
       if (this.abortController.signal.aborted) {
-        if (timedOut) {
-          yield { type: 'error', error: new AdapterTimeoutError('codex', params.timeoutMs!), phase: 'runtime' };
-        } else {
-          yield { type: 'error', error: new AdapterAbortError('codex'), phase: 'runtime' };
-        }
+        yield { type: 'error', error: terminalError(), phase: 'runtime' };
         return;
       }
       // The codex-sdk rethrows `Codex Exec exited with <detail>: <stderr>`

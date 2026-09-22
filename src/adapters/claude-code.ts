@@ -30,6 +30,7 @@ import type {
 import {
   AdapterInitError,
   AdapterTimeoutError,
+  AdapterIdleTimeoutError,
   AdapterAbortError,
   AdapterBackgroundHoldExpiredError,
   type AdapterError,
@@ -40,6 +41,7 @@ import { checkPeerSdkVersion } from '../sdk-version.js';
 import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js';
 import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
+import { createIdleClock, observeAndYield, type IdleClock } from '../idle-clock.js';
 import { validateSubagents, mapSubagentStatus } from '../subagents.js';
 import { probePathScope, getClaudeSandboxConfig } from '../path-scope.js';
 import {
@@ -52,6 +54,7 @@ import type { ToolGroup } from '../tool-groups.js';
 import {
   createTaskRegistry,
   createBackgroundHold,
+  isMainModelActivity,
   projectBackgroundTasks,
   BACKGROUND_WAKEUP_GRACE_MS,
   MAX_BACKGROUND_HOLD_MS,
@@ -958,6 +961,9 @@ export type { TaskKind, TaskRegistry, BackgroundHold, HoldExpiry } from './claud
 
 // --- Adapter ---
 
+/** Idle-clock key held while the M17 hold is parked on the engine's wake-up. */
+const HOLD_IDLE_KEY = 'hold';
+
 /**
  * Everything about ONE `execute()` that a later `abort()`/`pushMessage()` has to be
  * able to reach.
@@ -979,6 +985,10 @@ interface RunContext {
   activeQuery: Query | null;
   /** SDK-type MCP server instances this run holds a claim on (see src/mcp.ts). */
   claimedMcpInstances: readonly object[];
+  /** The M01 idle clock. A no-op until `runSession` arms it; fed every yielded event. */
+  idleClock: IdleClock;
+  /** Set when the idle clock expired — carried so every exit reports the same reason. */
+  idleExpired: boolean;
 }
 
 export class ClaudeCodeAdapter implements RuntimeAdapter {
@@ -1089,13 +1099,23 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       closeInputChannel: null,
       activeQuery: null,
       claimedMcpInstances: [],
+      idleClock: createIdleClock({ idleMs: undefined, onExpire: () => {} }),
+      idleExpired: false,
     };
     this.runs.add(run);
     this.latestRun = run;
 
     try {
-      yield* this.runSession(params, run);
+      // Observed BEFORE the yield: a `user_input_request` or `tool_use` makes work
+      // outstanding the moment it exists, not when the consumer gets round to it.
+      // The clock is stopped while the consumer holds the event. A `result` is not
+      // the run's last word here (queued pushes, the M17 hold) — runSession stops
+      // the clock itself once it decides the run is winding down.
+      for await (const event of this.runSession(params, run)) {
+        yield* observeAndYield(run.idleClock, event);
+      }
     } finally {
+      run.idleClock.dispose();
       this.forgetRun(run);
       releaseSdkMcpInstances(run.claimedMcpInstances);
     }
@@ -1649,7 +1669,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     const terminalRuntimeError = (): AdapterError =>
       timedOut
         ? new AdapterTimeoutError('claude-code', params.timeoutMs!)
-        : backgroundHoldExpiredAfterMs !== null
+        : run.idleExpired
+          ? new AdapterIdleTimeoutError('claude-code', params.idleTimeoutMs!)
+          : backgroundHoldExpiredAfterMs !== null
           ? new AdapterBackgroundHoldExpiredError('claude-code', backgroundHoldExpiredAfterMs)
           : new AdapterAbortError('claude-code');
     /**
@@ -1709,6 +1731,16 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         run.abortController.abort();
       }, params.timeoutMs);
     }
+    // The idle clock (M01): advances only while nothing is outstanding. Expiry stops
+    // the run down the same path as the backstop.
+    run.idleClock = createIdleClock({
+      idleMs: params.idleTimeoutMs,
+      onExpire: () => {
+        run.idleExpired = true;
+        this.interruptRun(run);
+        run.abortController.abort();
+      },
+    });
 
     // Materialize inline skills into a per-call tmpdir registered as a local
     // plugin. Cleanup runs in the finally below (covers normal completion,
@@ -1833,6 +1865,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       //    surface a typed AdapterBackgroundHoldExpiredError.
       onExpire: (reason) => {
         if (reason === 'grace') {
+          // The ordinary end of the run — nothing can go idle any more.
+          run.idleClock.dispose();
           inputChannel.close();
           return;
         }
@@ -1964,6 +1998,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
           if (!effectiveUserInputHandler) {
             // Defensive: bridges are only registered when a handler exists.
             settleUnanswered(pending, 'decline');
+            run.idleClock.end(`uin:${pending.req.requestId}`);
             continue;
           }
           try {
@@ -1972,10 +2007,14 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             // may be never — so awaiting it bare makes abort()/timeoutMs
             // unenforceable and parks the run (and its SDK subprocess) forever.
             // See M13.
+            // An unanswered request is outstanding work — a human being slow, not an
+            // engine gone quiet — so the idle clock stops until it is answered.
+            const inputKey = `uin:${pending.req.requestId}`;
+            run.idleClock.begin(inputKey);
             const outcome = await Promise.race([
               effectiveUserInputHandler(pending.req).then((res) => ({ kind: 'answer' as const, res })),
               abortPromise.then(() => ({ kind: 'abort' as const })),
-            ]);
+            ]).finally(() => run.idleClock.end(inputKey));
             if (outcome.kind === 'abort') {
               // Settle the SDK-side promise so the callback doesn't leak, and
               // cancel everything still queued behind it.
@@ -2047,6 +2086,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         // Runs BEFORE the switch, so state this message is about to change (a task
         // settling, say) is re-evaluated by that branch's own hold.touch() call.
         hold.touch(event);
+        // The engine took the wake-up: the hold has released, and the continuation
+        // turn is ordinary engine work the idle clock governs again.
+        if (isMainModelActivity(event)) run.idleClock.end(HOLD_IDLE_KEY);
 
         if (run.abortController.signal.aborted) {
           yield* endRunTerminally();
@@ -2556,13 +2598,21 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             if (resultEvent.subtype === 'success' && inputChannel.hasPending()) {
               // keep open: SDK consumes the next queued message as a new turn
               hold.end();
+              run.idleClock.end(HOLD_IDLE_KEY);
             } else if (
               resultEvent.subtype === 'success' &&
               (engineHoldsSession || tasks.touchedATask())
             ) {
               hold.begin();
+              // Parked on the engine's wake-up, bounded by the hold's own grace and
+              // cap. That wait is the hold's to judge: an idle expiry inside it would
+              // report a run that already delivered its result as a failure.
+              run.idleClock.begin(HOLD_IDLE_KEY);
             } else {
               hold.end();
+              // The run is over; the SDK only has to shut down. Nothing past this
+              // point may turn a delivered result into an idle expiry.
+              run.idleClock.dispose();
               inputChannel.close();
             }
             // The decision for this turn is made, so the settlements that fed it have
@@ -2586,7 +2636,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // that calls `abort()` after the final `result` — "I have what I need, stop the
       // session" — trips the flag on a run that completed successfully, and turning
       // that into a terminal error would report a good run as a failed one.
-      if (backgroundHoldExpiredAfterMs !== null || timedOut) {
+      if (backgroundHoldExpiredAfterMs !== null || timedOut || run.idleExpired) {
         yield* endRunTerminally();
         return;
       }

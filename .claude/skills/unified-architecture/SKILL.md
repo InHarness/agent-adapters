@@ -104,7 +104,7 @@ interface NormalizedMessage {
 | `prompt`, `systemPrompt`, `model` | core input | `model` may be an alias (see `src/models.ts`) — adapters must call `resolveModel()` |
 | `allowedTools` | tool allowlist | adapter maps to native equivalent |
 | `mcpServers: Record<string, McpServerConfig>` | pre-built MCP servers | adapters read this; `builtinMCPServers` / `allowedMCPTools` are consumer-side |
-| `cwd`, `maxTurns`, `timeoutMs` | runtime | adapter enforces if SDK supports |
+| `cwd`, `maxTurns`, `timeoutMs`, `idleTimeoutMs` | runtime | adapter enforces if SDK supports |
 | `resumeSessionId` | session resumption | support varies — see capability matrix |
 | `streamingInput: boolean` | open input channel for `pushMessage()` | only honored by `midTurnPush`-capable adapters (claude-code); off → one-shot string prompt (unchanged). See capability matrix |
 | `architectureConfig: Record<string, unknown>` | adapter-specific keys | prefix by adapter: `claude_*`, `codex_*`, `gemini_*`, `opencode_*`, plus cross-adapter `custom_env` / `ollama_baseUrl` |
