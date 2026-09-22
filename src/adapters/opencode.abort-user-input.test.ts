@@ -4,7 +4,7 @@
 // claude-code.background-tasks.test.ts.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AdapterAbortError, AdapterTimeoutError } from '../types.js';
+import { AdapterAbortError, AdapterIdleTimeoutError, AdapterTimeoutError } from '../types.js';
 import type { UnifiedEvent } from '../types.js';
 import { createTestParams } from '../testing/helpers.js';
 
@@ -174,5 +174,25 @@ describe('opencode — abort while a user-input request is outstanding', () => {
     expect(terminated).toBe(true);
     expect(terminalError(events)).toBeInstanceOf(AdapterAbortError);
     expect(serverClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a synchronously throwing handler does not leave the idle clock stopped', async () => {
+    const adapter = await newAdapter();
+    const { events, terminated } = await pumpUntilDone(
+      adapter.execute(
+        params({
+          idleTimeoutMs: 150,
+          onUserInput: () => {
+            throw new Error('handler blew up');
+          },
+        }),
+      ),
+    );
+
+    expect(terminated, 'the idle clock must run again once the failed request is settled').toBe(true);
+    const errs = events.filter((e) => e.type === 'error').map((e) => (e as { error: Error }).error);
+    expect(errs[0]?.message).toBe('handler blew up');
+    expect(errs.at(-1)).toBeInstanceOf(AdapterIdleTimeoutError);
+    await vi.waitFor(() => expect(questionReject).toHaveBeenCalled());
   });
 });

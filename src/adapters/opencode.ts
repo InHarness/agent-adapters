@@ -659,10 +659,14 @@ export class OpencodeAdapter implements RuntimeAdapter {
             // Race the consumer's handler against abort. A host that answers from a
             // UI resolves only when a human replies — which may be never — so awaiting
             // it bare parks the run, and the server it spawned, forever (M13).
+            // Promise.resolve().then: a handler that throws synchronously or
+            // returns a plain value behaves like an async one (as `await` did).
             const outcome = await Promise.race([
-              params.onUserInput(req).then((res) => ({ kind: 'answer' as const, res })),
+              Promise.resolve()
+                .then(() => params.onUserInput!(req))
+                .then((res) => ({ kind: 'answer' as const, res })),
               abortPromise.then(() => ({ kind: 'abort' as const })),
-            ]).finally(() => idle.clock.end(inputKey));
+            ]);
             if (outcome.kind === 'abort') {
               // Answer `cancel` so the question subscription's promise settles (it
               // rejects the question best-effort, unawaited here), and everything
@@ -677,6 +681,8 @@ export class OpencodeAdapter implements RuntimeAdapter {
           } catch (err) {
             resolve({ action: 'cancel' });
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
+          } finally {
+            idle.clock.end(inputKey);
           }
         }
 

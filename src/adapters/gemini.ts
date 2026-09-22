@@ -754,9 +754,20 @@ export class GeminiAdapter implements RuntimeAdapter {
     };
 
     try {
+      // A stop that landed during init reached no session (abortFn was unset or
+      // pointed at a previous run's). Never start the turn: once sendStream is
+      // pulled, the engine would run it — tools included — with nothing aborting it.
+      if (runAbort.signal.aborted) {
+        yield { type: 'error', error: terminalError(), phase: 'runtime' };
+        return;
+      }
       const imageParts = params.images?.length
         ? await buildGeminiImageParts(params.images)
         : [];
+      if (runAbort.signal.aborted) {
+        yield { type: 'error', error: terminalError(), phase: 'runtime' };
+        return;
+      }
       const eventStream = session.sendStream({
         message: {
           content: [{ type: 'text', text: params.prompt }, ...imageParts],
@@ -809,7 +820,11 @@ export class GeminiAdapter implements RuntimeAdapter {
               // answers from a UI resolves only when a human replies — which may be
               // never — so awaiting it bare parks the run forever (M13).
               const outcome = await Promise.race([
-                params.onUserInput(req).then((r) => ({ kind: 'answer' as const, res: r })),
+                // Promise.resolve().then: a handler that throws synchronously or
+                // returns a plain value behaves like an async one (as `await` did).
+                Promise.resolve()
+                  .then(() => params.onUserInput!(req))
+                  .then((r) => ({ kind: 'answer' as const, res: r })),
                 abortPromise.then(() => ({ kind: 'abort' as const })),
               ]);
               if (outcome.kind === 'abort') {

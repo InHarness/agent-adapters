@@ -10,6 +10,7 @@ import { createTestParams } from '../testing/helpers.js';
 
 /** Whether the scripted session raises an ask_user confirmation before going quiet. */
 let askQuestion = true;
+let sendStreamCalls = 0;
 const publish = vi.fn(async (_msg: Record<string, unknown>) => {});
 let lastBus: { fire(type: string, msg: Record<string, unknown>): void } | null = null;
 
@@ -39,6 +40,7 @@ vi.mock('@google/gemini-cli-core', () => {
   }
   class LegacyAgentSession {
     async *sendStream() {
+      sendStreamCalls++;
       if (askQuestion) {
         // Asynchronously, as the real scheduler does — after the adapter's pump race is armed.
         await new Promise((r) => setTimeout(r, 10));
@@ -72,6 +74,7 @@ vi.mock('@google/gemini-cli-core', () => {
 beforeEach(() => {
   process.env.GOOGLE_API_KEY ??= 'test-key';
   askQuestion = true;
+  sendStreamCalls = 0;
   publish.mockClear();
 });
 
@@ -163,5 +166,17 @@ describe('gemini — abort while a user-input request is outstanding', () => {
 
     expect(terminated).toBe(true);
     expect(terminalError(events)).toBeInstanceOf(AdapterAbortError);
+  });
+
+  it('abort() during setup never starts the model turn', async () => {
+    const adapter = await newAdapter();
+    const { events, terminated } = await pumpUntilDone(adapter.execute(params()), (e) => {
+      // adapter_ready precedes config init and session construction.
+      if (e.type === 'adapter_ready') adapter.abort();
+    });
+
+    expect(terminated).toBe(true);
+    expect(terminalError(events)).toBeInstanceOf(AdapterAbortError);
+    expect(sendStreamCalls, 'a stopped run must not start a turn nothing will abort').toBe(0);
   });
 });
