@@ -205,8 +205,8 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
       'its turn). Expires after this long with no lifecycle event (started / progress / completed) from any tracked ' +
       'unit — a background task or a held subagent. Only those re-arm it; engine heartbeats and subagent token ' +
       'output do not. One timer shared by all tracked units: a build or subagent that keeps reporting progress is ' +
-      'not cut off, while work that goes silent for the whole cap is. It bounds a subagent\'s silence, not its ' +
-      'length — that is subagentTimeoutMs. Expiry ENDS the run with a typed ' +
+      'not cut off, while work that goes silent for the whole cap is. subagentTimeoutMs is a separate, per-subagent ' +
+      'silence bound that runs whether or not the session is parked. Expiry ENDS the run with a typed ' +
       'AdapterBackgroundHoldExpiredError; it never leaves the session open with a closed control channel. 90s is the ' +
       'measured starting point. If you apply a timeout to the stream, raise it and this cap together, never either ' +
       'alone — the cap must stay below it, or the run is rejected before that error is emitted. ' +

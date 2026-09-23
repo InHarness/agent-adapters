@@ -762,13 +762,7 @@ describe('claude-code — the background-task hold is bounded', () => {
       const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
       await input.next();
 
-      yield {
-        type: 'system',
-        subtype: 'task_started',
-        task_id: 'sub-1',
-        task_type: 'subagent',
-        description: 'research',
-      } as unknown as SDKMessage;
+      yield taskStarted('sub-1', 'subagent', 'research');
       yield resultMessage();
 
       const signal = (options.abortController as AbortController | undefined)?.signal;
@@ -874,14 +868,13 @@ describe('claude-code — the background-task hold is bounded', () => {
   // The membership half of the closed vocabulary: a subagent_* frame re-arms the cap
   // only when it belongs to a unit the hold is waiting on. A teammate is never tracked
   // (M06), and a progress frame for an id never seen starting names no unit.
-  for (const [label, preamble] of [
-    ['a teammate', [taskStarted('mate-1', 'in_process_teammate', 'peer')]],
-    ['an id never seen starting', []],
+  for (const [label, chatterId, preamble] of [
+    ['a teammate', 'mate-1', [taskStarted('mate-1', 'in_process_teammate', 'peer')]],
+    ['an id never seen starting', 'ghost-1', []],
   ] as const) {
     it(`progress from ${label} does not re-arm the cap`, async () => {
       const BEAT_MS = 20_000;
       const BEATS = 8;
-      const chatterId = label === 'a teammate' ? 'mate-1' : 'ghost-1';
 
       script = async function* ({ prompt, options }) {
         const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;

@@ -860,7 +860,7 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
    * | a `tool_use` with no `tool_result` yet      | {@link toolCallTimeoutMs}               |
    * | an open subagent                            | {@link subagentTimeoutMs}               |
    * | an unsettled background task                | the hold cap (`claude_backgroundHoldCapMs`) |
-   * | a subagent still open past its turn's `result` | its silence: the hold cap; its length: {@link subagentTimeoutMs} |
+   * | a subagent still open past its turn's `result` | the hold cap (silence shared across tracked units) and {@link subagentTimeoutMs} (its own silence) |
    * | a `streamingInput` channel open, waiting for the next push | the backstop {@link timeoutMs} |
    * | a nested turn started from inside the run   | the clocks of its own `execute()`       |
    * | an unanswered `user_input_request`          | nothing — `timeoutMs` / `abort()` only  |

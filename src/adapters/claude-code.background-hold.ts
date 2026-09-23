@@ -300,8 +300,9 @@ export const BACKGROUND_WAKEUP_GRACE_MS = 15_000;
  *
  * ONE TIMER, SHARED by every tracked unit, re-armed by whichever spoke last: one
  * unit going quiet while another keeps reporting does not end the parked stretch.
- * It bounds a held subagent's SILENCE, never its length — `subagentTimeoutMs` is the
- * length bound, a separate clock.
+ * It bounds a held subagent's SILENCE, never its length. `subagentTimeoutMs` is a
+ * separate clock: per subagent rather than shared, also re-armed by that subagent's
+ * own lifecycle, and running whether or not the session is parked.
  *
  * WHAT EXPIRY MEANS. It ends the run, through the same path `abort()` uses, with a
  * typed `AdapterBackgroundHoldExpiredError`. It must NEVER be "close the input
