@@ -2628,8 +2628,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 // as on an adapter whose SDK cannot background work at all.
                 // Falling through to the subagent branch would mislabel it.
               } else if (kind.isBackground) {
-                // Routed into the tracked task's background_task_* family — one of
-                // the three frames that re-arm the hold cap (M17).
+                // Routed into a tracked unit's lifecycle family — background_task_*
+                // here, subagent_* below. Those two families, and nothing else,
+                // re-arm the hold cap (M17).
                 hold.rearmCap();
                 yield {
                   type: 'background_task_started',
@@ -2662,6 +2663,11 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   staleNotificationOwed.set(taskId, cycleToolUseIdById.get(taskId) ?? '');
                 }
                 cycleToolUseIdById.set(taskId, toolUseId);
+                // A tracked subagent's `subagent_started` — first or `resumed: true` —
+                // re-arms the hold cap exactly as a background task's start does (M17):
+                // the cap measures silence from ANY unit the hold waits on. The still-
+                // running re-entry above emits no subagent_* event, so it does not.
+                hold.rearmCap();
                 yield {
                   type: 'subagent_started',
                   taskId,
@@ -2689,6 +2695,10 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   ...(e.output_file ? { outputFile: e.output_file as string } : {}),
                 };
               } else {
+                // Only a subagent the hold tracks (started, not yet settled) moves the
+                // cap — a progress frame for an id we never saw start is not a unit
+                // the hold is waiting on.
+                if (tasks.inFlight.has(taskId)) hold.rearmCap();
                 yield {
                   type: 'subagent_progress',
                   taskId,
@@ -2724,6 +2734,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   break;
                 }
               }
+              // Read BEFORE settling: whether this notification closes a unit the hold
+              // was tracking decides whether it may re-arm the cap below.
+              const wasTracked = tasks.inFlight.has(taskId);
               patchedStatusById.delete(taskId);
               tasks.settle(taskId);
               if (kind?.isBackground && shellDenied) {
@@ -2740,6 +2753,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                   usage: normalizeClaudeUsage(e.usage),
                 };
               } else {
+                // A tracked subagent's `subagent_completed` re-arms the cap (M17).
+                if (wasTracked) hold.rearmCap();
                 // MAP, never forward. `task_notification.status` is a closed union on
                 // the pinned SDK (`completed | failed | stopped`), but the sibling
                 // `task_updated.patch.status` channel below already shows a wider

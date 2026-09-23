@@ -201,12 +201,12 @@ export const CLAUDE_CODE_OPTIONS: ArchOption[] = [
     max: 600000,
     step: 5000,
     description:
-      'Cap on holding the session for unsettled background work (a backgrounded `sleep 3600`). Expires after this ' +
-      'long with no lifecycle event (started / progress / completed) from a tracked background task — only those ' +
-      're-arm it; engine heartbeats and subagent output do not. So a stretch parked only on a background subagent ' +
-      'is cut at this cap however busy the subagent is: raise the cap (or set it to null) for subagents that ' +
-      'outlive the turn. subagentTimeoutMs has no default and does not lift this cap. ' +
-      'A build that keeps reporting progress is not cut off. Expiry ENDS the run with a typed ' +
+      'Cap on holding the session for unsettled tracked work (a backgrounded `sleep 3600`, a subagent that outlives ' +
+      'its turn). Expires after this long with no lifecycle event (started / progress / completed) from any tracked ' +
+      'unit — a background task or a held subagent. Only those re-arm it; engine heartbeats and subagent token ' +
+      'output do not. One timer shared by all tracked units: a build or subagent that keeps reporting progress is ' +
+      'not cut off, while work that goes silent for the whole cap is. It bounds a subagent\'s silence, not its ' +
+      'length — that is subagentTimeoutMs. Expiry ENDS the run with a typed ' +
       'AdapterBackgroundHoldExpiredError; it never leaves the session open with a closed control channel. 90s is the ' +
       'measured starting point. If you apply a timeout to the stream, raise it and this cap together, never either ' +
       'alone — the cap must stay below it, or the run is rejected before that error is emitted. ' +

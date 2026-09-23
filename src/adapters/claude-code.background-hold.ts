@@ -276,22 +276,32 @@ export function projectBackgroundTasks(
 export const BACKGROUND_WAKEUP_GRACE_MS = 15_000;
 
 /**
- * Cap on UNSETTLED WORK: expires after this many milliseconds in which no tracked
- * background task reported a lifecycle event. Not measured from the start of the
+ * Cap on UNSETTLED WORK: expires after this many milliseconds in which no unit the
+ * hold tracks — a background task or a held subagent — reported a lifecycle event.
+ * Not measured from the start of the
  * parked stretch, and not from the engine's last frame of any kind. Bounds the case
  * the grace window cannot see: work that never settles at all (a backgrounded
  * `sleep 3600`). Without it, holding the channel would hand this run's lifetime to
  * the engine indefinitely.
  *
- * WHAT RE-ARMS IT — A CLOSED VOCABULARY (M17/A01). Only the `task_started` /
- * `task_progress` / `task_notification` frames the adapter routes into a tracked
- * task's `background_task_*` family, plus a finished task re-entering with a second
- * `task_started`. Nothing else: not `system/status` or `background_tasks_changed`
- * (they re-arm the grace window only), not `task_updated`, not subagent token
- * content. A bound resting on raw event cadence would be a heartbeat — no matrix
- * records how densely the engine speaks — so a backgrounded `sleep 3600` stays
- * silent and is cut, while a build emitting progress for twenty minutes is not.
- * An open subagent is bounded by `subagentTimeoutMs`, not by this cap.
+ * WHAT RE-ARMS IT — A CLOSED VOCABULARY (M17/A01): the lifecycle events of any unit
+ * the hold tracks. Two families, one rule — the `task_started` / `task_progress` /
+ * `task_notification` frames the adapter routes into a tracked unit's
+ * `background_task_*` OR `subagent_*` family (a re-entry's `resumed: true` start
+ * included), plus a finished task re-entering with a second `task_started`. Each
+ * one must belong to a unit the hold is waiting on: a teammate is never tracked, a
+ * stale notification from a previous cycle is swallowed, a progress frame for an id
+ * never seen starting names nothing. Nothing else: not `system/status` or
+ * `background_tasks_changed` (they re-arm the grace window only), not `task_updated`,
+ * not subagent token content. A bound resting on raw event cadence would be a
+ * heartbeat — no matrix records how densely the engine speaks — so a backgrounded
+ * `sleep 3600` stays silent and is cut, while a build or a subagent reporting
+ * progress for twenty minutes is not.
+ *
+ * ONE TIMER, SHARED by every tracked unit, re-armed by whichever spoke last: one
+ * unit going quiet while another keeps reporting does not end the parked stretch.
+ * It bounds a held subagent's SILENCE, never its length — `subagentTimeoutMs` is the
+ * length bound, a separate clock.
  *
  * WHAT EXPIRY MEANS. It ends the run, through the same path `abort()` uses, with a
  * typed `AdapterBackgroundHoldExpiredError`. It must NEVER be "close the input
@@ -332,9 +342,9 @@ export interface BackgroundHold {
    */
   touch(event: SDKMessage): void;
   /**
-   * A tracked task reported a lifecycle event the adapter routes into the
-   * `background_task_*` family (or a finished task re-entered). The ONLY thing that
-   * re-arms the cap, and only while holding.
+   * A tracked unit reported a lifecycle event the adapter routes into the
+   * `background_task_*` or `subagent_*` family (or a finished task re-entered). The
+   * ONLY thing that re-arms the cap, and only while holding.
    */
   rearmCap(): void;
   /** Stop every timer (teardown). Does not close the channel. */
@@ -352,8 +362,9 @@ export interface BackgroundHold {
  *  - a short grace once everything has settled (only a wake-up can still be owed),
  *    re-armed by every frame that arrives while parked, so it measures SILENCE
  *    rather than elapsed time;
- *  - a cap on silence from the tracked background work while something is still
- *    unsettled, re-armed only via {@link BackgroundHold.rearmCap}, released the
+ *  - a cap on silence from the tracked work (background tasks and held subagents)
+ *    while something is still unsettled, one timer shared by all of it, re-armed
+ *    only via {@link BackgroundHold.rearmCap}, released the
  *    instant a continuation turn starts.
  */
 export function createBackgroundHold(deps: {

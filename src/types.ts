@@ -860,6 +860,7 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
    * | a `tool_use` with no `tool_result` yet      | {@link toolCallTimeoutMs}               |
    * | an open subagent                            | {@link subagentTimeoutMs}               |
    * | an unsettled background task                | the hold cap (`claude_backgroundHoldCapMs`) |
+   * | a subagent still open past its turn's `result` | its silence: the hold cap; its length: {@link subagentTimeoutMs} |
    * | a `streamingInput` channel open, waiting for the next push | the backstop {@link timeoutMs} |
    * | a nested turn started from inside the run   | the clocks of its own `execute()`       |
    * | an unanswered `user_input_request`          | nothing — `timeoutMs` / `abort()` only  |
@@ -1241,8 +1242,9 @@ export class AdapterAbortError extends AdapterError {
 }
 
 /**
- * The adapter held the session open for background work (M17) and that work stopped
- * making progress for longer than the cap allows, so the run was ended.
+ * The adapter held the session open for tracked work (M17) — a background task or a
+ * held subagent — and that work stopped reporting for longer than the cap allows,
+ * so the run was ended and whatever was still unsettled was abandoned unfinished.
  *
  * WHY THIS IS AN ERROR AND NOT A WARNING. The alternative — and what the adapter did
  * before — was to close its input channel and let the run continue. That channel is
@@ -1264,10 +1266,10 @@ export class AdapterBackgroundHoldExpiredError extends AdapterError {
     readonly capMs: number,
   ) {
     super(
-      `${adapter} adapter ended the run: no tracked background task reported for ${capMs}ms ` +
+      `${adapter} adapter ended the run: no tracked background task or subagent reported for ${capMs}ms ` +
         'while work was still unsettled. ' +
         'The session was terminated rather than left open with a closed control channel; ' +
-        'any remaining background task is abandoned and its completion will not be reported. ' +
+        'any remaining tracked work is abandoned and its completion will not be reported. ' +
         'Raise or disarm the bound with the `claude_backgroundHoldCapMs` architecture option.',
       adapter,
     );

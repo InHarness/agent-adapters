@@ -3,6 +3,18 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.9.14] — 2026-09-23
+
+### Changed
+
+- **The claude-code background hold cap now re-arms on a tracked held subagent's lifecycle.** It now re-arms on `subagent_started` / `subagent_progress` / `subagent_completed` of a tracked held subagent, including a re-entry's `resumed: true` start. This is in addition to the `background_task_*` events of a tracked task. It **reverses the 0.9.13 note** that a parked stretch whose only unsettled work is a subagent "is cut at the cap however busy the subagent is". A subagent that keeps reporting now runs on past the cap. One that goes silent for the full cap (default 90s) still ends the run with `AdapterBackgroundHoldExpiredError`.
+  - The cap is still a closed vocabulary. Each re-arming event must belong to a unit the hold tracks. Teammate frames, stale notifications from a previous cycle, subagent token output, `task_updated`, `system/status` and `background_tasks_changed` do not move it.
+  - It stays **one timer shared by all tracked units**. One unit going quiet while another keeps reporting does not end the parked stretch.
+  - Two separate clocks now bound a subagent. `subagentTimeoutMs` bounds its **length**. `claude_backgroundHoldCapMs` bounds its **silence** while parked after `result`.
+  - `AdapterBackgroundHoldExpiredError` keeps its name, `capMs` field and teardown path. Its message now reads "no tracked background task or subagent reported…".
+
+  No option, event, error class or signature changed. There is nothing to migrate. A consumer that relied on the cap cutting a busy held subagent will now see that run continue.
+
 ## [0.9.13] — 2026-09-23
 
 > **First npm release since 0.9.9.** Versions 0.9.10–0.9.12 were bumped in the source tree but never tagged or published; their changes are folded into this section. Read the whole of it if you are upgrading from 0.9.9 — in particular the new `'delegation'` tool group and the `collectEvents()` default.
