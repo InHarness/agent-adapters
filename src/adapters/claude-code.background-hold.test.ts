@@ -294,7 +294,7 @@ describe('createBackgroundHold', () => {
 
   it('nothing outside the closed vocabulary re-arms the cap — subagent output, task_updated, heartbeats', () => {
     // M17/A01: the cap is re-armed by the frames the adapter routes into a tracked
-    // task's background_task_* family "and by nothing else". touch() moves grace only.
+    // unit's background_task_* or subagent_* family "and by nothing else". touch() moves grace only.
     const { registry, hold } = makeHold();
     registry.start('t1', 'shell', 'sleep 3600');
     hold.begin();

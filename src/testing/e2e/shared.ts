@@ -515,7 +515,7 @@ export const BACKGROUND_BASH_SYSTEM_PROMPT =
 //
 // The canonical example in M17 and in the adapter's own notes is `sleep 3600`, and
 // the duration is what makes it canonical: nothing about the run can outlast it. But
-// the cap ABANDONS the task on expiry ("any remaining background task is abandoned",
+// the cap ABANDONS the task on expiry ("any remaining tracked work is abandoned",
 // AdapterBackgroundHoldExpiredError) rather than reaping it, so an hour is an hour of
 // orphan on whatever machine ran the suite if the CLI ever fails to clean up after
 // itself. `sleep 180` is chosen to keep the property exact — it outlives the 8s cap
