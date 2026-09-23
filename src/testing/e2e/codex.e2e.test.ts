@@ -5,7 +5,6 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { createAdapter } from '../../factory.js';
-import { collectEvents } from '../../utils.js';
 import { AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
 import {
@@ -22,6 +21,7 @@ import {
   assertResumeUsageIndependence,
   assertToolPolicyRefusal,
   assertPorousWarning,
+  collectE2E,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady } from '../contract.js';
@@ -34,7 +34,7 @@ const SKIP = !!process.env.SKIP_CODEX_E2E;
 describe.skipIf(SKIP)('codex e2e', () => {
   it('emits adapter_ready with codexOptions + threadOptions before first message', async () => {
     const adapter = createAdapter('codex');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -67,7 +67,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
 
   it('simple text response (model alias)', async () => {
     const adapter = createAdapter('codex');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -99,7 +99,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
 
   it('simple text response (full model ID)', async () => {
     const adapter = createAdapter('codex');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -183,7 +183,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
     it('planMode=true refuses the run before dispatch instead of half-honouring it', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('codex').execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
@@ -206,7 +206,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
     it('an explicit empty disallowedToolGroups is the documented opt-out', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('codex').execute({
             prompt: 'List the files in the current directory using ls. Then report what you see.',
             systemPrompt: 'Use the shell tool with `ls` to list files.',
@@ -229,7 +229,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
     it.each(['shell', 'file-read'] as const)(
       'refuses `%s` before dispatch — ThreadOptions has no primitive for it',
       async (group) => {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('codex').execute({
             prompt: 'hello',
             systemPrompt: 'You are helpful.',
@@ -243,7 +243,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
     );
 
     it('refuses the whole run rather than applying the enforceable remainder', async () => {
-      const events = await collectEvents(
+      const events = await collectE2E(
         createAdapter('codex').execute({
           prompt: 'hello',
           systemPrompt: 'You are helpful.',
@@ -258,7 +258,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
     it('a denied `file-write` blocks mutation through the read-only sandbox', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('codex').execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
@@ -278,7 +278,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
     }, 120_000);
 
     it('an unknown group refuses the run', async () => {
-      const events = await collectEvents(
+      const events = await collectE2E(
         createAdapter('codex').execute({
           prompt: 'hello',
           systemPrompt: 'You are helpful.',
@@ -318,7 +318,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
 
   it('no subagent events and subagentTaskId is never populated', async () => {
     const adapter = createAdapter('codex');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -347,7 +347,7 @@ describe.skipIf(SKIP)('codex e2e', () => {
         handlerCalls += 1;
         return { action: 'cancel' };
       };
-      const events = await collectEvents(
+      const events = await collectE2E(
         adapter.execute({
           prompt: SIMPLE_PROMPT,
           systemPrompt: SIMPLE_SYSTEM_PROMPT,

@@ -10,7 +10,7 @@
 // never touch it. Only transitions of the outstanding set start or stop it.
 
 import type { UnifiedEvent } from './types.js';
-import { createRunCaps, type RunCaps, type CapExpiry } from './run-caps.js';
+import { NOOP_CAPS, type RunCaps, type CapExpiry } from './run-caps.js';
 
 export interface IdleClock {
   /** Derive outstanding work from a unified event. Call BEFORE the event is yielded. */
@@ -150,7 +150,7 @@ export function createIdleHandle(): IdleHandle {
   return {
     clock: NOOP_CLOCK,
     expired: false,
-    caps: createRunCaps({ toolCallMs: undefined, subagentMs: undefined, onExpire: () => {} }),
+    caps: NOOP_CAPS,
     capExpired: null,
   };
 }
@@ -202,6 +202,8 @@ export async function* observeIdle(
   try {
     for await (const event of source) {
       handle.caps.observe(event);
+      // A one-shot adapter's `result` is the run's last word: no cap may outlive it.
+      if (event.type === 'result') handle.caps.dispose();
       yield* observeAndYield(handle.clock, event, event.type === 'result');
     }
   } finally {

@@ -89,15 +89,37 @@ describe('gemini — toolCallTimeoutMs', () => {
 describe('gemini — subagentTimeoutMs', () => {
   it('closes the open thread with a synthesized aborted completion, then ends with AdapterSubagentTimeoutError', async () => {
     scriptedEvents = [
-      { id: 'e1', type: 'tool_request', threadId: 'thread-1', name: 'delegate', requestId: 'req-1', args: {} },
+      // The parent's delegating call: no threadId, and never named by the thread.
+      { id: 'e0', type: 'tool_request', name: 'codebase_investigator', requestId: 'req-0', args: {} },
+      { id: 'e1', type: 'tool_request', threadId: 'thread-1', name: 'read_file', requestId: 'req-1', args: {} },
+      { id: 'e2', type: 'tool_response', threadId: 'thread-1', requestId: 'req-1', content: [] },
       { sleep: 60_000 },
       { id: 'e3', type: 'agent_end', streamId: 's-run', reason: 'completed' },
     ];
+    // The tool cap is shorter than the subagent cap: the delegating call must be
+    // bounded by the subagent cap alone, or the tool cap would fire first.
     const events = await run({ subagentTimeoutMs: CAP_MS, toolCallTimeoutMs: CAP_MS / 2 });
 
     expect(events.filter((e) => e.type === 'subagent_completed')).toMatchObject([{ taskId: 'thread-1', status: 'aborted' }]);
     const errs = events.filter((e) => e.type === 'error');
     expect(errs).toHaveLength(1);
     expect((errs[0] as { error: Error }).error).toBeInstanceOf(AdapterSubagentTimeoutError);
+  });
+});
+
+describe('gemini — the two caps inside a subagent', () => {
+  it('an inner call of the thread stays tool-capped, including the one subagent_started names', async () => {
+    scriptedEvents = [
+      { id: 'e0', type: 'tool_request', name: 'codebase_investigator', requestId: 'req-0', args: {} },
+      { id: 'e1', type: 'tool_request', threadId: 'thread-1', name: 'run_shell_command', requestId: 'req-1', args: {} },
+      { sleep: 60_000 },
+      { id: 'e3', type: 'agent_end', streamId: 's-run', reason: 'completed' },
+    ];
+    const events = await run({ subagentTimeoutMs: CAP_MS * 10, toolCallTimeoutMs: CAP_MS });
+
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs).toHaveLength(1);
+    expect((errs[0] as { error: Error }).error).toMatchObject({ toolName: 'run_shell_command', toolUseId: 'req-1' });
+    expect(events.filter((e) => e.type === 'subagent_completed')).toMatchObject([{ taskId: 'thread-1', status: 'aborted' }]);
   });
 });

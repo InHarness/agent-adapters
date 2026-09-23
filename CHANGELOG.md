@@ -15,13 +15,13 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
   - `system/status` and `background_tasks_changed` re-arm only the grace window.
   - Subagent token output and `task_updated` no longer re-arm it.
 
-  So a build that emits `background_task_progress` for twenty minutes survives, and a silent `sleep 3600` is cut at the cap. **Behaviour change:** a parked stretch whose only unsettled work is a subagent is now cut at the cap (default 90s). Bound open subagents with `subagentTimeoutMs` instead. The default stays at 90s, now described as the measured starting point rather than as sized under `collectEvents()`.
+  So a build that emits `background_task_progress` for twenty minutes survives, and a silent `sleep 3600` is cut at the cap. **Behaviour change:** a parked stretch whose only unsettled work is a background subagent is now cut at the cap (default 90s), however busy the subagent is. If your subagents outlive the turn, raise `claude_backgroundHoldCapMs` (or set it to `null`). `subagentTimeoutMs` has no default and does not lift the hold cap. The default stays at 90s, now described as the measured starting point rather than as sized under `collectEvents()`.
 
 ### Added
 
 - **`toolCallTimeoutMs`** (`RuntimeExecuteParams`) caps ONE tool call. It is armed at `tool_use`, disarmed by the matching `tool_result`, and applies per call: sequential calls each get the full value.
   - Expiry ends the whole run with **`AdapterToolCallTimeoutError`**, which carries `toolName`, `toolUseId` and `toolCallTimeoutMs` (all kept by `toJSON()`).
-  - Exempt: a call that opens a subagent, and a call with an unanswered `user_input_request` under it. The cap arms again once the request is answered.
+  - Exempt: a call that opens a subagent, and a call with an unanswered `user_input_request` under it. A request names no call, so every call in flight is suspended while any request is unanswered, and each is armed again with the full value once none is left. A turn's `result` does not disarm a call; only its own `tool_result` does.
   - On codex the call is armed at `item.started`.
   - Absent means no timer at all.
 - **`subagentTimeoutMs`** (`RuntimeExecuteParams`) caps ONE open subagent. It is re-armed only by that subagent's own `subagent_started` (including `resumed: true` starts) and its `subagent_progress`.

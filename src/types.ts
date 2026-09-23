@@ -879,7 +879,10 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
    *
    * Exempt: a `tool_use` that opens a subagent (bounded by {@link subagentTimeoutMs}
    * alone), and a call with an unanswered `user_input_request` under it — a human
-   * is slow, not the call; the cap arms again once the request is answered.
+   * is slow, not the call. A request names no call, so every call in flight is
+   * suspended while any request is unanswered and armed again with the FULL value
+   * once none is left. A turn's `result` does not disarm a call; only its own
+   * `tool_result` does.
    *
    * Omitting it is a guarantee, not a default: no adapter arms a per-call timer.
    */

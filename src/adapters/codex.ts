@@ -443,6 +443,8 @@ export class CodexAdapter implements RuntimeAdapter {
       toolCallMs: params.toolCallTimeoutMs,
       subagentMs: params.subagentTimeoutMs,
       onExpire: (expiry) => {
+        // A run already stopping keeps the reason it is stopping for.
+        if (this.abortController?.signal.aborted) return;
         idle.capExpired = expiry;
         this.abortController?.abort();
       },

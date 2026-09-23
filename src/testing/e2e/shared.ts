@@ -16,6 +16,7 @@ import type {
 } from '../../types.js';
 import { createMcpServer, mcpTool } from '../../mcp.js';
 import { sumUsage } from '../../usage.js';
+import { collectEvents } from '../../utils.js';
 
 // Re-exported so existing imports `from './shared.js'` keep working.
 import { assertNormalizedMessage, assertContentBlock } from '../normalization.js';
@@ -189,6 +190,22 @@ export function createE2eMcpServer() {
 }
 
 // --- Common test params ---
+
+/**
+ * The stream bound every e2e case applies. `collectEvents()` has no default of its own
+ * since 0.9.13, and vitest's per-test timeout only fails the test — it does not stop
+ * the generator, so an unbounded hang leaves the CLI or server running as an orphan.
+ * Rejecting here instead aborts the stream with a diagnostic.
+ */
+export const E2E_STREAM_BOUND_MS = 120_000;
+
+/** `collectEvents()` with the e2e bound unless the case passes its own. */
+export function collectE2E(
+  stream: AsyncIterable<UnifiedEvent>,
+  timeoutMs: number = E2E_STREAM_BOUND_MS,
+): Promise<UnifiedEvent[]> {
+  return collectEvents(stream, timeoutMs);
+}
 
 export const SIMPLE_PROMPT = 'What is 2+2? Answer with just the number.';
 export const SIMPLE_SYSTEM_PROMPT = 'Be concise. Answer in one word or number when possible.';

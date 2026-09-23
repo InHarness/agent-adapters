@@ -17,7 +17,7 @@ function caps(toolCallMs: number | undefined, subagentMs: number | undefined) {
   return { c: createRunCaps({ toolCallMs, subagentMs, onExpire }), onExpire };
 }
 
-const toolUse = (id: string, toolName = 'Bash'): UnifiedEvent => ({ type: 'tool_use', toolName, toolUseId: id, input: {}, isSubagent: false });
+const toolUse = (id: string, toolName = 'Bash', isSubagent = false): UnifiedEvent => ({ type: 'tool_use', toolName, toolUseId: id, input: {}, isSubagent });
 const toolResult = (id: string): UnifiedEvent => ({ type: 'tool_result', toolUseId: id, summary: 'ok', isSubagent: false });
 const text: UnifiedEvent = { type: 'text_delta', text: 'hi', isSubagent: false };
 const started = (taskId: string, toolUseId: string, resumed?: true): UnifiedEvent => ({
@@ -96,6 +96,29 @@ describe('createRunCaps — toolCallTimeoutMs', () => {
     expect(onExpire).not.toHaveBeenCalled();
   });
 
+  it('a subagent_started naming a call inside a subagent leaves that call capped', () => {
+    const { c, onExpire } = caps(100, undefined);
+    c.observe(toolUse('inner', 'read_file', true));
+    c.observe(started('thread-1', 'inner'));
+    vi.advanceTimersByTime(100);
+    expect(onExpire).toHaveBeenCalledWith({ kind: 'tool', toolName: 'read_file', toolUseId: 'inner' });
+  });
+
+  it('delegationOpened exempts every parent-level call in flight, and no inner one', () => {
+    const { c, onExpire } = caps(100, undefined);
+    c.observe(toolUse('p1', 'codebase_investigator'));
+    c.observe(toolUse('i1', 'read_file', true));
+    c.delegationOpened();
+    c.observe(toolResult('i1'));
+    vi.advanceTimersByTime(1000);
+    expect(onExpire).not.toHaveBeenCalled();
+    // An exempted call never arms again, even after a user-input answer.
+    c.observe(inputRequest('r1'));
+    c.inputAnswered('r1');
+    vi.advanceTimersByTime(1000);
+    expect(onExpire).not.toHaveBeenCalled();
+  });
+
   it('is suspended under an unanswered user_input_request and re-armed once answered', () => {
     const { c, onExpire } = caps(100, undefined);
     c.observe(toolUse('t1', 'mcp__srv__ask'));
@@ -123,12 +146,12 @@ describe('createRunCaps — toolCallTimeoutMs', () => {
     expect(onExpire).toHaveBeenCalledOnce();
   });
 
-  it('drops calls still open at a result', () => {
+  it("a turn's result does not disarm a call still in flight (a background subagent's inner call)", () => {
     const { c, onExpire } = caps(100, undefined);
-    c.observe(toolUse('t1'));
+    c.observe(toolUse('inner', 'Bash', true));
     c.observe({ type: 'result', output: '', rawMessages: [], usage: { inputTokens: 0, outputTokens: 0 }, contextSize: 0 });
-    vi.advanceTimersByTime(1000);
-    expect(onExpire).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    expect(onExpire).toHaveBeenCalledWith({ kind: 'tool', toolName: 'Bash', toolUseId: 'inner' });
   });
 
   it('beginToolCall arms a call the stream does not show in flight (codex)', () => {

@@ -5,7 +5,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createAdapter } from '../../factory.js';
 import { probeToolGating } from '../../tool-groups.js';
-import { collectEvents } from '../../utils.js';
 import { AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
 import {
@@ -39,6 +38,7 @@ import {
   GATING_WEB_PROMPT,
   assertNoToolFromGroup,
   assertToolPolicyRefusal,
+  collectE2E,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady, assertSubagentLifecycle } from '../contract.js';
@@ -48,7 +48,7 @@ const HAS_API_KEY = requireEnv('GOOGLE_API_KEY') || requireEnv('GEMINI_API_KEY')
 describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
   it('emits adapter_ready with GeminiConfig params before first message', async () => {
     const adapter = createAdapter('gemini');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -75,7 +75,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
 
   it('simple text response (model alias)', async () => {
     const adapter = createAdapter('gemini');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -99,7 +99,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
 
   it('simple text response (full model ID)', async () => {
     const adapter = createAdapter('gemini');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -113,7 +113,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
 
   it('thinking events', async () => {
     const adapter = createAdapter('gemini');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: THINKING_PROMPT,
         systemPrompt: THINKING_SYSTEM_PROMPT,
@@ -233,7 +233,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
         const adapter = createAdapter('gemini');
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
@@ -254,7 +254,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
         const adapter = createAdapter('gemini');
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt: PLAN_READ_PROMPT,
             systemPrompt: PLAN_READ_SYSTEM_PROMPT,
@@ -280,7 +280,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     it('a denied `shell` is unusable for the whole run', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('gemini').execute({
             prompt: GATING_SHELL_PROMPT,
             systemPrompt: GATING_SHELL_SYSTEM_PROMPT,
@@ -302,7 +302,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     it('the exclusion holds under an auto-approving approval mode', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('gemini').execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
@@ -323,7 +323,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     it('a denied `web` is unusable', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('gemini').execute({
             prompt: GATING_WEB_PROMPT,
             systemPrompt: 'Answer using your tools where possible.',
@@ -340,7 +340,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
     }, 120_000);
 
     it('an unknown group refuses the run before dispatch', async () => {
-      const events = await collectEvents(
+      const events = await collectE2E(
         createAdapter('gemini').execute({
           prompt: 'hello',
           systemPrompt: 'You are helpful.',
@@ -405,7 +405,7 @@ describe.skipIf(!HAS_API_KEY)('gemini e2e', () => {
   it('subagent events carry subagentTaskId on deltas', async () => {
     const { config } = createE2eMcpServer();
     const adapter = createAdapter('gemini');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SUBAGENT_PROMPT,
         systemPrompt: SUBAGENT_SYSTEM_PROMPT,

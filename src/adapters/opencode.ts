@@ -546,6 +546,8 @@ export class OpencodeAdapter implements RuntimeAdapter {
       toolCallMs: params.toolCallTimeoutMs,
       subagentMs: params.subagentTimeoutMs,
       onExpire: (expiry) => {
+        // A run already stopping keeps the reason it is stopping for.
+        if (signal.aborted) return;
         idle.capExpired = expiry;
         this.abortController?.abort();
       },
@@ -566,6 +568,8 @@ export class OpencodeAdapter implements RuntimeAdapter {
     // (OpenCode doesn't ship nested tasks today — if it ever does, this
     // must become a stack).
     let activeSubagentTaskId: string | undefined;
+    /** Tool parts already reported as running (callIds are unique per run). */
+    const startedCallIds = new Set<string>();
     /**
      * Close the subagent this run still has open (M06). AT MOST ONE event, by
      * construction, not by omission: attribution here is ordering-based under a
@@ -579,6 +583,9 @@ export class OpencodeAdapter implements RuntimeAdapter {
      * true on the abort path.
      */
     const flushOpenSubagent = function* (): Generator<UnifiedEvent> {
+      // Every caller ends the run: no per-unit cap may fire while the consumer holds
+      // a synthesized close and replace the reason the run is actually ending for.
+      idle.caps.dispose();
       if (activeSubagentTaskId === undefined) return;
       const taskId = activeSubagentTaskId;
       activeSubagentTaskId = undefined;
@@ -802,7 +809,11 @@ export class OpencodeAdapter implements RuntimeAdapter {
               const callId = (part.callID as string) ?? (part.id as string);
               const isSubagent = toolName === 'task';
 
-              if (status === 'running') {
+              // A running part is re-sent on every title/metadata update. Only the
+              // FIRST one opens the call: a repeat would duplicate the start pair and
+              // re-arm the subagent cap as if it were a heartbeat.
+              if (status === 'running' && !startedCallIds.has(callId)) {
+                startedCallIds.add(callId);
                 if (isSubagent) activeSubagentTaskId = callId;
                 yield {
                   type: 'tool_use',

@@ -242,9 +242,12 @@ describe('claude-code — the idle clock never turns a delivered result into a f
     expect(events.some((e) => e.type === 'result')).toBe(true);
   });
 
-  it('a streaming-input channel waiting for the next push does not advance the idle clock', async () => {
-    // 0.9.13: an open streamingInput channel is outstanding work — a slow producer on
-    // the consumer's side, not an engine gone quiet. Only timeoutMs runs between pushes.
+  it('a producer composing its next push while it holds the result does not trip the idle clock', async () => {
+    // What this proves is the reachable half of 0.9.13's "an open streamingInput
+    // channel waiting for a push is outstanding work": on claude-code the channel
+    // closes at any `result` with nothing queued, so "open, engine quiet, consumer not
+    // holding an event" never occurs — the gap between pushes is spent holding the
+    // `result`, and the clock is stopped for that (consumer key). Only timeoutMs runs.
     script = async function* ({ prompt }) {
       const input = await openInput(prompt);
       yield resultMessage({ result: 'first' });

@@ -42,7 +42,7 @@ import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js
 import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
 import { createIdleClock, observeAndYield, type IdleClock } from '../idle-clock.js';
-import { createRunCaps, capExpiryError, type RunCaps, type CapExpiry } from '../run-caps.js';
+import { createRunCaps, capExpiryError, NOOP_CAPS, type RunCaps, type CapExpiry } from '../run-caps.js';
 import { validateSubagents, mapSubagentStatus } from '../subagents.js';
 import { probePathScope, getClaudeSandboxConfig } from '../path-scope.js';
 import {
@@ -1181,7 +1181,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       claimedMcpInstances: [],
       idleClock: createIdleClock({ idleMs: undefined, onExpire: () => {} }),
       idleExpired: false,
-      caps: createRunCaps({ toolCallMs: undefined, subagentMs: undefined, onExpire: () => {} }),
+      caps: NOOP_CAPS,
       capExpired: null,
     };
     this.runs.add(run);
@@ -1892,6 +1892,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
      * re-entered is not in flight, and nothing is synthesized for it.
      */
     const flushOpenSubagents = function* (): Generator<UnifiedEvent> {
+      // The run is ending: no per-unit cap may fire while the consumer holds one of
+      // the events below and replace the reason the run is actually ending for.
+      run.caps.dispose();
       for (const taskId of [...tasks.inFlight]) {
         if (tasks.kind(taskId)?.isBackground) continue;
         tasks.settle(taskId);
@@ -1899,9 +1902,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       }
     };
     const endRunTerminally = function* (): Generator<UnifiedEvent> {
+      // Latched BEFORE the flush yields: a clock that fires while the consumer holds a
+      // synthesized `subagent_completed` must not rewrite the terminal reason.
+      const error = terminalRuntimeError();
       settleAllPending();
       yield* flushOpenSubagents();
-      yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
+      yield { type: 'error', error, phase: 'runtime' };
     };
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
@@ -1927,6 +1933,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       toolCallMs: params.toolCallTimeoutMs,
       subagentMs: params.subagentTimeoutMs,
       onExpire: (expiry) => {
+        // A run already stopping (abort, timeoutMs, idle, hold cap) keeps the reason
+        // it is stopping for.
+        if (run.abortController.signal.aborted) return;
         run.capExpired = expiry;
         this.interruptRun(run);
         run.abortController.abort();
@@ -2209,7 +2218,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               abortPromise.then(() => ({ kind: 'abort' as const })),
             ]).finally(() => {
               run.idleClock.end(inputKey);
-              // The call under the request is armed again on its remainder.
+              // Calls suspended under the request are armed again (full value) once
+              // nothing is left unanswered.
               run.caps.inputAnswered(pending.req.requestId);
             });
             if (outcome.kind === 'abort') {

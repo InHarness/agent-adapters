@@ -257,3 +257,33 @@ describe('claude-code — subagentTimeoutMs', () => {
     expect(errors(events).at(-1)).toBeInstanceOf(AdapterSubagentTimeoutError);
   });
 });
+
+describe('claude-code — a cap never rewrites the reason a run is ending for', () => {
+  it('abort() with two open subagents and a slow consumer ends with AdapterAbortError', async () => {
+    script = async function* ({ prompt, options }) {
+      await openInput(prompt);
+      for (const n of [1, 2]) {
+        yield toolUse(`toolu_a${n}`, 'Agent', { description: 'd', prompt: 'p' });
+        yield sdk({ type: 'system', subtype: 'task_started', task_id: `s-${n}`, task_type: 'agent', description: 'd', tool_use_id: `toolu_a${n}` });
+      }
+      await sleep(60_000, options);
+    };
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const { AdapterAbortError } = await import('../types.js');
+    const adapter = new ClaudeCodeAdapter();
+    const events: UnifiedEvent[] = [];
+    let opened = 0;
+    for await (const e of adapter.execute(createTestParams({ subagentTimeoutMs: CAP_MS }))) {
+      events.push(e);
+      if (e.type === 'subagent_started' && ++opened === 2) adapter.abort();
+      // Hold each synthesized close past the subagent cap: the other subagent's cap
+      // must not fire while the run is already ending for abort().
+      if (e.type === 'subagent_completed') await sleep(WAIT_MS);
+    }
+
+    expect(events.filter((e) => e.type === 'subagent_completed')).toHaveLength(2);
+    const errs = errors(events);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toBeInstanceOf(AdapterAbortError);
+  });
+});

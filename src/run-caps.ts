@@ -4,7 +4,9 @@
 // Each cap bounds ONE unit of work and is moved by a CLOSED VOCABULARY attached to
 // that unit, never by stream traffic at large:
 //
-//  - a tool call is armed at its `tool_use` and disarmed by ITS `tool_result`;
+//  - a tool call is armed at its `tool_use` and disarmed by ITS `tool_result` — not
+//    by a turn's `result`: a background subagent's inner call outlives the turn and
+//    stays bounded (the caller disposes the caps when the RUN ends);
 //  - a subagent is armed at its `subagent_started` and re-armed only by its own
 //    `subagent_started` (re-entry) and `subagent_progress`.
 //
@@ -29,16 +31,27 @@ export interface RunCaps {
   beginToolCall(toolUseId: string, toolName: string): void;
   /**
    * The consumer answered a `user_input_request`. Once nothing is left unanswered,
-   * every call suspended under a request is armed again on its remainder.
+   * every call suspended under a request is armed again with the FULL value — the
+   * request names no call, so there is no single remainder to resume.
    */
   inputAnswered(requestId: string): void;
+  /**
+   * A subagent opened whose delegating call the engine does not name — gemini's
+   * synthesized `subagent_started` carries the thread's first INNER call. Every
+   * parent-level call still in flight is exempted: the delegating one is among them,
+   * and the engine gives nothing to tell it apart (a conservative superset, the same
+   * shape as the user-input suspension).
+   */
+  delegationOpened(): void;
   dispose(): void;
 }
 
-const NOOP_CAPS: RunCaps = {
+/** Caps with neither value set: no timer, ever. */
+export const NOOP_CAPS: RunCaps = {
   observe() {},
   beginToolCall() {},
   inputAnswered() {},
+  delegationOpened() {},
   dispose() {},
 };
 
@@ -69,7 +82,10 @@ export function createRunCaps(deps: {
 
   // --- tool calls ---
   /** Calls in flight, by toolUseId. `timer` is unset while suspended. */
-  const calls = new Map<string, { toolName: string; timer?: ReturnType<typeof setTimeout> }>();
+  const calls = new Map<
+    string,
+    { toolName: string; isSubagent: boolean; timer?: ReturnType<typeof setTimeout> }
+  >();
   /** Calls that turned out to open a subagent — never armed again. */
   const exempt = new Set<string>();
   /** Unanswered `user_input_request`s. While non-empty, no tool timer runs. */
@@ -92,13 +108,13 @@ export function createRunCaps(deps: {
     );
   };
 
-  const startCall = (toolUseId: string, toolName: string) => {
+  const startCall = (toolUseId: string, toolName: string, isSubagent: boolean) => {
     if (toolCallMs === undefined || exempt.has(toolUseId) || calls.has(toolUseId)) return;
     if (SUBAGENT_SPAWN_TOOLS.has(toolName)) {
       exempt.add(toolUseId);
       return;
     }
-    calls.set(toolUseId, { toolName });
+    calls.set(toolUseId, { toolName, isSubagent });
     // A human is slow, not the call: nothing arms while a request is unanswered.
     if (pendingInputs.size === 0) armCall(toolUseId);
   };
@@ -146,17 +162,23 @@ export function createRunCaps(deps: {
       if (done) return;
       switch (event.type) {
         case 'tool_use':
-          startCall(event.toolUseId, event.toolName);
+          startCall(event.toolUseId, event.toolName, event.isSubagent);
           break;
         case 'tool_result':
           dropCall(event.toolUseId);
           break;
-        case 'subagent_started':
-          // The call that opened it belongs to the subagent cap from here on.
-          exempt.add(event.toolUseId);
-          dropCall(event.toolUseId);
+        case 'subagent_started': {
+          // The call that opened it belongs to the subagent cap from here on — but
+          // only a PARENT-level call can open one. A named call that is itself inside
+          // a subagent (gemini names the thread's first inner call) stays capped.
+          const named = calls.get(event.toolUseId);
+          if (!named?.isSubagent) {
+            exempt.add(event.toolUseId);
+            dropCall(event.toolUseId);
+          }
           armSubagent(event.taskId);
           break;
+        }
         case 'subagent_progress':
           // Only a subagent already open is re-armed: progress is its own
           // lifecycle, not a way to open one.
@@ -169,15 +191,17 @@ export function createRunCaps(deps: {
           pendingInputs.add(event.request.requestId);
           suspendCalls();
           break;
-        case 'result':
-          // A turn has ended, so no tool call of it is still in flight — the same
-          // rule the idle clock applies. Subagents legitimately outlive a turn.
-          for (const id of [...calls.keys()]) dropCall(id);
-          break;
       }
     },
     beginToolCall(toolUseId, toolName) {
-      if (!done) startCall(toolUseId, toolName);
+      if (!done) startCall(toolUseId, toolName, false);
+    },
+    delegationOpened() {
+      for (const [id, call] of [...calls]) {
+        if (call.isSubagent) continue;
+        exempt.add(id);
+        dropCall(id);
+      }
     },
     inputAnswered(requestId) {
       if (!pendingInputs.delete(requestId) || pendingInputs.size > 0 || done) return;
