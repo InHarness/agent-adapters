@@ -61,6 +61,28 @@ describe('opus-5 in the model catalog (M02)', () => {
   });
 });
 
+describe('opus-5.5 in the model catalog (M02)', () => {
+  it('resolves the claude-code alias and is adaptive-thinking-only', () => {
+    expect(resolveModel('claude-code', 'opus-5.5')).toBe('claude-opus-5-5');
+    expect(ADAPTIVE_THINKING_ONLY.has('claude-opus-5-5')).toBe(true);
+    expect(getModelContextWindow('claude-code', 'opus-5.5')).toBe(1_000_000);
+    expect(getModelContextWindow('claude-code', 'claude-opus-5-5')).toBe(1_000_000);
+  });
+
+  it('is reachable through opencode-openrouter, whose form stays OUT of the bare-id set', () => {
+    expect(resolveModel('opencode-openrouter', 'claude-opus-5.5')).toBe('anthropic/claude-opus-5.5');
+    expect(getModelContextWindow('opencode-openrouter', 'claude-opus-5.5')).toBe(1_000_000);
+    expect(ADAPTIVE_THINKING_ONLY.has('anthropic/claude-opus-5.5')).toBe(false);
+  });
+
+  it('flags the medium effort default in the option metadata', async () => {
+    const { CLAUDE_CODE_OPTIONS } = await import('./options.js');
+    const effort = CLAUDE_CODE_OPTIONS.find((o) => o.key === 'claude_effort');
+    expect(effort?.default).toBe('high');
+    expect(effort?.modelOverrides?.['opus-5.5']?.default).toBe('medium');
+  });
+});
+
 describe('ADAPTIVE_THINKING_ONLY membership', () => {
   // Keyed by *resolved* id, never by alias — an alias here would silently never
   // match, and the adapter would push a fixed thinking budget the model rejects.
@@ -74,6 +96,7 @@ describe('ADAPTIVE_THINKING_ONLY membership', () => {
         'claude-opus-4-7',
         'claude-opus-4-8',
         'claude-opus-5',
+        'claude-opus-5-5',
       ].sort(),
     );
   });

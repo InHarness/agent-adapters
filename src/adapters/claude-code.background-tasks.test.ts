@@ -683,15 +683,13 @@ describe('claude-code — the background-task hold is bounded', () => {
     ).toEqual([]);
   });
 
-  // THE SHAPE THE PRODUCTION DEFECT TOOK. A subagent working for minutes produces a
-  // steady stream of frames that carry `parent_tool_use_id` — so the release path
-  // (isMainModelActivity) cannot see them, and under an ABSOLUTE cap nothing stopped
-  // the 90s bound from firing in the middle of perfectly healthy work. Consumer
-  // telemetry showed the warning followed within seconds by dozens of MCP calls
-  // returning `(<tool> completed with no output)`.
-  it('a long subagent stretch is not truncated, because its output re-arms the cap', async () => {
+  // THE CLOSED VOCABULARY (M17/A01, 0.9.13). The hold cap is re-armed ONLY by the
+  // task_started / task_progress / task_notification frames the adapter routes into a
+  // tracked task's background_task_* family — "and by nothing else". A build emitting
+  // progress for minutes is visibly working and survives the cap.
+  it('a background task that keeps reporting progress is not truncated by the cap', async () => {
     const BEAT_MS = 20_000;
-    const BEATS = 8; // 160s of subagent work — well past MAX_BACKGROUND_HOLD_MS
+    const BEATS = 8; // 160s of work — well past MAX_BACKGROUND_HOLD_MS
 
     script = async function* ({ prompt }) {
       const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
@@ -700,29 +698,27 @@ describe('claude-code — the background-task hold is bounded', () => {
       yield {
         type: 'system',
         subtype: 'task_started',
-        task_id: 'sub-1',
-        task_type: 'subagent',
-        description: 'research',
+        task_id: 'bg-build',
+        task_type: 'local_bash',
+        description: 'npm run build',
       } as unknown as SDKMessage;
       yield resultMessage();
 
       const pull = input.next();
-      // The subagent keeps working long past the cap. Nothing here is main-model
-      // activity, and nothing settles, so under the old rules only the cap applied
-      // and it was already counting.
       for (let i = 0; i < BEATS; i += 1) {
         await new Promise<void>((resolve) => setTimeout(resolve, BEAT_MS));
         yield {
-          type: 'assistant',
-          parent_tool_use_id: 'toolu_sub_1',
-          message: { role: 'assistant', content: [{ type: 'text', text: `sub beat ${i}` }] },
+          type: 'system',
+          subtype: 'task_progress',
+          task_id: 'bg-build',
+          description: `step ${i}`,
         } as unknown as SDKMessage;
       }
 
       yield {
         type: 'system',
         subtype: 'task_notification',
-        task_id: 'sub-1',
+        task_id: 'bg-build',
         status: 'completed',
       } as unknown as SDKMessage;
       await pull;
@@ -738,7 +734,53 @@ describe('claude-code — the background-task hold is bounded', () => {
       events.filter((e) => e.type === 'error'),
       'work that is visibly moving must not be called stalled',
     ).toEqual([]);
-    expect(events.some((e) => e.type === 'subagent_completed')).toBe(true);
+    expect(events.some((e) => e.type === 'background_task_completed')).toBe(true);
+  });
+
+  // The other half of "and by nothing else": subagent token content (frames carrying
+  // `parent_tool_use_id`) does NOT re-arm the hold cap. A parked stretch whose only
+  // unsettled work is a subagent is therefore cut at the cap — an open subagent's own
+  // bound is `subagentTimeoutMs`. Spec-literal per M17/A01; the collision with the
+  // "re-entry re-arms both bounds" rule is filed back to the spec as a clarification.
+  it('subagent output does not re-arm the hold cap', async () => {
+    const BEAT_MS = 20_000;
+    const BEATS = 8;
+
+    script = async function* ({ prompt, options }) {
+      const input = (prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]() as AsyncIterator<unknown>;
+      await input.next();
+
+      yield {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'sub-1',
+        task_type: 'subagent',
+        description: 'research',
+      } as unknown as SDKMessage;
+      yield resultMessage();
+
+      const signal = (options.abortController as AbortController | undefined)?.signal;
+      for (let i = 0; i < BEATS && !signal?.aborted; i += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, BEAT_MS));
+        yield {
+          type: 'assistant',
+          parent_tool_use_id: 'toolu_sub_1',
+          message: { role: 'assistant', content: [{ type: 'text', text: `sub beat ${i}` }] },
+        } as unknown as SDKMessage;
+      }
+    };
+
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const events = await drainWithClock(
+      new ClaudeCodeAdapter().execute(createTestParams({ streamingInput: true })),
+      BEAT_MS * BEATS + MAX_BACKGROUND_HOLD_MS + BACKGROUND_WAKEUP_GRACE_MS + 5_000,
+    );
+
+    const terminal = events.at(-1)!;
+    expect(terminal.type).toBe('error');
+    expect((terminal as { error: Error }).error).toBeInstanceOf(AdapterBackgroundHoldExpiredError);
+    // The open subagent is closed by the synthesized completion before the error.
+    expect(events.filter((e) => e.type === 'subagent_completed')).toMatchObject([{ taskId: 'sub-1', status: 'aborted' }]);
   });
 
   // The cap now ABORTS the run, and an abort must not leave the SDK holding a promise

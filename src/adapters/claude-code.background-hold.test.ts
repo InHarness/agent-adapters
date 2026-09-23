@@ -15,7 +15,6 @@ import {
   projectBackgroundTasks,
   classifyTaskType,
   isMainModelActivity,
-  isBackgroundProgress,
   BACKGROUND_WAKEUP_GRACE_MS,
   MAX_BACKGROUND_HOLD_MS,
 } from './claude-code.background-hold.js';
@@ -187,34 +186,6 @@ describe('projectBackgroundTasks', () => {
   });
 });
 
-describe('isBackgroundProgress', () => {
-  it('counts subagent output and task lifecycle frames', () => {
-    expect(isBackgroundProgress(sdk({ type: 'assistant', parent_tool_use_id: 'toolu_1' }))).toBe(true);
-    expect(isBackgroundProgress(sdk({ type: 'stream_event', parent_tool_use_id: 'toolu_1' }))).toBe(true);
-    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'task_updated' }))).toBe(true);
-    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'task_notification' }))).toBe(true);
-  });
-
-  it('counts `task_progress` — some work reports through nothing else', () => {
-    // A `monitor`/`workflow` task, or a subagent sitting inside one long tool call,
-    // produces no token frames at all: `task_progress` is the ONLY evidence it is
-    // moving. Leaving it out let the cap end precisely the work it exists to wait for.
-    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'task_progress' }))).toBe(true);
-  });
-
-  it('does NOT count heartbeats — bounding a stalled run depends on it', () => {
-    // `system/status` and `system/background_tasks_changed` are what the engine emits
-    // while it babysits a backgrounded `sleep 3600`. If they extended the cap, the one
-    // case the cap exists for would never end.
-    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'status' }))).toBe(false);
-    expect(isBackgroundProgress(sdk({ type: 'system', subtype: 'background_tasks_changed' }))).toBe(false);
-    expect(isBackgroundProgress(sdk({ type: 'result', subtype: 'success' }))).toBe(false);
-    // Main-model output is a RELEASE, handled by isMainModelActivity — not progress
-    // on the held work.
-    expect(isBackgroundProgress(sdk({ type: 'assistant', parent_tool_use_id: null }))).toBe(false);
-  });
-});
-
 describe('createBackgroundHold', () => {
   let expiries: HoldExpiry[];
   let woken: number;
@@ -264,6 +235,8 @@ describe('createBackgroundHold', () => {
 
     registry.start('T', 'local_agent', 'resumed');
     hold.touch(sdk({ type: 'system', subtype: 'task_started', task_id: 'T' }));
+    // What the adapter does for a finished task re-entering (M17: re-arms both bounds).
+    hold.rearmCap();
     vi.advanceTimersByTime(BACKGROUND_WAKEUP_GRACE_MS * 2);
     expect(expiries, 'grace armed inside the re-entered cycle').toEqual([]);
 
@@ -301,25 +274,52 @@ describe('createBackgroundHold', () => {
     expect(expiries).toEqual(['cap']);
   });
 
-  it('subagent output extends the cap for as long as the work keeps moving', () => {
-    // THE REGRESSION THIS RELEASE EXISTS FOR. The cap used to be absolute, armed once
-    // at the held `result`. A long subagent-driven stretch is precisely the shape that
-    // reached it — and precisely the shape the release path cannot recognise either,
-    // because subagent frames carry `parent_tool_use_id`. Healthy runs were cut off at
-    // 90s for using a subagent.
+  it('a tracked background task reporting progress extends the cap for as long as it moves', () => {
+    // A build emitting background_task_progress for twenty minutes is visibly working
+    // and must not be cut; the adapter hands each routed frame over via rearmCap().
     const { registry, hold } = makeHold();
-    registry.start('t1', 'subagent', 'research'); // never settles: it is still working
+    registry.start('t1', 'shell', 'npm run build');
     hold.begin();
 
     for (let i = 0; i < 6; i++) {
       vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS - 1_000);
-      hold.touch(sdk({ type: 'stream_event', parent_tool_use_id: 'toolu_1' }));
+      hold.rearmCap();
     }
     expect(expiries, 'work that is visibly moving must not be called stalled').toEqual([]);
 
-    // ...and the moment it does stop moving, the bound still applies.
+    // ...and the moment it stops reporting, the bound still applies.
     vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS + 1);
     expect(expiries).toEqual(['cap']);
+  });
+
+  it('nothing outside the closed vocabulary re-arms the cap — subagent output, task_updated, heartbeats', () => {
+    // M17/A01: the cap is re-armed by the frames the adapter routes into a tracked
+    // task's background_task_* family "and by nothing else". touch() moves grace only.
+    const { registry, hold } = makeHold();
+    registry.start('t1', 'shell', 'sleep 3600');
+    hold.begin();
+
+    const frames = [
+      sdk({ type: 'stream_event', parent_tool_use_id: 'toolu_1' }),
+      sdk({ type: 'assistant', parent_tool_use_id: 'toolu_1' }),
+      sdk({ type: 'system', subtype: 'task_updated' }),
+      sdk({ type: 'system', subtype: 'task_progress' }),
+      sdk({ type: 'system', subtype: 'background_tasks_changed' }),
+    ];
+    for (const frame of frames) {
+      vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS / 6);
+      hold.touch(frame);
+    }
+    vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS / 6 + 1);
+    expect(expiries).toEqual(['cap']);
+  });
+
+  it('rearmCap() outside a hold arms nothing', () => {
+    const { registry, hold } = makeHold();
+    registry.start('t1', 'shell', 'x');
+    hold.rearmCap();
+    vi.advanceTimersByTime(MAX_BACKGROUND_HOLD_MS * 2);
+    expect(expiries).toEqual([]);
   });
 
   it('a null cap is disarmed rather than reset to the default', () => {
@@ -412,17 +412,5 @@ describe('createBackgroundHold', () => {
 
     vi.advanceTimersByTime(2_001);
     expect(expiries).toEqual(['grace']);
-  });
-});
-
-describe('the hold cap and the collectEvents default timeout', () => {
-  it('leaves room for the terminal error to reach the consumer', async () => {
-    // Both clocks race, and collectEvents' starts EARLIER (when the run starts, not
-    // when the hold arms at a held result). An equal cap means the helper rejects the
-    // run before the cap's AdapterBackgroundHoldExpiredError can be yielded — losing
-    // the only signal there is. This is a coupling, so it is asserted rather than
-    // commented.
-    const { COLLECT_EVENTS_DEFAULT_TIMEOUT_MS } = await import('../utils.js');
-    expect(MAX_BACKGROUND_HOLD_MS).toBeLessThan(COLLECT_EVENTS_DEFAULT_TIMEOUT_MS);
   });
 });

@@ -21,6 +21,7 @@ import type {
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
 import { createIdleClock, createIdleHandle, observeIdle, type IdleHandle } from '../idle-clock.js';
+import { createRunCaps, capExpiryError } from '../run-caps.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -539,12 +540,26 @@ export class OpencodeAdapter implements RuntimeAdapter {
         this.abortController?.abort();
       },
     });
+    // The per-unit caps (toolCallTimeoutMs, subagentTimeoutMs): expiry stops the run
+    // down the same path; flushOpenSubagent() closes the subagent before the error.
+    idle.caps = createRunCaps({
+      toolCallMs: params.toolCallTimeoutMs,
+      subagentMs: params.subagentTimeoutMs,
+      onExpire: (expiry) => {
+        // A run already stopping keeps the reason it is stopping for.
+        if (signal.aborted) return;
+        idle.capExpired = expiry;
+        this.abortController?.abort();
+      },
+    });
     const terminalError = () =>
       timedOut
         ? new AdapterTimeoutError('opencode', params.timeoutMs!)
         : idle.expired
           ? new AdapterIdleTimeoutError('opencode', params.idleTimeoutMs!)
-          : new AdapterAbortError('opencode');
+          : idle.capExpired
+            ? capExpiryError('opencode', idle.capExpired, params)
+            : new AdapterAbortError('opencode');
 
     // OpenCode's SSE does not attach a task/call ID to text/reasoning deltas.
     // We correlate by ordering: deltas observed between a task tool's
@@ -553,6 +568,8 @@ export class OpencodeAdapter implements RuntimeAdapter {
     // (OpenCode doesn't ship nested tasks today — if it ever does, this
     // must become a stack).
     let activeSubagentTaskId: string | undefined;
+    /** Tool parts already reported as running (callIds are unique per run). */
+    const startedCallIds = new Set<string>();
     /**
      * Close the subagent this run still has open (M06). AT MOST ONE event, by
      * construction, not by omission: attribution here is ordering-based under a
@@ -566,6 +583,9 @@ export class OpencodeAdapter implements RuntimeAdapter {
      * true on the abort path.
      */
     const flushOpenSubagent = function* (): Generator<UnifiedEvent> {
+      // Every caller ends the run: no per-unit cap may fire while the consumer holds
+      // a synthesized close and replace the reason the run is actually ending for.
+      idle.caps.dispose();
       if (activeSubagentTaskId === undefined) return;
       const taskId = activeSubagentTaskId;
       activeSubagentTaskId = undefined;
@@ -649,6 +669,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
           if (!params.onUserInput) {
             resolve({ action: 'decline' });
             idle.clock.end(`uin:${req.requestId}`);
+            idle.caps.inputAnswered(req.requestId);
             continue;
           }
           // An unanswered request is outstanding work: the idle clock stops until it
@@ -683,6 +704,7 @@ export class OpencodeAdapter implements RuntimeAdapter {
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           } finally {
             idle.clock.end(inputKey);
+            idle.caps.inputAnswered(req.requestId);
           }
         }
 
@@ -787,7 +809,11 @@ export class OpencodeAdapter implements RuntimeAdapter {
               const callId = (part.callID as string) ?? (part.id as string);
               const isSubagent = toolName === 'task';
 
-              if (status === 'running') {
+              // A running part is re-sent on every title/metadata update. Only the
+              // FIRST one opens the call: a repeat would duplicate the start pair and
+              // re-arm the subagent cap as if it were a heartbeat.
+              if (status === 'running' && !startedCallIds.has(callId)) {
+                startedCallIds.add(callId);
                 if (isSubagent) activeSubagentTaskId = callId;
                 yield {
                   type: 'tool_use',

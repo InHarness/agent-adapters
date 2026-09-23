@@ -242,6 +242,38 @@ describe('claude-code — the idle clock never turns a delivered result into a f
     expect(events.some((e) => e.type === 'result')).toBe(true);
   });
 
+  it('a producer composing its next push while it holds the result does not trip the idle clock', async () => {
+    // What this proves is the reachable half of 0.9.13's "an open streamingInput
+    // channel waiting for a push is outstanding work": on claude-code the channel
+    // closes at any `result` with nothing queued, so "open, engine quiet, consumer not
+    // holding an event" never occurs — the gap between pushes is spent holding the
+    // `result`, and the clock is stopped for that (consumer key). Only timeoutMs runs.
+    script = async function* ({ prompt }) {
+      const input = await openInput(prompt);
+      yield resultMessage({ result: 'first' });
+      const next = await input.next();
+      if (next.done) return;
+      yield resultMessage({ result: 'second' });
+      await input.next();
+    };
+    const { ClaudeCodeAdapter } = await import('./claude-code.js');
+    const adapter = new ClaudeCodeAdapter();
+    const events: UnifiedEvent[] = [];
+    let pushed = false;
+    for await (const e of adapter.execute(createTestParams({ idleTimeoutMs: IDLE_MS, streamingInput: true }))) {
+      events.push(e);
+      if (e.type === 'result' && !pushed) {
+        pushed = true;
+        // The producer takes its time composing the next message.
+        await sleep(WAIT_MS);
+        expect(adapter.pushMessage('and another thing')).toBe(true);
+      }
+    }
+
+    expect(errors(events)).toEqual([]);
+    expect(events.filter((e) => e.type === 'result')).toHaveLength(2);
+  });
+
   it('the M17 grace window after the result does not advance the idle clock', async () => {
     script = async function* ({ prompt }) {
       const input = await openInput(prompt);

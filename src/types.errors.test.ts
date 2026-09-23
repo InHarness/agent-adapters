@@ -14,7 +14,10 @@ import {
   AdapterTimeoutError,
   AdapterBackgroundHoldExpiredError,
   AdapterIdleTimeoutError,
+  AdapterToolCallTimeoutError,
+  AdapterSubagentTimeoutError,
 } from './types.js';
+import * as root from './index.js';
 
 describe('AdapterInitError', () => {
   it('surfaces message + OS fields through JSON.stringify (bridge-stripped cause)', () => {
@@ -152,5 +155,65 @@ describe('AdapterIdleTimeoutError', () => {
 
     expect(wire).toMatchObject({ name: 'AdapterIdleTimeoutError', adapter: 'gemini', idleTimeoutMs: 5_000 });
     expect(wire.message).toContain('5000ms');
+  });
+});
+
+describe('AdapterToolCallTimeoutError', () => {
+  it('is typed apart from the backstop and the idle clock, by class and by name', () => {
+    // One call stood still while the run around it was healthy — a tool or a server
+    // to look at, not a budget to raise and not an engine gone quiet.
+    const e = new AdapterToolCallTimeoutError('claude-code', 30_000, 'mcp__db__query', 'toolu_1');
+
+    expect(e).toBeInstanceOf(AdapterError);
+    expect(e).not.toBeInstanceOf(AdapterTimeoutError);
+    expect(e).not.toBeInstanceOf(AdapterIdleTimeoutError);
+    expect(e.name).toBe('AdapterToolCallTimeoutError');
+  });
+
+  it('names the call it cut short through JSON.stringify', () => {
+    const wire = JSON.parse(JSON.stringify(new AdapterToolCallTimeoutError('opencode', 5_000, 'bash', 'call_7')));
+
+    expect(wire).toMatchObject({
+      name: 'AdapterToolCallTimeoutError',
+      adapter: 'opencode',
+      toolCallTimeoutMs: 5_000,
+      toolName: 'bash',
+      toolUseId: 'call_7',
+    });
+    expect(wire.message).toContain('5000ms');
+    expect(wire.message).toContain('bash');
+  });
+});
+
+describe('AdapterSubagentTimeoutError', () => {
+  it('is typed apart from the other timeouts and carries the subagent through JSON', () => {
+    const e = new AdapterSubagentTimeoutError('claude-code', 60_000, 'task-9');
+
+    expect(e).toBeInstanceOf(AdapterError);
+    expect(e).not.toBeInstanceOf(AdapterTimeoutError);
+    expect(e).not.toBeInstanceOf(AdapterToolCallTimeoutError);
+    expect(JSON.parse(JSON.stringify(e))).toMatchObject({
+      name: 'AdapterSubagentTimeoutError',
+      subagentTimeoutMs: 60_000,
+      taskId: 'task-9',
+    });
+  });
+});
+
+describe('package-root error exports', () => {
+  it('exports every error class from the entry point', () => {
+    for (const name of [
+      'AdapterError',
+      'AdapterInitError',
+      'AdapterTimeoutError',
+      'AdapterIdleTimeoutError',
+      'AdapterToolCallTimeoutError',
+      'AdapterSubagentTimeoutError',
+      'AdapterAbortError',
+      'AdapterBackgroundHoldExpiredError',
+      'AdapterToolPolicyError',
+    ]) {
+      expect(typeof (root as Record<string, unknown>)[name], name).toBe('function');
+    }
   });
 });

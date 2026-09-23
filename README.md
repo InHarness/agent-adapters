@@ -183,6 +183,7 @@ Models marked **adaptive-only** fix their own thinking budget: the adapter leave
 | | `sonnet-5` | `claude-sonnet-5` | adaptive-only |
 | | `sonnet-4.6` | `claude-sonnet-4-6` | |
 | | `sonnet-4.5` | `claude-sonnet-4-5-20250929` | |
+| | `opus-5.5` | `claude-opus-5-5` | adaptive-only; default effort `medium` |
 | | `opus-5` | `claude-opus-5` | adaptive-only |
 | | `opus-4.8` | `claude-opus-4-8` | adaptive-only |
 | | `opus-4.7` | `claude-opus-4-7` | adaptive-only |
@@ -213,6 +214,7 @@ Models marked **adaptive-only** fix their own thinking budget: the adapter leave
 | | `nemotron-3-super-free` | `nvidia/nemotron-3-super:free` | |
 | | `claude-fable-5.1` | `anthropic/claude-fable-5.1` | |
 | | `claude-fable-5` | `anthropic/claude-fable-5` | |
+| | `claude-opus-5.5` | `anthropic/claude-opus-5.5` | |
 | | `claude-opus-5` | `anthropic/claude-opus-5` | |
 | | `claude-opus-4.8` | `anthropic/claude-opus-4.8` | |
 | | `claude-opus-4.7` | `anthropic/claude-opus-4.7` | |
@@ -547,6 +549,8 @@ import {
   AdapterInitError,    // SDK initialization failed (missing API key, SDK not installed)
   AdapterTimeoutError,     // timeoutMs exceeded — the absolute backstop
   AdapterIdleTimeoutError, // idleTimeoutMs exceeded — the run stalled with nothing outstanding
+  AdapterToolCallTimeoutError, // toolCallTimeoutMs exceeded — one tool call stood still
+  AdapterSubagentTimeoutError, // subagentTimeoutMs exceeded — one subagent stopped reporting
   AdapterAbortError,       // adapter.abort() was called manually
 } from '@inharness-ai/agent-adapters';
 
@@ -556,6 +560,8 @@ for await (const event of adapter.execute(params)) {
       console.log('Timed out — retrying with longer timeout');
     } else if (event.error instanceof AdapterIdleTimeoutError) {
       console.log('Engine stalled — go find what hung');
+    } else if (event.error instanceof AdapterToolCallTimeoutError) {
+      console.log(`Tool ${event.error.toolName} (${event.error.toolUseId}) hung — check the tool/server`);
     } else if (event.error instanceof AdapterAbortError) {
       console.log('Aborted by user');
     } else {
@@ -565,10 +571,15 @@ for await (const event of adapter.execute(params)) {
 }
 ```
 
-Two adapter-side clocks bound a run, both optional:
+Four adapter-side clocks bound a run, all optional — omitting any of them is a guarantee that no timer is armed, not a request for a default:
 
 - **`timeoutMs` — the absolute backstop.** It bounds the whole `execute()` call, measured from run start, and is armed exactly once: no event, tool result or `pushMessage()` re-arms it. On expiry the adapter emits `AdapterTimeoutError` and stops. **Omitting it means no wall-clock bound at all** — there is no fallback default.
-- **`idleTimeoutMs` — the idle clock.** It advances only while *nothing is outstanding* and stops (without resetting — the budget is cumulative) while work is in flight. Outstanding work is a `tool_use` still waiting for its `tool_result`, an open subagent, an unsettled background task, or an unanswered `user_input_request`. So a slow tool, a long subagent or a human taking their time never trips it; an engine that went quiet while still owing you something does, with `AdapterIdleTimeoutError`. It is not a "time since last event" timer. Under `streamingInput: true` it also advances in the gaps between pushes. It never counts your own time: the clock is stopped while your loop body is still handling an event, and it stops for good once the run has delivered its final `result`, so a slow consumer or a slow engine shutdown can't turn a finished run into an idle expiry.
+- **`idleTimeoutMs` — the idle clock.** It advances only while *nothing is outstanding* and stops (without resetting — the budget is cumulative) while work is in flight. Outstanding work is a `tool_use` still waiting for its `tool_result`, an open subagent, an unsettled background task, an unanswered `user_input_request`, or a `streamingInput` channel open and waiting for your next push. So a slow tool, a long subagent or a human taking their time never trips it; an engine that went quiet while still owing you something does, with `AdapterIdleTimeoutError`. It is not a "time since last event" timer. Under `streamingInput: true` only `timeoutMs` runs between pushes — a push buys no fresh budget. It never counts your own time: the clock is stopped while your loop body is still handling an event, and it stops for good once the run has delivered its final `result`, so a slow consumer or a slow engine shutdown can't turn a finished run into an idle expiry.
+
+- **`toolCallTimeoutMs` — one tool call.** Armed at each `tool_use`, disarmed by its `tool_result`, per call (sequential calls each get the full value). Expiry ends the **whole run** with `AdapterToolCallTimeoutError` naming the call — no adapter can hand the model a result for an abandoned call. A call that opens a subagent is exempt (the subagent cap bounds it), and so is a call with an unanswered `user_input_request` under it: a human is slow, not the call. A request names no call, so every call in flight is suspended while any request is unanswered, and each gets the full value again once none is left. A turn's `result` does not disarm a call — only its own `tool_result` does.
+- **`subagentTimeoutMs` — one open subagent.** Armed when a subagent opens and re-armed only by that subagent's own `subagent_started` (re-entry included) and `subagent_progress`. Expiry closes it with the synthesized `subagent_completed { status: 'aborted' }` and ends the run with `AdapterSubagentTimeoutError`. On opencode and gemini the subagent lifecycle is synthesized, so the cap is worth what that synthesis is worth.
+
+An unanswered `user_input_request` is the one kind of outstanding work with no cap of its own: only `timeoutMs` and `abort()` end a run parked on a human.
 
 When `adapter.abort()` is called manually, it emits an `AdapterAbortError` event and stops.
 
@@ -639,8 +650,11 @@ for await (const event of observeStream(stream, [logger])) {
 ```ts
 import { collectEvents, filterByType, takeUntilResult, splitBySubagent, extractText } from '@inharness-ai/agent-adapters';
 
-// Collect all events into array
+// Collect all events into array — drains until the stream ends; there is NO default bound
 const events = await collectEvents(stream);
+// Pass one if you want it (rejects on expiry). On claude-code, size
+// claude_backgroundHoldCapMs under it, or the typed hold-cap error never surfaces.
+const bounded = await collectEvents(stream, 120_000);
 
 // Filter to specific event type
 for await (const delta of filterByType(stream, 'text_delta')) {
@@ -984,6 +998,8 @@ interface RuntimeExecuteParams {
   maxTurns?: number;                           // max conversation turns (claude-code: cumulative across resume)
   timeoutMs?: number;                          // absolute backstop from run start; absent = no bound
   idleTimeoutMs?: number;                      // idle clock: advances only while nothing is outstanding
+  toolCallTimeoutMs?: number;                  // cap on ONE tool call; absent = no timer
+  subagentTimeoutMs?: number;                  // cap on ONE open subagent; absent = no timer
   architectureConfig?: Record<string, unknown>; // architecture-specific config
 }
 ```

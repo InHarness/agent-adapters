@@ -5,7 +5,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createAdapter } from '../../factory.js';
 import { probeToolGating } from '../../tool-groups.js';
-import { collectEvents } from '../../utils.js';
 import { isOpencodeAvailable } from '../../adapters/opencode.js';
 import { AdapterAbortError } from '../../types.js';
 import type { UnifiedEvent } from '../../types.js';
@@ -36,6 +35,7 @@ import {
   GATING_SHELL_SYSTEM_PROMPT,
   assertNoToolFromGroup,
   assertToolPolicyRefusal,
+  collectE2E,
 } from './shared.js';
 import { assertNormalization } from '../normalization.js';
 import { assertAdapterReady, assertSubagentLifecycle } from '../contract.js';
@@ -46,7 +46,7 @@ const HAS_CLI = isOpencodeAvailable();
 describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
   it('emits adapter_ready with opencode config before first message', async () => {
     const adapter = createAdapter('opencode-openrouter');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -71,7 +71,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
 
   it('simple text response (model alias)', async () => {
     const adapter = createAdapter('opencode-openrouter');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -102,7 +102,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
 
   it('simple text response (full model ID)', async () => {
     const adapter = createAdapter('opencode-openrouter');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -184,7 +184,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
     it('planMode=true no longer emits the "not natively supported" warning', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('opencode-openrouter').execute({
             prompt: SIMPLE_PROMPT,
             systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -208,7 +208,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
     it('planMode=true blocks file creation', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        await collectEvents(
+        await collectE2E(
           createAdapter('opencode-openrouter').execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
@@ -234,7 +234,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
     it('a denied `shell` is unusable for the whole run', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('opencode-openrouter').execute({
             prompt: GATING_SHELL_PROMPT,
             systemPrompt: GATING_SHELL_SYSTEM_PROMPT,
@@ -253,7 +253,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
     it('a denied `file-write` blocks mutation', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('opencode-openrouter').execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
@@ -275,7 +275,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
     it('a denied `file-read` cannot be laundered through a subagent', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('opencode-openrouter').execute({
             prompt:
               'Delegate to a subagent if you can: have it read README.md in the current directory ' +
@@ -301,7 +301,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
     }, 180_000);
 
     it('an unknown group refuses the run before dispatch', async () => {
-      const events = await collectEvents(
+      const events = await collectE2E(
         createAdapter('opencode-openrouter').execute({
           prompt: SIMPLE_PROMPT,
           systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -365,7 +365,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
 
   it('subagent events carry subagentTaskId on deltas (ordering-based)', async () => {
     const adapter = createAdapter('opencode-openrouter');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SUBAGENT_PROMPT,
         systemPrompt: SUBAGENT_SYSTEM_PROMPT,
@@ -417,7 +417,7 @@ describe.skipIf(!HAS_API_KEY || !HAS_CLI)('opencode-openrouter e2e', () => {
   describe('todo list (todo.updated → todo_list_updated + synthetic message)', () => {
     it('emits session-state event, syntesizes rawMessages entry, and snapshots on result', async () => {
       const adapter = createAdapter('opencode-openrouter');
-      const events = await collectEvents(
+      const events = await collectE2E(
         adapter.execute({
           prompt: TODO_PROMPT,
           systemPrompt: TODO_SYSTEM_PROMPT,

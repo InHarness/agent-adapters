@@ -849,15 +849,60 @@ export interface RuntimeExecuteParams<A extends Architecture = Architecture> {
   /**
    * The idle clock: advances ONLY while nothing is outstanding, and stops
    * (without resetting — the budget is cumulative) while work is in flight.
-   * Outstanding work is: a `tool_use` with no `tool_result` yet, an open
-   * subagent, an unsettled background task, an unanswered
-   * `user_input_request`, and a nested turn the consumer started from inside
-   * the run. It is not a "last sign of life" timer — ordinary events never
-   * move it. Under `streamingInput: true` it also advances in the gaps between
-   * pushes. Expiry ends the run with {@link AdapterIdleTimeoutError} (runtime
-   * phase). Omitted → no idle clock at all.
+   * It is not a "last sign of life" timer — ordinary events never move it.
+   * Expiry ends the run with {@link AdapterIdleTimeoutError} (runtime phase).
+   * Omitted → no idle clock at all.
+   *
+   * Outstanding work, each paired with the bound that does cover it:
+   *
+   * | outstanding work                            | bounded by                              |
+   * | ------------------------------------------- | --------------------------------------- |
+   * | a `tool_use` with no `tool_result` yet      | {@link toolCallTimeoutMs}               |
+   * | an open subagent                            | {@link subagentTimeoutMs}               |
+   * | an unsettled background task                | the hold cap (`claude_backgroundHoldCapMs`) |
+   * | a `streamingInput` channel open, waiting for the next push | the backstop {@link timeoutMs} |
+   * | a nested turn started from inside the run   | the clocks of its own `execute()`       |
+   * | an unanswered `user_input_request`          | nothing — `timeoutMs` / `abort()` only  |
+   *
+   * Under `streamingInput: true` only the backstop runs between pushes: a push
+   * buys no fresh budget, and the idle clock does not advance while the channel
+   * sits open waiting for the consumer's next message.
    */
   idleTimeoutMs?: number;
+  /**
+   * Cap on ONE tool call, in milliseconds. Armed when a `tool_use` is emitted and
+   * disarmed by its matching `tool_result`; armed per call, not per run, so two
+   * sequential calls each get the full value. Expiry ends the RUN — not just the
+   * call — with {@link AdapterToolCallTimeoutError} (runtime phase), naming the
+   * call it cut short: no adapter can hand the model a result for an abandoned
+   * call, so a coarse whole-run stop is the contract.
+   *
+   * Exempt: a `tool_use` that opens a subagent (bounded by {@link subagentTimeoutMs}
+   * alone), and a call with an unanswered `user_input_request` under it — a human
+   * is slow, not the call. A request names no call, so every call in flight is
+   * suspended while any request is unanswered and armed again with the FULL value
+   * once none is left. A turn's `result` does not disarm a call; only its own
+   * `tool_result` does.
+   *
+   * Omitting it is a guarantee, not a default: no adapter arms a per-call timer.
+   */
+  toolCallTimeoutMs?: number;
+  /**
+   * Cap on ONE open subagent, in milliseconds. A field of the run, not of the
+   * subagent definition, so a subagent spawned with no definition is bounded too.
+   * Armed when the subagent opens and returned to its full value ONLY by that
+   * subagent's own lifecycle events — its `subagent_started` (a re-entry's
+   * `resumed: true` start included) and every `subagent_progress` carrying its
+   * `taskId`. Nothing else on the stream re-arms it.
+   *
+   * Expiry ends the run with {@link AdapterSubagentTimeoutError}; the open
+   * subagent is closed by the synthesized `subagent_completed { status: 'aborted' }`
+   * like any run-level termination. Where subagent lifecycle is synthesized rather
+   * than native (opencode, gemini), the cap is worth exactly what the synthesis is.
+   *
+   * Omitted → no subagent carries a cap.
+   */
+  subagentTimeoutMs?: number;
   architectureConfig?: Record<string, unknown>;
 
   /**
@@ -1134,6 +1179,60 @@ export class AdapterIdleTimeoutError extends AdapterError {
   }
 }
 
+/**
+ * `toolCallTimeoutMs` exceeded: ONE tool call stood still while the run around it
+ * was healthy — a tool or a server to look at, not a budget to raise. Carries the
+ * call it cut short (`toolName`, `toolUseId`); both survive `toJSON()`.
+ */
+export class AdapterToolCallTimeoutError extends AdapterError {
+  constructor(
+    adapter: string,
+    readonly toolCallTimeoutMs: number,
+    readonly toolName: string,
+    readonly toolUseId: string,
+  ) {
+    super(
+      `${adapter} adapter ended the run: tool call \`${toolName}\` (${toolUseId}) ` +
+        `did not return within ${toolCallTimeoutMs}ms (toolCallTimeoutMs)`,
+      adapter,
+    );
+    this.name = 'AdapterToolCallTimeoutError';
+  }
+
+  override toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      toolCallTimeoutMs: this.toolCallTimeoutMs,
+      toolName: this.toolName,
+      toolUseId: this.toolUseId,
+    };
+  }
+}
+
+/**
+ * `subagentTimeoutMs` exceeded: one open subagent reported no lifecycle event of
+ * its own (`subagent_started` / `subagent_progress`) for that long. Carries the
+ * subagent's `taskId`; survives `toJSON()`.
+ */
+export class AdapterSubagentTimeoutError extends AdapterError {
+  constructor(
+    adapter: string,
+    readonly subagentTimeoutMs: number,
+    readonly taskId: string,
+  ) {
+    super(
+      `${adapter} adapter ended the run: subagent ${taskId} reported no progress ` +
+        `for ${subagentTimeoutMs}ms (subagentTimeoutMs)`,
+      adapter,
+    );
+    this.name = 'AdapterSubagentTimeoutError';
+  }
+
+  override toJSON(): Record<string, unknown> {
+    return { ...super.toJSON(), subagentTimeoutMs: this.subagentTimeoutMs, taskId: this.taskId };
+  }
+}
+
 export class AdapterAbortError extends AdapterError {
   constructor(adapter: string) {
     super(`${adapter} adapter was aborted`, adapter);
@@ -1165,7 +1264,8 @@ export class AdapterBackgroundHoldExpiredError extends AdapterError {
     readonly capMs: number,
   ) {
     super(
-      `${adapter} adapter ended the run: background work made no progress for ${capMs}ms. ` +
+      `${adapter} adapter ended the run: no tracked background task reported for ${capMs}ms ` +
+        'while work was still unsettled. ' +
         'The session was terminated rather than left open with a closed control channel; ' +
         'any remaining background task is abandoned and its completion will not be reported. ' +
         'Raise or disarm the bound with the `claude_backgroundHoldCapMs` architecture option.',

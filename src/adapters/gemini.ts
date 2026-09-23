@@ -20,6 +20,7 @@ import type {
 } from '../types.js';
 import { AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterAbortError } from '../types.js';
 import { createIdleClock, createIdleHandle, observeIdle, type IdleHandle } from '../idle-clock.js';
+import { createRunCaps, capExpiryError } from '../run-caps.js';
 import { resolveModel } from '../models.js';
 import { redactSecrets } from '../redact.js';
 import { checkPeerSdkVersion } from '../sdk-version.js';
@@ -720,12 +721,28 @@ export class GeminiAdapter implements RuntimeAdapter {
         this.stopRun();
       },
     });
+    // The per-unit caps (toolCallTimeoutMs, subagentTimeoutMs): expiry stops the run
+    // down the same path; flushOpenSubagents() closes open threads before the error.
+    // Subagent lifecycle is synthesized from threadId here, so the subagent cap is
+    // worth exactly what that synthesis is worth.
+    idle.caps = createRunCaps({
+      toolCallMs: params.toolCallTimeoutMs,
+      subagentMs: params.subagentTimeoutMs,
+      onExpire: (expiry) => {
+        // A run already stopping keeps the reason it is stopping for.
+        if (runAbort.signal.aborted) return;
+        idle.capExpired = expiry;
+        this.stopRun();
+      },
+    });
     const terminalError = () =>
       timedOut
         ? new AdapterTimeoutError('gemini', params.timeoutMs!)
         : idle.expired
           ? new AdapterIdleTimeoutError('gemini', params.idleTimeoutMs!)
-          : new AdapterAbortError('gemini');
+          : idle.capExpired
+            ? capExpiryError('gemini', idle.capExpired, params)
+            : new AdapterAbortError('gemini');
 
     // Track subagent state via threadId
     const activeSubagents = new Set<string>();
@@ -747,6 +764,9 @@ export class GeminiAdapter implements RuntimeAdapter {
      * that the helper agent's own execution ended.
      */
     const flushOpenSubagents = function* (): Generator<UnifiedEvent> {
+      // Every caller ends the run: no per-unit cap may fire while the consumer holds
+      // a synthesized close and replace the reason the run is actually ending for.
+      idle.caps.dispose();
       for (const threadId of [...activeSubagents]) {
         activeSubagents.delete(threadId);
         yield { type: 'subagent_completed', taskId: threadId, status: 'aborted' };
@@ -847,6 +867,7 @@ export class GeminiAdapter implements RuntimeAdapter {
             yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)), phase: 'runtime' };
           } finally {
             idle.clock.end(inputKey);
+            idle.caps.inputAnswered(req.requestId);
           }
           await publishAnswer(correlationId, res);
         }
@@ -921,6 +942,10 @@ export class GeminiAdapter implements RuntimeAdapter {
             // Synthesize subagent_started from tool_request with threadId
             if (event.threadId && !activeSubagents.has(event.threadId)) {
               activeSubagents.add(event.threadId);
+              // The delegating parent call is not named by the engine (the
+              // synthesized toolUseId below is the thread's first INNER call), so the
+              // tool cap is lifted from every parent-level call in flight.
+              idle.caps.delegationOpened();
               yield {
                 type: 'subagent_started',
                 taskId: event.threadId,

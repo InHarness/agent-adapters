@@ -3,45 +3,42 @@
 import type { UnifiedEvent } from './types.js';
 
 /**
- * How long {@link collectEvents} waits by default.
+ * Collect all events from a stream into an array — draining it until it ends,
+ * however long that takes.
  *
- * Named rather than inlined because claude-code's background-task hold has to stay
- * strictly under it: the two clocks race, and this one starts EARLIER (when the run
- * starts, not when the hold arms at a held `result`). A hold cap at or above this
- * value could never surface its `AdapterBackgroundHoldExpiredError` — the helper
- * would already have rejected the whole run with a bare timeout `Error`, losing the
- * only signal that says WHY it ended. The cap ends the run cleanly and this helper's
- * rejection does not, so the ordering matters. See `MAX_BACKGROUND_HOLD_MS` in
- * `adapters/claude-code.background-hold.ts`.
- */
-export const COLLECT_EVENTS_DEFAULT_TIMEOUT_MS = 120_000;
-
-/**
- * Collect all events from a stream into an array.
- * Throws if the stream doesn't complete within timeoutMs.
+ * There is NO default bound (since 0.9.13; before that it gave up after 120s). This
+ * helper is consumer-side, not one of the adapter's clocks, and omitting `timeoutMs`
+ * is a guarantee rather than a request for a guess. Pass `timeoutMs` to bound it; it
+ * then rejects if the stream has not ended in time.
+ *
+ * A consumer that applies such a bound to a claude-code run must size
+ * `claude_backgroundHoldCapMs` under it: the hold cap only arms at a held `result`,
+ * later than this clock starts, so otherwise the generic timeout fires first and the
+ * typed `AdapterBackgroundHoldExpiredError` never surfaces.
  */
 export async function collectEvents(
   stream: AsyncIterable<UnifiedEvent>,
-  timeoutMs = COLLECT_EVENTS_DEFAULT_TIMEOUT_MS,
+  timeoutMs?: number,
 ): Promise<UnifiedEvent[]> {
   const events: UnifiedEvent[] = [];
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`collectEvents timed out after ${timeoutMs}ms`)), timeoutMs);
-  });
-
   const collect = async () => {
     for await (const event of stream) {
       events.push(event);
     }
     return events;
   };
+  if (timeoutMs === undefined) return collect();
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`collectEvents timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
 
   try {
     return await Promise.race([collect(), timeout]);
   } finally {
     // Otherwise a run that finishes in a second still holds the process open for the
-    // rest of the window — a two-minute exit delay for any short-lived CLI consumer.
+    // rest of the window — an exit delay for any short-lived CLI consumer.
     clearTimeout(timer);
   }
 }

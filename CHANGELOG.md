@@ -3,6 +3,47 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.9.13] — Unreleased
+
+### Changed — read this first
+
+- **`collectEvents()` no longer applies a default timeout.** Before 0.9.13 it gave up after **120s** (`COLLECT_EVENTS_DEFAULT_TIMEOUT_MS`, now removed) and rejected with `collectEvents timed out after 120000ms`. It now drains the stream until it ends, however long that takes. To keep the old behaviour, pass the bound explicitly: `collectEvents(stream, 120_000)`. This is a withdrawn bound, not a tightened one: the signature is unchanged, but code that relied on the helper giving up after about two minutes now waits for the stream to end.
+
+  If you apply a stream timeout to a claude-code run, size `claude_backgroundHoldCapMs` below it. The hold cap only arms at a held `result`, which is later than a clock started at run start, so otherwise your generic timeout fires first and the typed `AdapterBackgroundHoldExpiredError` never surfaces. Raise the two together, never one alone.
+
+- **The claude-code background hold cap is re-armed only by a closed vocabulary.** It re-arms on the `task_started` / `task_progress` / `task_notification` frames the adapter routes into a tracked task's `background_task_*` family, and when a finished task re-enters with a second `task_started`. Nothing else re-arms it:
+  - `system/status` and `background_tasks_changed` re-arm only the grace window.
+  - Subagent token output and `task_updated` no longer re-arm it.
+
+  So a build that emits `background_task_progress` for twenty minutes survives, and a silent `sleep 3600` is cut at the cap. **Behaviour change:** a parked stretch whose only unsettled work is a background subagent is now cut at the cap (default 90s), however busy the subagent is. If your subagents outlive the turn, raise `claude_backgroundHoldCapMs` (or set it to `null`). `subagentTimeoutMs` has no default and does not lift the hold cap. The default stays at 90s, now described as the measured starting point rather than as sized under `collectEvents()`.
+
+### Added
+
+- **`toolCallTimeoutMs`** (`RuntimeExecuteParams`) caps ONE tool call. It is armed at `tool_use`, disarmed by the matching `tool_result`, and applies per call: sequential calls each get the full value.
+  - Expiry ends the whole run with **`AdapterToolCallTimeoutError`**, which carries `toolName`, `toolUseId` and `toolCallTimeoutMs` (all kept by `toJSON()`).
+  - Exempt: a call that opens a subagent, and a call with an unanswered `user_input_request` under it. A request names no call, so every call in flight is suspended while any request is unanswered, and each is armed again with the full value once none is left. A turn's `result` does not disarm a call; only its own `tool_result` does.
+  - On codex the call is armed at `item.started`.
+  - Absent means no timer at all.
+- **`subagentTimeoutMs`** (`RuntimeExecuteParams`) caps ONE open subagent. It is re-armed only by that subagent's own `subagent_started` (including `resumed: true` starts) and its `subagent_progress`.
+  - Expiry closes open subagents with the synthesized `subagent_completed { status: 'aborted' }` (at most once per `taskId`), then ends the run with **`AdapterSubagentTimeoutError`** (`taskId`, `subagentTimeoutMs`).
+  - Absent means no timer at all.
+- **Error exports:** `AdapterToolCallTimeoutError` and `AdapterSubagentTimeoutError` are exported from the package root. The error classes now export in this order: `AdapterError, AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterToolCallTimeoutError, AdapterSubagentTimeoutError, AdapterAbortError, AdapterBackgroundHoldExpiredError, AdapterToolPolicyError`.
+- **Claude Opus 5.5** is registered under two aliases, both with a 1M context window:
+  - `opus-5.5` → `claude-opus-5-5` for `claude-code`.
+  - `claude-opus-5.5` → `anthropic/claude-opus-5.5` for `opencode-openrouter`.
+
+  `claude-opus-5-5` joins `ADAPTIVE_THINKING_ONLY`; the OpenRouter id deliberately does not. Opus 5.5's adaptive thinking cannot be disabled at any effort.
+
+  **Silent-regression warning:** Opus 5.5 defaults to `medium` reasoning effort, while every other model (Opus 5 included) defaults to `high`. Switching the model id without setting `claude_effort` runs one effort level lower, and nothing signals it. `CLAUDE_CODE_OPTIONS` records this as a per-model default.
+
+### Docs
+
+- `idleTimeoutMs` counts a `streamingInput` channel that is open and waiting for the next push as outstanding work. Only `timeoutMs` runs between pushes. Each kind of outstanding work is now paired with the bound that covers it.
+
+### Dependencies
+
+- The claude-code dev-pin goes from `^0.3.251` to **`^0.3.280`** (resolved 0.3.280), because `claude-opus-5-5` needs CLI ≥ 2.1.280. On older pins, requesting the model fails at runtime (`is_error: true` after a clean `system:init`). The peer range is unchanged at `>=0.3.0 <0.4.0`.
+
 ## [0.9.9] — 2026-08-28
 
 > **First npm release since 0.9.6.** Versions 0.9.7 and 0.9.8 were bumped in the source tree but never tagged or published, so installing 0.9.9 also picks up everything in their sections below — including 0.9.8's behavioral change to `subagent_completed.status`. Read those sections too if you are upgrading from 0.9.6.

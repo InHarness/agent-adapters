@@ -42,6 +42,7 @@ import { materializeSkills, type MaterializedSkills } from '../skills-tempdir.js
 import { assertAnthropicMediaType, readImageAsBase64, readImageAsBase64Sync } from '../images-tempdir.js';
 import { ensureUsableStdin } from '../stdin-guard.js';
 import { createIdleClock, observeAndYield, type IdleClock } from '../idle-clock.js';
+import { createRunCaps, capExpiryError, NOOP_CAPS, type RunCaps, type CapExpiry } from '../run-caps.js';
 import { validateSubagents, mapSubagentStatus } from '../subagents.js';
 import { probePathScope, getClaudeSandboxConfig } from '../path-scope.js';
 import {
@@ -1064,6 +1065,10 @@ interface RunContext {
   idleClock: IdleClock;
   /** Set when the idle clock expired — carried so every exit reports the same reason. */
   idleExpired: boolean;
+  /** The per-unit caps (`toolCallTimeoutMs`, `subagentTimeoutMs`). A no-op until armed. */
+  caps: RunCaps;
+  /** Set when a per-unit cap expired — carried so every exit reports the same reason. */
+  capExpired: CapExpiry | null;
 }
 
 export class ClaudeCodeAdapter implements RuntimeAdapter {
@@ -1176,6 +1181,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       claimedMcpInstances: [],
       idleClock: createIdleClock({ idleMs: undefined, onExpire: () => {} }),
       idleExpired: false,
+      caps: NOOP_CAPS,
+      capExpired: null,
     };
     this.runs.add(run);
     this.latestRun = run;
@@ -1187,10 +1194,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // the run's last word here (queued pushes, the M17 hold) — runSession stops
       // the clock itself once it decides the run is winding down.
       for await (const event of this.runSession(params, run)) {
+        run.caps.observe(event);
         yield* observeAndYield(run.idleClock, event);
       }
     } finally {
       run.idleClock.dispose();
+      run.caps.dispose();
       this.forgetRun(run);
       releaseSdkMcpInstances(run.claimedMcpInstances);
     }
@@ -1834,6 +1843,8 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         ? new AdapterTimeoutError('claude-code', params.timeoutMs!)
         : run.idleExpired
           ? new AdapterIdleTimeoutError('claude-code', params.idleTimeoutMs!)
+          : run.capExpired
+          ? capExpiryError('claude-code', run.capExpired, params)
           : backgroundHoldExpiredAfterMs !== null
           ? new AdapterBackgroundHoldExpiredError('claude-code', backgroundHoldExpiredAfterMs)
           : new AdapterAbortError('claude-code');
@@ -1843,7 +1854,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
      * the terminal error. Callers `return` straight after.
      *
      * The flush is the M06 obligation: a run-level termination — `abort()`,
-     * `timeoutMs`, a background hold-cap expiry — must not leave a `subagent_started`
+     * `timeoutMs`, a background hold-cap expiry, a `subagentTimeoutMs` expiry — must not leave a `subagent_started`
      * without its counterpart, or a consumer pairing them live waits forever for a
      * cleanup step that never fires. It reports on the ADAPTER'S TRACKING, not on the
      * subagent: it says this run stopped tracking that delegation, not that the helper
@@ -1881,6 +1892,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
      * re-entered is not in flight, and nothing is synthesized for it.
      */
     const flushOpenSubagents = function* (): Generator<UnifiedEvent> {
+      // The run is ending: no per-unit cap may fire while the consumer holds one of
+      // the events below and replace the reason the run is actually ending for.
+      run.caps.dispose();
       for (const taskId of [...tasks.inFlight]) {
         if (tasks.kind(taskId)?.isBackground) continue;
         tasks.settle(taskId);
@@ -1888,9 +1902,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       }
     };
     const endRunTerminally = function* (): Generator<UnifiedEvent> {
+      // Latched BEFORE the flush yields: a clock that fires while the consumer holds a
+      // synthesized `subagent_completed` must not rewrite the terminal reason.
+      const error = terminalRuntimeError();
       settleAllPending();
       yield* flushOpenSubagents();
-      yield { type: 'error', error: terminalRuntimeError(), phase: 'runtime' };
+      yield { type: 'error', error, phase: 'runtime' };
     };
     if (params.timeoutMs) {
       timeoutId = setTimeout(() => {
@@ -1905,6 +1922,21 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       idleMs: params.idleTimeoutMs,
       onExpire: () => {
         run.idleExpired = true;
+        this.interruptRun(run);
+        run.abortController.abort();
+      },
+    });
+    // The per-unit caps (M01 toolCallTimeoutMs, M06 subagentTimeoutMs). Expiry ends
+    // the run down the same path as the backstop; endRunTerminally() then closes
+    // every subagent still open before the typed error.
+    run.caps = createRunCaps({
+      toolCallMs: params.toolCallTimeoutMs,
+      subagentMs: params.subagentTimeoutMs,
+      onExpire: (expiry) => {
+        // A run already stopping (abort, timeoutMs, idle, hold cap) keeps the reason
+        // it is stopping for.
+        if (run.abortController.signal.aborted) return;
+        run.capExpired = expiry;
         this.interruptRun(run);
         run.abortController.abort();
       },
@@ -2035,6 +2067,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
         if (reason === 'grace') {
           // The ordinary end of the run — nothing can go idle any more.
           run.idleClock.dispose();
+          run.caps.dispose();
           inputChannel.close();
           return;
         }
@@ -2167,6 +2200,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             // Defensive: bridges are only registered when a handler exists.
             settleUnanswered(pending, 'decline');
             run.idleClock.end(`uin:${pending.req.requestId}`);
+            run.caps.inputAnswered(pending.req.requestId);
             continue;
           }
           try {
@@ -2182,7 +2216,12 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             const outcome = await Promise.race([
               effectiveUserInputHandler(pending.req).then((res) => ({ kind: 'answer' as const, res })),
               abortPromise.then(() => ({ kind: 'abort' as const })),
-            ]).finally(() => run.idleClock.end(inputKey));
+            ]).finally(() => {
+              run.idleClock.end(inputKey);
+              // Calls suspended under the request are armed again (full value) once
+              // nothing is left unanswered.
+              run.caps.inputAnswered(pending.req.requestId);
+            });
             if (outcome.kind === 'abort') {
               // Settle the SDK-side promise so the callback doesn't leak, and
               // cancel everything still queued behind it.
@@ -2574,8 +2613,14 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               // `hold.touch` ran above, BEFORE the registry knew the id was live
               // again — so if everything had settled it re-armed grace inside this
               // new cycle. Touch again now the id is back in flight: that parks on
-              // the long bound (grace disarmed) and re-arms the cap.
+              // the long bound (grace disarmed); the cap is re-armed just below.
               hold.touch(event);
+              // The spec's re-entry rule: a finished task seen starting again re-arms
+              // BOTH bounds (touch above re-decided grace). A task still running in
+              // its previous cycle is no re-entry of a finished one.
+              if (isReentry && !(previousCycleOpen && previousPatchedStatus === undefined)) {
+                hold.rearmCap();
+              }
               if (kind.isBackground && shellDenied) {
                 // A background task IS a shell task, and this run has no shell.
                 // M18 says the capability is simply OFF — a skip, not a
@@ -2583,6 +2628,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
                 // as on an adapter whose SDK cannot background work at all.
                 // Falling through to the subagent branch would mislabel it.
               } else if (kind.isBackground) {
+                // Routed into the tracked task's background_task_* family — one of
+                // the three frames that re-arm the hold cap (M17).
+                hold.rearmCap();
                 yield {
                   type: 'background_task_started',
                   taskId,
@@ -2631,6 +2679,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               } else if (kind?.isBackground && shellDenied) {
                 // See task_started above — background capability is off.
               } else if (kind?.isBackground) {
+                hold.rearmCap();
                 yield {
                   type: 'background_task_progress',
                   taskId,
@@ -2680,6 +2729,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               if (kind?.isBackground && shellDenied) {
                 // See task_started above — background capability is off.
               } else if (kind?.isBackground) {
+                hold.rearmCap();
                 yield {
                   type: 'background_task_completed',
                   taskId,
@@ -2860,6 +2910,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
               // The run is over; the SDK only has to shut down. Nothing past this
               // point may turn a delivered result into an idle expiry.
               run.idleClock.dispose();
+              run.caps.dispose();
               inputChannel.close();
             }
             // The decision for this turn is made, so the settlements that fed it have
@@ -2883,7 +2934,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       // that calls `abort()` after the final `result` — "I have what I need, stop the
       // session" — trips the flag on a run that completed successfully, and turning
       // that into a terminal error would report a good run as a failed one.
-      if (backgroundHoldExpiredAfterMs !== null || timedOut || run.idleExpired) {
+      if (backgroundHoldExpiredAfterMs !== null || timedOut || run.idleExpired || run.capExpired) {
         yield* endRunTerminally();
         return;
       }

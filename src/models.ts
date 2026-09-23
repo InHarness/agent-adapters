@@ -13,6 +13,7 @@ export const MODEL_ALIASES = {
     'sonnet-5': 'claude-sonnet-5',
     'sonnet-4.6': 'claude-sonnet-4-6',
     'sonnet-4.5': 'claude-sonnet-4-5-20250929',
+    'opus-5.5': 'claude-opus-5-5',
     'opus-5': 'claude-opus-5',
     'opus-4.8': 'claude-opus-4-8',
     'opus-4.7': 'claude-opus-4-7',
@@ -53,6 +54,7 @@ export const MODEL_ALIASES = {
     'nemotron-3-super-free': 'nvidia/nemotron-3-super:free',
     'claude-fable-5.1': 'anthropic/claude-fable-5.1',
     'claude-fable-5': 'anthropic/claude-fable-5',
+    'claude-opus-5.5': 'anthropic/claude-opus-5.5',
     'claude-opus-5': 'anthropic/claude-opus-5',
     'claude-opus-4.8': 'anthropic/claude-opus-4.8',
     'claude-opus-4.7': 'anthropic/claude-opus-4.7',
@@ -112,6 +114,9 @@ export const ADAPTIVE_THINKING_ONLY: ReadonlySet<string> = new Set([
   'claude-opus-4-7',
   'claude-opus-4-8',
   'claude-opus-5',
+  // Adaptive thinking is always on and cannot be disabled at ANY effort — a
+  // constraint the model enforces, not only the absence of a fixed-budget mode.
+  'claude-opus-5-5',
 ]);
 
 // --- Context window sizes ---
@@ -129,6 +134,7 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, Record<string, number>> = {
     'sonnet-5': 1_000_000,
     'sonnet-4.6': 200_000,
     'sonnet-4.5': 200_000,
+    'opus-5.5': 1_000_000,
     'opus-5': 1_000_000,
     'opus-4.8': 1_000_000,
     'opus-4.7': 200_000,
@@ -162,6 +168,7 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, Record<string, number>> = {
     'claude-fable-5': 1_000_000,
     'claude-sonnet-4.6': 200_000,
     'gemini-2.5-flash': 1_048_576,
+    'claude-opus-5.5': 1_000_000,
     'claude-opus-5': 1_000_000,
     'claude-opus-4.8': 1_000_000,
     'claude-opus-4.7': 200_000,

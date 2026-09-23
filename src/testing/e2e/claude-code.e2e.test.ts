@@ -8,7 +8,6 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAdapter } from '../../factory.js';
-import { collectEvents } from '../../utils.js';
 import { resolveModel } from '../../models.js';
 import { probeToolGating } from '../../tool-groups.js';
 import type { ToolGroup } from '../../tool-groups.js';
@@ -94,6 +93,7 @@ import {
   assertToolFromGroupUsed,
   assertToolPolicyRefusal,
   assertPorousWarning,
+  collectE2E,
 } from './shared.js';
 
 /** Narrow a collected stream to its `result` event (undefined if none). */
@@ -112,7 +112,7 @@ const FULL_MODEL_ID = resolveModel('claude-code', MODEL);
 describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   it('emits adapter_ready with SDK-native options before first message', async () => {
     const adapter = createAdapter('claude-code');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -132,7 +132,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
 
   it('simple text response (model alias)', async () => {
     const adapter = createAdapter('claude-code');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -159,7 +159,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
 
   it('simple text response (full model ID)', async () => {
     const adapter = createAdapter('claude-code');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SIMPLE_PROMPT,
         systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -174,7 +174,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   it('thinking events', async () => {
     const adapter = createAdapter('claude-code');
     // Use 'enabled' for all models — adapter auto-converts to 'adaptive' for models that need it
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: THINKING_PROMPT,
         systemPrompt: THINKING_SYSTEM_PROMPT,
@@ -217,7 +217,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   it('tool use (in-process MCP)', async () => {
     const { config } = createE2eMcpServer();
     const adapter = createAdapter('claude-code');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: TOOL_PROMPT,
         systemPrompt: TOOL_SYSTEM_PROMPT,
@@ -271,7 +271,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   it('subagent events', async () => {
     const { config } = createE2eMcpServer();
     const adapter = createAdapter('claude-code');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: SUBAGENT_PROMPT,
         systemPrompt: SUBAGENT_SYSTEM_PROMPT,
@@ -336,7 +336,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     ['under a web deny', ['web']],
   ])('re-enters a backgrounded subagent with SendMessage (%s)', async (_label, deny, ctx) => {
     const adapter = createAdapter('claude-code');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt: REENTRY_PROMPT,
         model: MODEL,
@@ -387,7 +387,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   // which is exactly why the gate is a PreToolUse hook and not `canUseTool`.
   it('denies SendMessage to an address that is not one of this run\'s subagents', async (ctx) => {
     const adapter = createAdapter('claude-code');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt:
           'Load the SendMessage tool with ToolSearch ("select:SendMessage"), then call SendMessage with ' +
@@ -413,7 +413,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
 
   it('defines a custom subagent the model can invoke', async () => {
     const adapter = createAdapter('claude-code');
-    const events = await collectEvents(
+    const events = await collectE2E(
       adapter.execute({
         prompt:
           'Use the joke-teller subagent to come up with one short, clean programming joke, then relay it.',
@@ -474,7 +474,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       ).toBe('soft');
 
       const adapter = createAdapter('claude-code');
-      const events = await collectEvents(
+      const events = await collectE2E(
         adapter.execute({
           prompt:
             `Delegate to the file-reader subagent: ask it to use its Read tool to open ${secretFile} ` +
@@ -733,7 +733,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
         const adapter = createAdapter('claude-code');
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
@@ -755,7 +755,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
         const adapter = createAdapter('claude-code');
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt: PLAN_READ_PROMPT,
             systemPrompt: PLAN_READ_SYSTEM_PROMPT,
@@ -779,7 +779,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
         const adapter = createAdapter('claude-code');
-        await collectEvents(
+        await collectE2E(
           adapter.execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
@@ -800,7 +800,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       try {
         const { config } = createE2eMcpServer();
         const adapter = createAdapter('claude-code');
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt:
               'First call the echo tool with the message "hello plan". Then create a file notes.txt with the echo result. If you cannot create the file, just report the echo result.',
@@ -1154,7 +1154,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     // background tasks reaches the consumer.
     it('claude_disallowBackgroundBash forces a backgrounded Bash call to run in-turn', async (ctx) => {
       const adapter = createAdapter('claude-code');
-      const events = await collectEvents(
+      const events = await collectE2E(
         adapter.execute({
           prompt: BACKGROUND_BASH_PROMPT,
           systemPrompt: BACKGROUND_BASH_SYSTEM_PROMPT,
@@ -1225,19 +1225,25 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     //
     // A backgrounded `sleep 180` outlives every bound this case can observe, and while
     // the engine babysits it the only frames are heartbeats — which deliberately do not
-    // re-arm the cap (see isBackgroundProgress in claude-code.background-hold.ts). So the
-    // cap is the only thing that can end this run.
+    // re-arm the cap (only frames routed into a tracked task's background_task_* family
+    // do; see MAX_BACKGROUND_HOLD_MS in claude-code.background-hold.ts). So the cap is the
+    // only thing that can end this run.
     //
     // CAP_MS is chosen against two clocks: comfortably above the option's documented
-    // floor (`min: 5000`, src/options.ts) and far below collectEvents()'s 120s default,
-    // which starts at run start while the cap only arms at the first held `result`. An
-    // equal-or-larger cap would have the harness reject the run before the bound could
-    // surface — the test would then be timing out, not observing a regression.
+    // floor (`min: 5000`, src/options.ts) and far below the explicit stream bound this
+    // case passes to collectE2E(), which starts at run start while the cap only arms
+    // at the first held `result`. An equal-or-larger cap would have the harness reject
+    // the run before the bound could surface — the test would then be timing out, not
+    // observing a regression. (collectEvents() has no default bound since 0.9.13; the
+    // bound is passed explicitly here rather than inherited from E2E_STREAM_BOUND_MS
+    // because this case's correctness depends on its relation to CAP_MS.)
     const CAP_MS = 8_000;
+    /** The stream bound this case passes to collectE2E(), below the test timeout. */
+    const HOLD_CAP_STREAM_BOUND_MS = 120_000;
 
     it('claude_backgroundHoldCapMs ends a run whose background work never settles', async (ctx) => {
       const adapter = createAdapter('claude-code');
-      const events = await collectEvents(
+      const events = await collectE2E(
         adapter.execute({
           prompt: NEVER_SETTLING_BACKGROUND_PROMPT,
           systemPrompt: NEVER_SETTLING_BACKGROUND_SYSTEM_PROMPT,
@@ -1245,6 +1251,9 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
           maxTurns: 6,
           architectureConfig: { claude_backgroundHoldCapMs: CAP_MS },
         }),
+        // An explicit stream bound, not the shared default: it has to stay above CAP_MS.
+        // Sized the way the levers' docs ask: well above the cap it has to let surface.
+        HOLD_CAP_STREAM_BOUND_MS,
       );
 
       const sequence = events.map((e) => e.type).join(' → ');
@@ -1269,7 +1278,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       }
 
       assertBackgroundHoldExpired(events, CAP_MS);
-      // DELIBERATELY ABOVE `collectEvents()`'s own 120s default (src/utils.ts). The two
+      // DELIBERATELY ABOVE the explicit 120s stream bound passed above. The two
       // clocks race and vitest's starts earlier — at the test, before the CLI is even
       // spawned — so an equal budget would always be the one to fire, replacing the
       // helper's diagnosis with an opaque `Test timed out`. Worse, vitest's timeout does
@@ -1282,7 +1291,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   describe('todo list (TodoWrite → todoList projection)', () => {
     it('emits todo_list_updated, drops tool_use TodoWrite, and snapshots on result', async () => {
       const adapter = createAdapter('claude-code');
-      const events = await collectEvents(
+      const events = await collectE2E(
         adapter.execute({
           prompt: TODO_PROMPT,
           systemPrompt: TODO_SYSTEM_PROMPT,
@@ -1394,7 +1403,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     it('describes a base64 image', async () => {
       const png = makeSolidColorPng(IMAGE_RGB);
       const adapter = createAdapter('claude-code');
-      const events = await collectEvents(
+      const events = await collectE2E(
         adapter.execute({
           prompt: IMAGE_PROMPT,
           systemPrompt: IMAGE_SYSTEM_PROMPT,
@@ -1414,7 +1423,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       writeFileSync(path, makeSolidColorPng(IMAGE_RGB));
       try {
         const adapter = createAdapter('claude-code');
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt: IMAGE_PROMPT,
             systemPrompt: IMAGE_SYSTEM_PROMPT,
@@ -1441,7 +1450,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     it('a denied `shell` is unusable for the whole run', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('claude-code').execute({
             prompt: GATING_SHELL_PROMPT,
             systemPrompt: GATING_SHELL_SYSTEM_PROMPT,
@@ -1463,7 +1472,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     it('the same prompt reaches the shell when nothing is denied (baseline)', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('claude-code').execute({
             prompt: GATING_SHELL_PROMPT,
             systemPrompt: GATING_SHELL_SYSTEM_PROMPT,
@@ -1481,7 +1490,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     it('a denied `file-write` blocks mutation while reads keep working', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('claude-code').execute({
             prompt: PLAN_WRITE_PROMPT,
             systemPrompt: PLAN_WRITE_SYSTEM_PROMPT,
@@ -1504,7 +1513,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     it('a denied `web` is unusable, and the rest of the catalog still works', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('claude-code').execute({
             prompt: GATING_WEB_PROMPT,
             systemPrompt: 'Answer using your tools where possible.',
@@ -1521,7 +1530,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     }, 120_000);
 
     it('an unknown group refuses the run before dispatch', async () => {
-      const events = await collectEvents(
+      const events = await collectE2E(
         createAdapter('claude-code').execute({
           prompt: 'hello',
           systemPrompt: 'You are helpful.',
@@ -1541,7 +1550,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
     it('escape surface: with `shell` allowed, a `file-read` deny is bypassable', async () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('claude-code').execute({
             prompt:
               'Show me the first line of README.md in the current directory. Use whatever tool you have.',
@@ -1580,7 +1589,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       const { dir, cleanup } = createPlanModeTmpDir();
       try {
         const { config } = createE2eMcpServer();
-        const events = await collectEvents(
+        const events = await collectE2E(
           createAdapter('claude-code').execute({
             prompt: 'Use the echo tool to echo the word BANANA, then tell me what it returned.',
             systemPrompt: 'You have an MCP echo tool. Use it.',
@@ -1607,7 +1616,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       try {
         const adapter = createAdapter('claude-code');
         // secretDir is in BOTH allow and deny → disallowedPaths must win.
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt: 'Reply with the single word: ready.',
             systemPrompt: 'Answer in one word.',
@@ -1652,7 +1661,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       const { cwd, secretDir, secretFile, cleanup } = createPathScopeDirs();
       try {
         const adapter = createAdapter('claude-code');
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt: `Use the Read tool to open ${secretFile} and tell me its exact contents verbatim. If the read is denied, reply with exactly the word BLOCKED.`,
             systemPrompt: 'You have a Read tool. If a read is denied by permissions, reply with exactly: BLOCKED.',
@@ -1682,7 +1691,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       const target = join(secretDir, 'planted.txt');
       try {
         const adapter = createAdapter('claude-code');
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt: `Use the Write tool to create the file ${target} with the contents "planted". If the write is denied, reply with exactly the word BLOCKED.`,
             systemPrompt: 'You have a Write tool. If a write is denied by permissions, reply with exactly: BLOCKED.',
@@ -1708,7 +1717,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
   describe('usage (billing tokens vs contextSize + cache buckets)', () => {
     it('reports legible per-call billing usage and context-window size on result', async () => {
       const adapter = createAdapter('claude-code');
-      const events = await collectEvents(
+      const events = await collectE2E(
         adapter.execute({
           prompt: SIMPLE_PROMPT,
           systemPrompt: SIMPLE_SYSTEM_PROMPT,
@@ -1826,7 +1835,7 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
       const { cwd, extraDir, cleanup } = createPathScopeDirs();
       try {
         const adapter = createAdapter('claude-code');
-        const events = await collectEvents(
+        const events = await collectE2E(
           adapter.execute({
             prompt: 'Reply with the single word: ready.',
             systemPrompt: 'Answer in one word.',
