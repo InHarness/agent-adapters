@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-23T14:47:16.507Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-held-subagent-emitting-subagent-pro",
+  "status": "active",
+  "tags": [
+    "m17"
+  ],
+  "title": "A held subagent emitting subagent_progress re-arms the hold cap and is never cut short by it.",
+  "updatedAt": "2026-09-23T14:47:16.507Z",
+  "verifies": []
+}

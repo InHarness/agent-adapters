@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-23T14:47:16.512Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-a-parked-stretch-in-which-no-subagent",
+  "status": "active",
+  "tags": [
+    "m17",
+    "m17-edge"
+  ],
+  "title": "A parked stretch in which no subagent_* event arrives for a tracked held subagent ends at the cap with AdapterBackgroundHoldExpiredError.",
+  "updatedAt": "2026-09-23T14:47:16.512Z",
+  "verifies": []
+}
