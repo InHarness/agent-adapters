@@ -3,9 +3,13 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.9.13] — Unreleased
+## [0.9.13] — 2026-09-23
+
+> **First npm release since 0.9.9.** Versions 0.9.10–0.9.12 were bumped in the source tree but never tagged or published; their changes are folded into this section. Read the whole of it if you are upgrading from 0.9.9 — in particular the new `'delegation'` tool group and the `collectEvents()` default.
 
 ### Changed — read this first
+
+- **`ToolGroup` gains `'delegation'`** (0.9.12). **Breaking for exhaustive `switch`es over `ToolGroup`.** Denying it blocks subagent spawning: soft on claude-code and gemini, hard on opencode (where a file-read deny also folds into delegation), refused by codex. `planMode` does not deny it. The claude-code tool inventory now covers every schema in the SDK's `sdk-tools.d.ts` plus its alias map; `TaskOutput` / `TaskStop` classify as `shell`.
 
 - **`collectEvents()` no longer applies a default timeout.** Before 0.9.13 it gave up after **120s** (`COLLECT_EVENTS_DEFAULT_TIMEOUT_MS`, now removed) and rejected with `collectEvents timed out after 120000ms`. It now drains the stream until it ends, however long that takes. To keep the old behaviour, pass the bound explicitly: `collectEvents(stream, 120_000)`. This is a withdrawn bound, not a tightened one: the signature is unchanged, but code that relied on the helper giving up after about two minutes now waits for the stream to end.
 
@@ -27,6 +31,9 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 - **`subagentTimeoutMs`** (`RuntimeExecuteParams`) caps ONE open subagent. It is re-armed only by that subagent's own `subagent_started` (including `resumed: true` starts) and its `subagent_progress`.
   - Expiry closes open subagents with the synthesized `subagent_completed { status: 'aborted' }` (at most once per `taskId`), then ends the run with **`AdapterSubagentTimeoutError`** (`taskId`, `subagentTimeoutMs`).
   - Absent means no timer at all.
+- **`idleTimeoutMs`** (`RuntimeExecuteParams`, 0.9.11) — an opt-in idle clock. It advances only while nothing is outstanding (open tool call, subagent, background task, unanswered `user_input_request`), pauses without resetting while work is in flight, and never bills time the consumer spends holding a yielded event or time after the final `result`. Expiry ends the run with **`AdapterIdleTimeoutError`** (runtime phase), typed apart from the `timeoutMs` backstop. Wired into all four adapters.
+- **Subagent re-entry** (0.9.12, claude-code): a `SendMessage` re-entry is a second `subagent_started` / `subagent_completed` pair for the same `taskId`, with `resumed: true` and the re-entering call's `toolUseId`. Pairs never nest; re-entering a still-running cycle opens no new pair. `assertSubagentLifecycle` is cycle-aware.
+- **Cross-session pin** (0.9.12, claude-code): every run pins `crossSessionInbound: 'refuse'` (visible in `adapter_ready.sdkConfig`), and outbound `SendMessage` is confined to the run's own subagents by a `PreToolUse` hook. In-process teammates emit nothing on the unified stream.
 - **Error exports:** `AdapterToolCallTimeoutError` and `AdapterSubagentTimeoutError` are exported from the package root. The error classes now export in this order: `AdapterError, AdapterInitError, AdapterTimeoutError, AdapterIdleTimeoutError, AdapterToolCallTimeoutError, AdapterSubagentTimeoutError, AdapterAbortError, AdapterBackgroundHoldExpiredError, AdapterToolPolicyError`.
 - **Claude Opus 5.5** is registered under two aliases, both with a 1M context window:
   - `opus-5.5` → `claude-opus-5-5` for `claude-code`.
@@ -36,13 +43,22 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 
   **Silent-regression warning:** Opus 5.5 defaults to `medium` reasoning effort, while every other model (Opus 5 included) defaults to `high`. Switching the model id without setting `claude_effort` runs one effort level lower, and nothing signals it. `CLAUDE_CODE_OPTIONS` records this as a per-model default.
 
+### Fixed
+
+- **gemini no longer reports dead subagents as successful** (0.9.10). `agent_end` reasons such as `max_turns`, `max_budget`, `max_time` and `refusal` used to fall through to `'completed'`; they now go through `mapSubagentStatus` against a declared table (caps and refusal → `'stopped'`, unknown → `'failed'` plus one drift warning). `'elicitation'` is a suspension and leaves the `taskId` open.
+- **opencode and gemini: `abort()` / `timeoutMs` / idle expiry now wakes a run whose `onUserInput` handler is still pending.** Previously the run hung and opencode left its spawned server running. The pending request is answered `cancel`, open subagents are flushed, the typed terminal error is yielded, and opencode's server is closed from `abort()` itself. A stop that lands during gemini init no longer starts the turn.
+- **claude-code task tracking accepts the model's raw spellings again.** `TaskUpdate({ taskId, state })` and batch `TaskCreate({ tasks: '[...]' })` were silently dropped from `todo_list_updated`. Status now resolves through `status` / `state` / `task_status`, batch creates merge as N items, an unmergeable write emits one `warning` per shape, and `TodoWrite` accepts a stringified list.
+- **claude-code background hold** (0.9.12): a re-entered subagent clears its finished mark, so grace cannot close the transport inside a live cycle; teammate frames never settle the hold; a stale re-entry notification can no longer double-complete the live cycle.
+
 ### Docs
 
 - `idleTimeoutMs` counts a `streamingInput` channel that is open and waiting for the next push as outstanding work. Only `timeoutMs` runs between pushes. Each kind of outstanding work is now paired with the bound that covers it.
 
 ### Dependencies
 
-- The claude-code dev-pin goes from `^0.3.251` to **`^0.3.280`** (resolved 0.3.280), because `claude-opus-5-5` needs CLI ≥ 2.1.280. On older pins, requesting the model fails at runtime (`is_error: true` after a clean `system:init`). The peer range is unchanged at `>=0.3.0 <0.4.0`.
+- The claude-code dev-pin goes from `^0.3.251` to **`^0.3.280`** (resolved 0.3.280), because `claude-opus-5-5` needs CLI ≥ 2.1.280. On older pins, requesting the model fails at runtime (`is_error: true` after a clean `system:init`). The peer range is unchanged at `>=0.3.0 <0.4.0`. (0.9.10 had already raised it from `^0.3.220` to `^0.3.251`, since the SDK-bundled CLI rejects `claude-fable-5-1` below 2.1.251.)
+
+[0.9.13]: https://github.com/InHarness/agent-adapters/compare/v0.9.9...v0.9.13
 
 ## [0.9.9] — 2026-08-28
 
