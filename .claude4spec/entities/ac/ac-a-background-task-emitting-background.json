@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:18:37.881Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-background-task-emitting-background",
+  "status": "active",
+  "tags": [
+    "m17"
+  ],
+  "title": "A background task emitting background_task_progress re-arms the hold cap and is never cut short by it.",
+  "updatedAt": "2026-09-22T21:18:37.881Z",
+  "verifies": []
+}

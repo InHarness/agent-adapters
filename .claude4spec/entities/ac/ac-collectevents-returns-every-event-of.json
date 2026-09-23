@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:18:37.886Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-collectevents-returns-every-event-of",
+  "status": "active",
+  "tags": [
+    "m09"
+  ],
+  "title": "collectEvents() returns every event of a stream that keeps emitting for longer than two minutes.",
+  "updatedAt": "2026-09-22T21:18:37.886Z",
+  "verifies": []
+}

@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:18:37.885Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-streaminginput-session-waiting-betw",
+  "status": "active",
+  "tags": [
+    "m11"
+  ],
+  "title": "A streamingInput session waiting between pushes is not ended by idleTimeoutMs.",
+  "updatedAt": "2026-09-22T21:18:37.885Z",
+  "verifies": []
+}

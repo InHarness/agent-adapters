@@ -8,7 +8,7 @@
     "m06",
     "m06-edge"
   ],
-  "title": "A subagent still in flight when abort(), timeoutMs or hold-cap expiry terminates the run is closed by a synthesized subagent_completed { status: 'aborted' }.",
-  "updatedAt": "2026-09-07T14:07:43.536Z",
+  "title": "A subagent still in flight when abort(), timeoutMs, hold-cap expiry or subagentTimeoutMs expiry terminates the run is closed by a synthesized subagent_completed { status: 'aborted' }.",
+  "updatedAt": "2026-09-22T21:18:29.411Z",
   "verifies": []
 }

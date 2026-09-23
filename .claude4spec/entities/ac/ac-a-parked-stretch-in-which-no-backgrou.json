@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-22T21:18:37.883Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-a-parked-stretch-in-which-no-backgrou",
+  "status": "active",
+  "tags": [
+    "m17",
+    "m17-edge"
+  ],
+  "title": "A parked stretch in which no background_task_* event arrives for the tracked task ends at the cap with AdapterBackgroundHoldExpiredError.",
+  "updatedAt": "2026-09-22T21:18:37.883Z",
+  "verifies": []
+}

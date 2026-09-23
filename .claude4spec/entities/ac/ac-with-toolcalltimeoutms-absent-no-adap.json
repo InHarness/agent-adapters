@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:18:37.835Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-with-toolcalltimeoutms-absent-no-adap",
+  "status": "active",
+  "tags": [
+    "m01"
+  ],
+  "title": "With toolCallTimeoutMs absent, no adapter arms a per-tool-call timer and no fallback default applies.",
+  "updatedAt": "2026-09-22T21:18:37.835Z",
+  "verifies": []
+}

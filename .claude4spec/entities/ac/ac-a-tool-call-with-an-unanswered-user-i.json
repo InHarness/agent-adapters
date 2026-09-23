@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-22T21:33:59.590Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-a-tool-call-with-an-unanswered-user-i",
+  "status": "active",
+  "tags": [
+    "m01",
+    "m01-edge"
+  ],
+  "title": "A tool call with an unanswered user_input_request under it is never ended by toolCallTimeoutMs, however long the human takes.",
+  "updatedAt": "2026-09-22T21:33:59.590Z",
+  "verifies": []
+}

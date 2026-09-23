@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:18:37.875Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-adaptertoolcalltimeouterror-reports-i",
+  "status": "active",
+  "tags": [
+    "m13"
+  ],
+  "title": "AdapterToolCallTimeoutError reports in the runtime phase and names the toolName and toolUseId of the call it cut short, both surviving toJSON.",
+  "updatedAt": "2026-09-22T21:18:37.875Z",
+  "verifies": []
+}

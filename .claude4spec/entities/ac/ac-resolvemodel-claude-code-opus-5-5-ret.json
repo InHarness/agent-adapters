@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:10:49.983Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-resolvemodel-claude-code-opus-5-5-ret",
+  "status": "active",
+  "tags": [
+    "m02"
+  ],
+  "title": "resolveModel('claude-code', 'opus-5.5') returns 'claude-opus-5-5', and 'claude-opus-5-5' is a member of ADAPTIVE_THINKING_ONLY.",
+  "updatedAt": "2026-09-22T21:10:49.983Z",
+  "verifies": []
+}

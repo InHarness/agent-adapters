@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-22T21:18:37.880Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-an-open-subagent-that-exceeds-subagen",
+  "status": "active",
+  "tags": [
+    "m06",
+    "m06-edge"
+  ],
+  "title": "An open subagent that exceeds subagentTimeoutMs ends the run and is closed by a synthesized subagent_completed { status: 'aborted' }.",
+  "updatedAt": "2026-09-22T21:18:37.880Z",
+  "verifies": []
+}

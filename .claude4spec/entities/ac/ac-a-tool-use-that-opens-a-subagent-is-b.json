@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:18:37.873Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-tool-use-that-opens-a-subagent-is-b",
+  "status": "active",
+  "tags": [
+    "m01"
+  ],
+  "title": "A tool_use that opens a subagent is bounded by subagentTimeoutMs alone and never by toolCallTimeoutMs.",
+  "updatedAt": "2026-09-22T21:33:58.645Z",
+  "verifies": []
+}

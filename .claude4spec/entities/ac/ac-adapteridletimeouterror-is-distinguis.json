@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:18:37.876Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-adapteridletimeouterror-is-distinguis",
+  "status": "active",
+  "tags": [
+    "m13"
+  ],
+  "title": "AdapterIdleTimeoutError is distinguishable from AdapterTimeoutError by name after serialization.",
+  "updatedAt": "2026-09-22T21:18:37.876Z",
+  "verifies": []
+}

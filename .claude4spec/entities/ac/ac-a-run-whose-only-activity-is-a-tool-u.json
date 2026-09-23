@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-22T21:18:37.827Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-a-run-whose-only-activity-is-a-tool-u",
+  "status": "active",
+  "tags": [
+    "m01",
+    "m01-edge"
+  ],
+  "title": "A run whose only activity is a tool_use still awaiting its tool_result ends with AdapterToolCallTimeoutError once toolCallTimeoutMs elapses.",
+  "updatedAt": "2026-09-22T21:18:37.827Z",
+  "verifies": []
+}

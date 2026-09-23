@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:18:37.872Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-a-run-silent-for-the-whole-of-a-tool",
+  "status": "active",
+  "tags": [
+    "m01"
+  ],
+  "title": "A run silent for the whole of a tool call is never ended by idleTimeoutMs, whether or not toolCallTimeoutMs is set.",
+  "updatedAt": "2026-09-22T21:18:37.872Z",
+  "verifies": []
+}

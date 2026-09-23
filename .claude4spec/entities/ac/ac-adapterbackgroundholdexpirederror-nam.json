@@ -1,0 +1,13 @@
+{
+  "createdAt": "2026-09-22T21:18:37.878Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-adapterbackgroundholdexpirederror-nam",
+  "status": "active",
+  "tags": [
+    "m13"
+  ],
+  "title": "AdapterBackgroundHoldExpiredError names the architectureConfig key that moves the cap.",
+  "updatedAt": "2026-09-22T21:18:37.878Z",
+  "verifies": []
+}
