@@ -14,6 +14,8 @@ import { createTestParams } from '../testing/helpers.js';
 import { AdapterToolPolicyError } from '../types.js';
 import type { UnifiedEvent } from '../types.js';
 
+const SUPPRESSED = ['ScheduleWakeup', 'CronCreate', 'CronList', 'CronDelete'];
+
 let capturedOptions: Record<string, unknown> | null = null;
 let queryCalls = 0;
 
@@ -52,10 +54,10 @@ async function run(params: Parameters<typeof createTestParams>[0]): Promise<Unif
 }
 
 describe('claude-code tool gating — the shape sent to the SDK', () => {
-  it('leaves tools/disallowedTools unset when nothing is denied (byte-for-byte no-op)', async () => {
+  it('leaves tools unset when nothing is denied, but still suppresses the harness scheduling tools', async () => {
     await run({});
     expect(capturedOptions?.tools).toBeUndefined();
-    expect(capturedOptions?.disallowedTools).toBeUndefined();
+    expect(capturedOptions?.disallowedTools).toEqual(expect.arrayContaining(SUPPRESSED));
   });
 
   it('treats an explicit empty array the same way — the documented opt-out', async () => {
@@ -263,8 +265,9 @@ describe('claude-code tool gating — the delegation group (0.9.12)', () => {
     const { claudeCodeKnownBuiltins, CLAUDE_CODE_TOOL_GROUPS } = await import('./claude-code.js');
     await run({ disallowedToolGroups: ['web'] });
     const tools = new Set(capturedOptions?.tools as string[]);
-    const web = new Set(CLAUDE_CODE_TOOL_GROUPS.web);
-    const missing = claudeCodeKnownBuiltins().filter((t) => !web.has(t) && !tools.has(t));
+    // The harness scheduling tools are known but hard-suppressed on every run (A01).
+    const excluded = new Set([...CLAUDE_CODE_TOOL_GROUPS.web, ...SUPPRESSED]);
+    const missing = claudeCodeKnownBuiltins().filter((t) => !excluded.has(t) && !tools.has(t));
     expect(missing).toEqual([]);
   });
 });
@@ -311,5 +314,56 @@ describe('claude-code built-in inventory — drift guard against the pinned SDK'
     const all = claudeCodeKnownBuiltins();
     const dupes = all.filter((t, i) => all.indexOf(t) !== i);
     expect(dupes).toEqual([]);
+  });
+});
+
+// A01 "Scheduling (harness) — hard-suppressed" / M13 inert-harness-tool.
+// Verifies AC `ac-the-claude-code-adapter-does-not-offer-t`: the scheduling
+// family is never offered to the model, with no config gate to re-enable it.
+describe('claude-code hard-suppresses the harness scheduling tools', () => {
+  it('with no denied groups: disallowedTools ⊇ the four, tools unset, CLAUDE_CODE_DISABLE_CRON=1', async () => {
+    await run({});
+    expect(capturedOptions?.tools).toBeUndefined();
+    expect(capturedOptions?.disallowedTools).toEqual(expect.arrayContaining(SUPPRESSED));
+    expect((capturedOptions?.env as Record<string, string>).CLAUDE_CODE_DISABLE_CRON).toBe('1');
+  });
+
+  it('with a denied group: the four are in disallowedTools and never in the allow-list', async () => {
+    await run({ disallowedToolGroups: ['shell'] });
+    const tools = capturedOptions?.tools as string[];
+    const deny = capturedOptions?.disallowedTools as string[];
+    expect(deny).toEqual(expect.arrayContaining([...SUPPRESSED, 'Bash']));
+    for (const t of SUPPRESSED) expect(tools).not.toContain(t);
+    expect(new Set(deny).size).toBe(deny.length);
+  });
+
+  it('strips the four from autoApproveTools', async () => {
+    await run({ autoApproveTools: ['ScheduleWakeup', 'CronCreate', 'Read'] });
+    expect(capturedOptions?.allowedTools).toEqual(['Read']);
+  });
+
+  it('custom_env cannot switch CLAUDE_CODE_DISABLE_CRON off', async () => {
+    await run({
+      architectureConfig: { custom_env: { CLAUDE_CODE_DISABLE_CRON: '0', FOO: 'bar' } },
+    });
+    const env = capturedOptions?.env as Record<string, string>;
+    expect(env.CLAUDE_CODE_DISABLE_CRON).toBe('1');
+    expect(env.FOO).toBe('bar');
+  });
+
+  it('suppresses the four in subagent definitions, with or without a denied group', async () => {
+    const subagents = [{ name: 'helper', description: 'd', prompt: 'p', tools: ['Read', 'ScheduleWakeup'] }];
+    for (const disallowedToolGroups of [[], ['shell']] as const) {
+      await run({ subagents, disallowedToolGroups: [...disallowedToolGroups] });
+      const agents = capturedOptions?.agents as Record<string, { tools: string[]; disallowedTools: string[] }>;
+      expect(agents.helper.disallowedTools).toEqual(expect.arrayContaining(SUPPRESSED));
+      expect(agents.helper.tools).toEqual(['Read']);
+    }
+  });
+
+  it('leaves Monitor available when shell is not denied', async () => {
+    await run({ disallowedToolGroups: ['web'] });
+    expect(capturedOptions?.tools as string[]).toContain('Monitor');
+    expect(capturedOptions?.disallowedTools as string[]).not.toContain('Monitor');
   });
 });

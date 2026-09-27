@@ -13,7 +13,11 @@ import { probeToolGating } from '../../tool-groups.js';
 import type { ToolGroup } from '../../tool-groups.js';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { buildClaudeCodeToolPolicy, claudeCodeKnownBuiltins } from '../../adapters/claude-code.js';
+import {
+  buildClaudeCodeToolPolicy,
+  claudeCodeKnownBuiltins,
+  CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS,
+} from '../../adapters/claude-code.js';
 import {
   assertSimpleText,
   assertToolUse,
@@ -1903,6 +1907,20 @@ describe.skipIf(SKIP)(`sdk-surface-probe [${MODEL}]`, () => {
     const unknown = tools.filter((t) => !t.startsWith('mcp__') && !known.has(t));
     console.log(`[sdk-surface-probe] system:init tools (${tools.length}): ${tools.join(', ')}`);
     expect(unknown, 'exposed built-ins the inventory does not know — each is stripped by the next deny').toEqual([]);
+  }, 120_000);
+
+  // AC `ac-the-claude-code-adapter-does-not-offer-t` (A01 hard-suppression): under the
+  // suppression the adapter applies to EVERY run, none of the scheduling family reaches
+  // system:init. Leg 1 is a raw unrestricted run and so still sees them — which is why
+  // they stay in `claudeCodeKnownBuiltins()`.
+  it('leg 4: the harness scheduling tools are absent under the adapter suppression', async () => {
+    const { tools } = await initTools({
+      maxTurns: 1,
+      disallowedTools: CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS,
+      env: { ...process.env, CLAUDE_CODE_DISABLE_CRON: '1' },
+    });
+    expect(tools.length, 'system:init reported no tools').toBeGreaterThan(0);
+    for (const t of CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS) expect(tools).not.toContain(t);
   }, 120_000);
 
   it('leg 3: under the allow-list the adapter builds for a deny, the delegation family stays reachable', async () => {

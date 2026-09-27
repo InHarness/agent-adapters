@@ -15,6 +15,7 @@ import {
   resolveTaskItemId,
   buildClaudeCodeToolPolicy,
   subagentToolPolicy,
+  CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS,
   CLAUDE_CODE_TASK_TRACKING_TOOLS,
 } from './claude-code.js';
 
@@ -458,8 +459,11 @@ describe('subagent deny propagation', () => {
     expect(out.tools).toEqual(policy.allow);
   });
 
-  it('is a no-op when the run denies nothing', () => {
-    expect(subagentToolPolicy({ tools: ['Bash'] }, undefined)).toEqual({ tools: ['Bash'] });
+  it('leaves the toolset as-is when the run denies nothing — only the harness scheduling tools are suppressed', () => {
+    expect(subagentToolPolicy({ tools: ['Bash'] }, undefined)).toEqual({
+      tools: ['Bash'],
+      disallowedTools: CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS,
+    });
   });
 
   // M06: a subagent inherits the run's MCP servers "filtered by its own toolset".
@@ -724,5 +728,28 @@ describe('todoItemsFromTodoWriteInput — stringified lists', () => {
   it('yields nothing for a malformed `todos`, without throwing', () => {
     expect(todoItemsFromTodoWriteInput({ todos: '[{' })).toEqual([]);
     expect(todoItemsFromTodoWriteInput({})).toEqual([]);
+  });
+});
+
+// A01 hard-suppression of the harness scheduling family — AC
+// `ac-the-claude-code-adapter-does-not-offer-t`.
+describe('harness scheduling suppression in the policy builders', () => {
+  it('never puts the four in a residual allow-list', () => {
+    for (const groups of [['shell'], ['web'], [...PLAN_MODE_DENY_GROUPS]] as const) {
+      const allow = buildClaudeCodeToolPolicy([...groups])!.allow;
+      for (const t of CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS) expect(allow).not.toContain(t);
+    }
+  });
+
+  it('suppresses them for a subagent even when the run denies nothing', () => {
+    const out = subagentToolPolicy({ tools: ['Read', 'ScheduleWakeup'], disallowedTools: ['Custom'] }, undefined);
+    expect(out.tools).toEqual(['Read']);
+    expect(out.disallowedTools).toEqual(expect.arrayContaining(['Custom', ...CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS]));
+  });
+
+  it('suppresses them for a subagent with no toolset of its own under no policy', () => {
+    const out = subagentToolPolicy({}, undefined);
+    expect(out).not.toHaveProperty('tools');
+    expect(out.disallowedTools).toEqual(CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS);
   });
 });
