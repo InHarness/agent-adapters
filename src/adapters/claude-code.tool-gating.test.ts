@@ -13,8 +13,7 @@ import { collectEvents } from '../utils.js';
 import { createTestParams } from '../testing/helpers.js';
 import { AdapterToolPolicyError } from '../types.js';
 import type { UnifiedEvent } from '../types.js';
-
-const SUPPRESSED = ['ScheduleWakeup', 'CronCreate', 'CronList', 'CronDelete'];
+import { CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS as SUPPRESSED } from './claude-code.js';
 
 let capturedOptions: Record<string, unknown> | null = null;
 let queryCalls = 0;
@@ -63,6 +62,7 @@ describe('claude-code tool gating — the shape sent to the SDK', () => {
   it('treats an explicit empty array the same way — the documented opt-out', async () => {
     await run({ disallowedToolGroups: [] });
     expect(capturedOptions?.tools).toBeUndefined();
+    expect(capturedOptions?.disallowedTools).toEqual(expect.arrayContaining(SUPPRESSED));
   });
 
   it('sends a residual ALLOW-list, not just a deny enumeration', async () => {

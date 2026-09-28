@@ -1047,7 +1047,8 @@ phase: 'init' }` and nothing is dispatched. There is no partial application: the
 enforceable groups are *not* applied on their own. An unknown group string refuses too,
 rather than being silently dropped.
 
-Absent or `[]` is a no-op — behaviour is byte-for-byte what it was without the field.
+Absent or `[]` denies nothing — no group is gated (claude-code still applies its always-on
+scheduling suppression, see *Rules worth knowing*).
 
 #### Know before you dispatch
 
@@ -1100,6 +1101,11 @@ widened but never weakened. The exported constant is `PLAN_MODE_DENY_GROUPS`.
   not a filesystem boundary, because the shell reaches the same files.
 - With `shell` denied there is no background-task capability: no `background_task_*` events
   and `result.backgroundTasks` is never populated.
+- **claude-code never offers the harness scheduling tools** (`ScheduleWakeup`, `CronCreate`,
+  `CronList`, `CronDelete`) — on every run and to every subagent, with no config to turn it
+  back on. Under headless drive they are inert: the session closes at `result` and the
+  scheduled work is lost silently. They are removed from `autoApproveTools` if listed there.
+  The exported list is `CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS`. `Monitor` is not affected.
 - `disallowedToolGroups` is **immutable on resume** — and because plan mode is a preset over
   it, flipping `planMode` on resume is a violation through the same check.
 

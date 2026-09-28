@@ -1923,6 +1923,49 @@ describe.skipIf(SKIP)(`sdk-surface-probe [${MODEL}]`, () => {
     for (const t of CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS) expect(tools).not.toContain(t);
   }, 120_000);
 
+  // Same AC, the child-agent case the M13 incident came from: a built-in subagent the SDK
+  // spawns (general-purpose — not in `options.agents`, so `subagentToolPolicy` never sees
+  // it) must inherit the suppression. The child asks ToolSearch for the whole family and
+  // the probe reads the `tool_reference` blocks it gets back — what the child's registry
+  // resolves, not what the model says about it. The unsuppressed control run proves the
+  // child reaches the family at all (at 0.3.280 it resolves the Cron* tools but not
+  // ScheduleWakeup); without it, "nothing resolved" would prove nothing.
+  it('leg 5: a built-in general-purpose child inherits the scheduling suppression', async (ctx) => {
+    const prompt =
+      'Use the Agent tool (subagent_type "general-purpose", foreground) with this prompt: ' +
+      `"Call ToolSearch with query 'select:${CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS.join(',')}' ` +
+      'and reply with its result verbatim." Then say DONE.';
+    const childResolved = (messages: SDKMessage[]) =>
+      messages.flatMap((m) => {
+        if (m.type !== 'user') return [];
+        const msg = m as { parent_tool_use_id?: string | null; message: { content: unknown } };
+        if (!msg.parent_tool_use_id || !Array.isArray(msg.message.content)) return [];
+        return (msg.message.content as { type: string; content?: unknown }[])
+          .filter((b) => b.type === 'tool_result' && Array.isArray(b.content))
+          .flatMap((b) => b.content as { type: string; tool_name?: string }[])
+          .filter((c) => c.type === 'tool_reference' && CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS.includes(c.tool_name ?? ''))
+          .map((c) => c.tool_name);
+      });
+
+    const control = childResolved((await initTools({ maxTurns: 6 }, prompt)).messages);
+    console.log(`[sdk-surface-probe] leg 5 unsuppressed child resolves: ${control.join(', ') || '(none)'}`);
+    if (control.length === 0) {
+      console.warn('[INCONCLUSIVE] sdk-surface-probe leg 5: the unsuppressed child resolved none of the family');
+      ctx.skip();
+    }
+    const suppressed = await initTools(
+      { maxTurns: 6, disallowedTools: CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS, env: { ...process.env, CLAUDE_CODE_DISABLE_CRON: '1' } },
+      prompt,
+    );
+    const childSearched = suppressed.messages.some((m) => {
+      const msg = m as { parent_tool_use_id?: string | null; message?: { content?: unknown } };
+      return m.type === 'assistant' && !!msg.parent_tool_use_id && Array.isArray(msg.message?.content) &&
+        (msg.message!.content as { type: string; name?: string }[]).some((b) => b.type === 'tool_use' && b.name === 'ToolSearch');
+    });
+    expect(childSearched, 'the suppressed child never called ToolSearch — the leg proved nothing').toBe(true);
+    expect(childResolved(suppressed.messages), 'a general-purpose child resolved a suppressed tool').toEqual([]);
+  }, 300_000);
+
   it('leg 3: under the allow-list the adapter builds for a deny, the delegation family stays reachable', async () => {
     const policy = buildClaudeCodeToolPolicy(['web'])!;
     const { tools } = await initTools({ maxTurns: 1, tools: policy.allow, disallowedTools: policy.deny });

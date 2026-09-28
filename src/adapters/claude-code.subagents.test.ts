@@ -12,7 +12,7 @@ import { createTestParams } from '../testing/helpers.js';
 import { architectureCapabilities } from '../capabilities.js';
 import { validateSubagents } from '../subagents.js';
 import { resolveModel } from '../models.js';
-import { buildClaudeCodeToolPolicy } from './claude-code.js';
+import { buildClaudeCodeToolPolicy, CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS } from './claude-code.js';
 import type { SubagentDefinition } from '../types.js';
 
 // What the most recent fake `query()` call received as its `options`.
@@ -77,7 +77,7 @@ describe('claude-code subagent definitions', () => {
       description: 'Read-only codebase explorer',
       prompt: 'You explore code and report findings.',
       tools: ['Read', 'Grep', 'Glob'],
-      disallowedTools: ['Write', 'ScheduleWakeup', 'CronCreate', 'CronList', 'CronDelete'],
+      disallowedTools: ['Write', ...CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS],
       model: 'sonnet', // passed through verbatim, not re-resolved
       skills: ['my-skill'],
       maxTurns: 5,
@@ -100,7 +100,7 @@ describe('claude-code subagent definitions', () => {
     expect(agents.minimal).toEqual({
       description: 'd',
       prompt: 'p',
-      disallowedTools: ['ScheduleWakeup', 'CronCreate', 'CronList', 'CronDelete'],
+      disallowedTools: CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS,
     });
     expect(agents.minimal).not.toHaveProperty('tools');
     expect(agents.minimal).not.toHaveProperty('model');
@@ -153,13 +153,7 @@ describe('claude-code subagent definitions', () => {
     expect(agents.helper.tools).not.toContain('Bash');
     // The run's denies are PROPAGATED onto the definition — claude-code subagents do
     // not inherit them natively.
-    expect(agents.helper.disallowedTools).toEqual([
-      ...residual.deny,
-      'ScheduleWakeup',
-      'CronCreate',
-      'CronList',
-      'CronDelete',
-    ]);
+    expect(agents.helper.disallowedTools).toEqual([...residual.deny, ...CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS]);
   });
 
   // `tools` narrows, never widens: naming a tool from a denied group does not hand it

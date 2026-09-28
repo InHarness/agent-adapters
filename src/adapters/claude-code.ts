@@ -171,8 +171,8 @@ const TASK_NON_TODO_INPUT_KEYS = new Set([
  * `Task`→`Agent`, `KillShell`/`KillBash`→`TaskStop`,
  * `BashOutput`/`AgentOutput`/`BashOutputTool`/`AgentOutputTool`→`TaskOutput`,
  * `ListPeers`→`ListAgents`, `Brief`→`SendUserMessage`, and the MCP-resource
- * `…Tool` spellings). Audit this table, and CLAUDE_CODE_UNGATED_BUILTINS below,
- * on every pin bump — the inventory is maintained by hand, and the unit guard in
+ * `…Tool` spellings). Audit this table, and CLAUDE_CODE_UNGATED_BUILTINS /
+ * CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS below, on every pin bump — the inventory is maintained by hand, and the unit guard in
  * claude-code.tool-gating.test.ts fails when the SDK's published tool-input
  * schemas name a tool this inventory does not know.
  */
@@ -233,6 +233,16 @@ export const CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS: string[] = [
   'CronList',
   'CronDelete',
 ];
+
+/**
+ * The deny list actually sent to the SDK: the run's group deny (if any) plus the
+ * hard-suppressed harness tools, deduplicated. The single place the suppression
+ * is unioned in — the run options, every subagent definition and the
+ * auto-approval strip all go through it.
+ */
+function effectiveDeny(...lists: readonly (readonly string[] | undefined)[]): string[] {
+  return [...new Set([...lists.flatMap((l) => l ?? []), ...CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS])];
+}
 
 /**
  * Built-ins that carry no capability of any gated group and stay available
@@ -354,26 +364,18 @@ export function subagentToolPolicy(
   agent: { tools?: string[]; disallowedTools?: string[] },
   toolPolicy: { allow: string[]; deny: string[] } | undefined,
 ): { tools?: string[]; disallowedTools?: string[] } {
-  const suppressed = new Set(CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS);
+  const disallowedTools = effectiveDeny(agent.disallowedTools, toolPolicy?.deny);
   if (!toolPolicy) {
+    const denied = new Set(disallowedTools);
     return {
-      ...(agent.tools ? { tools: agent.tools.filter((t) => !suppressed.has(t)) } : {}),
-      disallowedTools: [
-        ...new Set([...(agent.disallowedTools ?? []), ...CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS]),
-      ],
+      ...(agent.tools ? { tools: agent.tools.filter((t) => !denied.has(t)) } : {}),
+      disallowedTools,
     };
   }
   const allowed = new Set(toolPolicy.allow);
   const tools = agent.tools
     ? agent.tools.filter((t) => t.startsWith('mcp__') || allowed.has(t))
     : toolPolicy.allow;
-  const disallowedTools = [
-    ...new Set([
-      ...(agent.disallowedTools ?? []),
-      ...toolPolicy.deny,
-      ...CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS,
-    ]),
-  ];
   return { tools, disallowedTools };
 }
 
@@ -1310,9 +1312,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     if (toolPolicy) {
       options.tools = toolPolicy.allow;
     }
-    options.disallowedTools = [
-      ...new Set([...(toolPolicy?.deny ?? []), ...CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS]),
-    ];
+    options.disallowedTools = effectiveDeny(toolPolicy?.deny);
 
     // Programmatically-defined subagents → SDK Options.agents (Record<name, AgentDefinition>).
     // The Agent/Task tool stays available under a deny, so defined agents are
@@ -1400,8 +1400,10 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // Custom environment variables — set by providers (MiniMax, Ollama, etc.)
     // Also supports legacy ollama_baseUrl for backward compatibility.
     // Always built: CLAUDE_CODE_DISABLE_CRON=1 is defence in depth for the
-    // hard-suppressed Cron* tools (A01) and is merged LAST so no consumer value
-    // can switch it off.
+    // hard-suppressed Cron* tools (A01) and is merged LAST so no `custom_env` /
+    // provider value can switch it off. It is NOT a guarantee on its own: an
+    // `env` block in a loaded settings.json tier is applied by the CLI after
+    // spawn and can override it — `options.disallowedTools` is the real gate.
     const customEnv = config.custom_env as Record<string, string> | undefined;
     options.env = {
       ...process.env,
@@ -1432,7 +1434,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // rather than passed through to the SDK's permission allow-list. The
     // hard-suppressed harness tools are stripped the same way.
     if (params.autoApproveTools?.length) {
-      const denied = new Set([...(toolPolicy?.deny ?? []), ...CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS]);
+      const denied = new Set(options.disallowedTools);
       options.allowedTools = params.autoApproveTools.filter((t) => !denied.has(t));
     }
 
