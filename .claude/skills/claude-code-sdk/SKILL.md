@@ -282,7 +282,7 @@ Constants (in `src/adapters/claude-code.ts`):
 ## Delegation, re-entry and cross-session posture (0.9.12)
 
 - `SendMessage` / `ListAgents` (alias `ListPeers`) are **deferred** built-ins — reachable only via `ToolSearch` (`select:SendMessage`), listed in no published SDK catalog. They sit in the `delegation` tool group with `Agent`/`Task`, so any *other* deny-group keeps them in `options.tools`.
-- The built-in inventory (`CLAUDE_CODE_TOOL_GROUPS` + `CLAUDE_CODE_UNGATED_BUILTINS`) is hand-kept. On every pin bump, run the unit drift guard (parses `sdk-tools.d.ts`) **and** the live `sdk-surface-probe` e2e leg 1 (`system:init` tools) — the latter found `DesignSync`, which has no published schema.
+- The built-in inventory (`CLAUDE_CODE_TOOL_GROUPS` + `CLAUDE_CODE_UNGATED_BUILTINS` + `CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS`) is hand-kept. On every pin bump, run the unit drift guard (parses `sdk-tools.d.ts`) **and** the live `sdk-surface-probe` e2e leg 1 (`system:init` tools) — the latter found `DesignSync`, which has no published schema.
 - `crossSessionInbound: 'refuse'` is pinned via `options.settings` (a `Settings` key, not a query option), merged with path-scope `permissions`. Visible in `adapter_ready.sdkConfig`.
 - Outbound `SendMessage` is gated by an unconditional **PreToolUse hook** (not `canUseTool` — `bypassPermissions`/`dontAsk` never consult it): `to` must be a task id / ≥6-char unambiguous id prefix / spawn `name` of a subagent this run started. Verified live on 0.3.263.
 - Re-entry and the hold: `TaskRegistry.start()` clears the finished mark, and the adapter re-`touch`es the hold after `start` (the pre-switch touch parks against the stale registry).
