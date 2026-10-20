@@ -3,6 +3,23 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
+## [0.10.0] — unreleased
+
+> **0.9.14 was bumped in the source tree but never published** (npm `latest` is 0.9.13). If you are upgrading from 0.9.13, read the 0.9.14 section below as well.
+
+### Changed
+
+- **claude-code: soft path-scope no longer refuses consumer MCP tools.** A path-scoped run without an OS sandbox (the default unless `claude_sandbox.enabled` is set and the host has bubblewrap/seatbelt) uses the default-deny `dontAsk` permission mode. Until now its allow rules named only the file built-ins (`Read` / `Edit` / `Write` under `cwd ∪ allowedPaths`), so every tool of every server passed in `mcpServers` was refused with "running in don't ask mode" — while the same run under the hard gate worked.
+  - Each server passed in `mcpServers` now gets one allow rule, `mcp__<name>__*`, where `<name>` is the key with every character outside `[A-Za-z0-9_-]` replaced by `_` (the identifier the CLI gives the server's tools). Its tools are callable with no `autoApproveTools` set.
+  - **Their file reach is not bounded by path-scope.** Path-scope bounds the built-ins, not MCP servers. A filesystem MCP server you pass can read and write outside `cwd ∪ allowedPaths`. To keep files out of reach, do not pass the server.
+  - Shell and web stay withheld under soft scope, as before. No server-less `mcp__*` rule is generated. Servers reached through `.mcp.json` (the `project` settings tier), plugins or connectors get no rule and stay refused under soft scope.
+  - The rules name no built-in, so an M18 deny (`disallowedToolGroups`) is still never re-widened.
+  - Migration: an `autoApproveTools: ['mcp__<server>']` workaround still works and can be removed.
+
+- **claude-code: a consumer MCP server keyed `workspace` is no longer registered.** The claude-code CLI reserves that key for a built-in server whose tools include shell and web-fetch. A server you pass under it is skipped with one `warning` naming it, and the run continues with the other servers. This applies to every run, path-scoped or not. Rename the server to keep it.
+
+- **claude-code: the harness scheduling tools are hard-suppressed.** `ScheduleWakeup`, `CronCreate`, `CronList` and `CronDelete` are interactive-harness timers that never fire under the headless drive, so a model that scheduled a wake-up silently lost the work. They are now always in `options.disallowedTools` (also for every subagent, and stripped from `autoApproveTools`), with `CLAUDE_CODE_DISABLE_CRON=1` set in the run's env. There is no config key to re-enable them. `Monitor` is not affected.
+
 ## [0.9.14] — 2026-09-23
 
 ### Changed

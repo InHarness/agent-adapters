@@ -16,6 +16,7 @@ import type {
   NormalizedMessage,
   ContentBlock,
   McpSdkServerConfig,
+  McpServerConfig,
   UsageStats,
   TodoItem,
   UserInputRequest,
@@ -233,6 +234,36 @@ export const CLAUDE_CODE_SUPPRESSED_HARNESS_TOOLS: string[] = [
   'CronList',
   'CronDelete',
 ];
+
+/**
+ * MCP server keys the claude-code CLI reserves for its own built-in servers (A01/M04).
+ * The CLI's `workspace` server carries shell and web-fetch tools, so a consumer
+ * server under that key would collide with it — and, under soft path-scope, the
+ * per-server allow rule generated for it would re-admit those built-ins. A consumer
+ * server keyed here is therefore never passed to the SDK; the run emits one
+ * `warning` naming it instead. Applies to every run, not only path-scoped ones.
+ */
+export const CLAUDE_CODE_RESERVED_MCP_SERVER_KEYS: readonly string[] = ['workspace'];
+
+/**
+ * The identifier the CLI gives a consumer MCP server's tools (`mcp__<name>__<tool>`):
+ * the `mcpServers` key with every character outside `[A-Za-z0-9_-]` replaced by `_`.
+ * The CLI compares a permission rule's server name UNNORMALIZED, so a rule must be
+ * written with this form — the raw key misses e.g. `my.server`.
+ */
+export function claudeCodeMcpServerIdentifier(key: string): string {
+  return key.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+/**
+ * The soft path-scope allow rule that pre-approves every tool of one consumer MCP
+ * server (M15/A01): always the per-server form `mcp__<name>__*`. Never a bare
+ * `mcp__<name>` (the CLI splits on `__`, so `my__srv` would be misparsed) and never
+ * a server-less `mcp__*` (the CLI skips a wildcard allow rule naming no server).
+ */
+export function claudeCodeMcpAllowRule(key: string): string {
+  return `mcp__${claudeCodeMcpServerIdentifier(key)}__*`;
+}
 
 /**
  * The deny list actually sent to the SDK: the run's group deny (if any) plus the
@@ -1297,7 +1328,9 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
       maxTurns: params.maxTurns,
       // We deliberately do NOT set permissionMode: 'plan' — it would also block
       // consumer-curated MCP tools, which M18 explicitly does not gate. Tool
-      // gating rides `tools`/`disallowedTools` instead (see below).
+      // gating rides `tools`/`disallowedTools` instead (see below). The soft
+      // path-scope `dontAsk` would block them just the same, which is why that
+      // branch pre-approves every consumer server with a `mcp__<name>__*` rule.
       permissionMode: softScope ? 'dontAsk' : 'bypassPermissions',
       ...(softScope ? {} : { allowDangerouslySkipPermissions: true }),
       cwd: params.cwd ?? process.cwd(),
@@ -1414,9 +1447,27 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
 
     // MCP servers — SDK accepts all config types: stdio, SSE, HTTP, and SDK (in-process).
     // Our McpServerConfig union matches the SDK's McpServerConfig type.
-    if (params.mcpServers && Object.keys(params.mcpServers).length > 0) {
+    //
+    // A key the CLI reserves for a built-in server (`workspace`) is skipped with one
+    // warning, on every run: `registeredMcpServers` is the set actually handed to the
+    // SDK, and the one the soft path-scope allow rules and the SDK-instance claim use.
+    const registeredMcpServers: Record<string, McpServerConfig> = {};
+    for (const [name, serverConfig] of Object.entries(params.mcpServers ?? {})) {
+      if (CLAUDE_CODE_RESERVED_MCP_SERVER_KEYS.includes(name)) {
+        yield {
+          type: 'warning',
+          message:
+            `claude-code: MCP server "${name}" was not registered — the key "${name}" is reserved ` +
+            'by the claude-code CLI for a built-in server (its tools include shell and web-fetch). ' +
+            'Rename the server to make it available; the run continues with the other servers.',
+        };
+        continue;
+      }
+      registeredMcpServers[name] = serverConfig;
+    }
+    if (Object.keys(registeredMcpServers).length > 0) {
       const sdkServers: Record<string, unknown> = {};
-      for (const [name, serverConfig] of Object.entries(params.mcpServers)) {
+      for (const [name, serverConfig] of Object.entries(registeredMcpServers)) {
         if ((serverConfig as McpSdkServerConfig).type === 'sdk') {
           // In-process SDK server — pass the instance directly
           const sdkConfig = serverConfig as McpSdkServerConfig;
@@ -1478,7 +1529,15 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
             ...(deniedGroupSet.has('file-write') ? [] : [`Edit(${p}/**)`, `Write(${p}/**)`]),
           ];
         const ceiling = [params.cwd ?? process.cwd(), ...pathScope.allowed];
-        const allow = ceiling.flatMap(fsRules);
+        // Consumer MCP servers stay callable under soft scope (M04/M15): `dontAsk`
+        // refuses anything not pre-approved, so each server the consumer passed gets
+        // one per-server rule. Only `registeredMcpServers` — never `.mcp.json`,
+        // plugin or connector servers, never a server-less `mcp__*`. The rules name
+        // no built-in, so an M18 deny is never re-widened by them.
+        const allow = [
+          ...ceiling.flatMap(fsRules),
+          ...Object.keys(registeredMcpServers).map(claudeCodeMcpAllowRule),
+        ];
         // Deny rules stay complete regardless — a carve-out must still be denied
         // for a group that is otherwise allowed.
         const deny = pathScope.disallowed.flatMap((p) => [
@@ -2166,7 +2225,7 @@ export class ClaudeCodeAdapter implements RuntimeAdapter {
     // to unwind; from here on the finally below owns the release. A reuse therefore
     // fails at init, naming the server, instead of surfacing later as tool calls that
     // silently come back empty. See src/mcp.ts.
-    const mcpClaim = claimSdkMcpInstances(params.mcpServers);
+    const mcpClaim = claimSdkMcpInstances(registeredMcpServers);
     if (!mcpClaim.ok) {
       clearTimeout(timeoutId);
       this.forgetRun(run);

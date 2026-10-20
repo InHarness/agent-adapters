@@ -407,7 +407,7 @@ adapter.execute({
 
 | Adapter | Behavior |
 |---|---|
-| **claude-code** | Full support — all 4 transport types. SDK handles connections natively. |
+| **claude-code** | Full support — all 4 transport types. SDK handles connections natively. The key `workspace` is reserved by the CLI: a server under it is skipped with a warning. Under soft path-scope every supplied server stays callable (its file reach is not bounded by the scope). |
 | **gemini** | Stdio, SSE, HTTP — mapped to gemini-cli-core's `MCPServerConfig`. In-process (SDK) servers are skipped. |
 | **opencode** | Stdio only — other types are silently skipped. |
 | **codex** | No dynamic MCP configuration. The SDK does not expose MCP setup. Pre-configure servers via `codex mcp add` CLI or `~/.codex/config.toml`. A warning is logged if `mcpServers` is provided. |
