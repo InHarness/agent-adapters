@@ -148,4 +148,102 @@ describe('claude-code path scoping', () => {
       expect(downgradeWarning).toBeDefined();
     }
   });
+  // M04/M15/A01 — soft path-scope must not withhold the consumer's MCP servers.
+  // `dontAsk` refuses anything not pre-approved, so each supplied server gets one
+  // per-server allow rule, named by the identifier the CLI gives its tools.
+  describe('consumer MCP servers under soft path-scope', () => {
+    const stdio = (command: string) => ({ type: 'stdio' as const, command });
+
+    function allowRules(): string[] {
+      return (
+        (capturedOptions?.settings as { permissions?: { allow?: string[] } } | undefined)?.permissions
+          ?.allow ?? []
+      );
+    }
+
+    it('pre-approves every supplied server with a normalized per-server `mcp__<name>__*` rule', async () => {
+      const ClaudeCodeAdapter = await importAdapter();
+      await collectEvents(
+        new ClaudeCodeAdapter().execute(
+          createTestParams({
+            cwd: '/work',
+            allowedPaths: ['/work/a'],
+            mcpServers: { a: stdio('a'), 'my.server': stdio('b'), x__y: stdio('c') },
+          }),
+        ),
+      );
+      expect(capturedOptions?.permissionMode).toBe('dontAsk');
+      const allow = allowRules();
+      expect(allow).toContain('mcp__a__*');
+      expect(allow).toContain('mcp__my_server__*');
+      expect(allow).toContain('mcp__x__y__*');
+      // The file rules are still there, unchanged.
+      expect(allow).toContain('Read(/work/**)');
+    });
+
+    it('never emits a server-less wildcard rule', async () => {
+      const ClaudeCodeAdapter = await importAdapter();
+      await collectEvents(
+        new ClaudeCodeAdapter().execute(
+          createTestParams({ allowedPaths: ['/work/a'], mcpServers: { a: stdio('a') } }),
+        ),
+      );
+      expect(allowRules()).not.toContain('mcp__*');
+      expect(allowRules().every((r) => r !== 'mcp__*' && !/^mcp__\*/.test(r))).toBe(true);
+    });
+
+    it('without path-scope: MCP servers get no permission rule — settings stay the cross-session pin only', async () => {
+      const ClaudeCodeAdapter = await importAdapter();
+      await collectEvents(
+        new ClaudeCodeAdapter().execute(createTestParams({ cwd: '/work', mcpServers: { a: stdio('a') } })),
+      );
+      expect(capturedOptions?.permissionMode).toBe('bypassPermissions');
+      expect(capturedOptions?.settings).toEqual({ crossSessionInbound: 'refuse' });
+    });
+
+    it('an M18 file-read deny drops the Read rule but keeps the MCP rules', async () => {
+      const ClaudeCodeAdapter = await importAdapter();
+      await collectEvents(
+        new ClaudeCodeAdapter().execute(
+          createTestParams({
+            cwd: '/work',
+            allowedPaths: ['/work/a'],
+            disallowedToolGroups: ['file-read'],
+            mcpServers: { a: stdio('a') },
+          }),
+        ),
+      );
+      const allow = allowRules();
+      expect(allow).toContain('mcp__a__*');
+      expect(allow.some((r) => r.startsWith('Read('))).toBe(false);
+    });
+
+    it('a server keyed `workspace` is not registered, warns once, and gets no rule', async () => {
+      const ClaudeCodeAdapter = await importAdapter();
+      const events = await collectEvents(
+        new ClaudeCodeAdapter().execute(
+          createTestParams({
+            allowedPaths: ['/work/a'],
+            mcpServers: { workspace: stdio('w'), a: stdio('a') },
+          }),
+        ),
+      );
+      expect(Object.keys((capturedOptions?.mcpServers as Record<string, unknown>) ?? {})).toEqual(['a']);
+      const warnings = events.filter(
+        (e) => e.type === 'warning' && /"workspace"/.test((e as { message: string }).message),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(allowRules()).not.toContain('mcp__workspace__*');
+      expect(allowRules()).toContain('mcp__a__*');
+    });
+
+    it('the `workspace` reservation applies outside path-scope too', async () => {
+      const ClaudeCodeAdapter = await importAdapter();
+      const events = await collectEvents(
+        new ClaudeCodeAdapter().execute(createTestParams({ mcpServers: { workspace: stdio('w') } })),
+      );
+      expect(capturedOptions?.mcpServers).toBeUndefined();
+      expect(events.filter((e) => e.type === 'warning' && /"workspace"/.test((e as { message: string }).message))).toHaveLength(1);
+    });
+  });
 });

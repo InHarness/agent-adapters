@@ -179,7 +179,7 @@ describe('claude-code subagent definitions', () => {
   // The M15 edge case, and it works by DIFFERENT machinery than the deny-group one
   // above: under a soft path-scope there is no tool policy, so `Bash` survives into
   // the SDK's agent definition verbatim. What withholds it is the session's
-  // default-deny posture — `dontAsk` pre-approves the file built-ins ONLY, so no
+  // default-deny posture — `dontAsk` pre-approves the file built-ins and consumer MCP servers only, so no
   // allow rule is ever generated for `Bash`, for the parent or for the subagent.
   it('a `tools` allow-list naming Bash under soft path-scope gets no shell pre-approval', async () => {
     const ClaudeCodeAdapter = await importAdapter();
@@ -204,7 +204,8 @@ describe('claude-code subagent definitions', () => {
     const settings = capturedOptions?.settings as {
       permissions: { allow: string[]; deny: string[] };
     };
-    expect(settings.permissions.allow.every((r) => /^(Read|Edit|Write)\(/.test(r))).toBe(true);
+    // File built-ins plus per-server consumer MCP rules (`mcp__<name>__*`) — never a built-in beyond those.
+    expect(settings.permissions.allow.every((r) => /^(Read|Edit|Write)\(|^mcp__[A-Za-z0-9_-]+__\*$/.test(r))).toBe(true);
     expect(settings.permissions.allow.some((r) => /Bash/.test(r))).toBe(false);
     // No per-agent override may re-open the session posture.
     const agents = capturedOptions?.agents as Record<string, Record<string, unknown>>;
