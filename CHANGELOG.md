@@ -3,7 +3,7 @@
 
 All notable changes to `@inharness-ai/agent-adapters` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/).
 
-## [0.10.0] — unreleased
+## [0.10.0] — 2026-10-20
 
 > **0.9.14 was bumped in the source tree but never published** (npm `latest` is 0.9.13). If you are upgrading from 0.9.13, read the 0.9.14 section below as well.
 
@@ -19,6 +19,8 @@ All notable changes to `@inharness-ai/agent-adapters` are documented here. Forma
 - **claude-code: a consumer MCP server keyed `workspace` is no longer registered.** The claude-code CLI reserves that key for a built-in server whose tools include shell and web-fetch. A server you pass under it is skipped with one `warning` naming it, and the run continues with the other servers. This applies to every run, path-scoped or not. Rename the server to keep it.
 
 - **claude-code: the harness scheduling tools are hard-suppressed.** `ScheduleWakeup`, `CronCreate`, `CronList` and `CronDelete` are interactive-harness timers that never fire under the headless drive, so a model that scheduled a wake-up silently lost the work. They are now always in `options.disallowedTools` (also for every subagent, and stripped from `autoApproveTools`), with `CLAUDE_CODE_DISABLE_CRON=1` set in the run's env. There is no config key to re-enable them. `Monitor` is not affected.
+
+[0.10.0]: https://github.com/InHarness/agent-adapters/compare/v0.9.13...v0.10.0
 
 ## [0.9.14] — 2026-09-23
 
