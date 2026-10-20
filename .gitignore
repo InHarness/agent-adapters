@@ -3,15 +3,5 @@ node_modules
 dist/
 *.tsbuildinfo
 .env
-.claude4spec/*
-!.claude4spec/entities
-.buddy/buddy.yml
-.claude/skills/release-process/
-
-# claude4spec (auto-added)
-.claude4spec/mcp.json
-*.deprecated
-# /claude4spec (auto-added)
-
 .DS_Store
 PLAN-*.md
