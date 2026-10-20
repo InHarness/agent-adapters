@@ -1,0 +1,10 @@
+{
+  "createdAt": "2026-09-22 15:41:12",
+  "createdBy": "agent",
+  "description": "SendMessage & ListAgents — subagent re-entry, delegation gating, peer-messaging boundary. Plan E1–E28 applied in full. Contract correction: taskId identifies the agent, toolUseId the invocation, so one taskId may carry more than one lifecycle pair, marked by subagent_started.resumed?: boolean (M06, M09, M17, M12). Fifth engine-neutral ToolGroup `delegation` with its L2 support matrix, the A03 file-read→delegation implication, and the allow-list inventory rule stated with its measured gap (24 known names against 45 published, 29 short) (M18, A01, A04, index). Two claude-code security defaults: crossSessionInbound pinned to 'refuse' via options.settings, and an outbound canUseTool predicate confining SendMessage to tasks this run started — both auditable on adapter_ready (A01, M14). New conformance scenario sdk-surface-probe plus the convention letting a scenario bypass the adapter when it records L7 verified-pin evidence (M12, A01). A04: gemini's four subagent tool names recorded as an ungated laundering hole, and the false \"no subagent definition mechanism\" warning corrected. 25 new ac criteria, 2 updated.",
+  "name": "0.9.12",
+  "roots": [
+    "pages"
+  ],
+  "slug": "0-9-12"
+}

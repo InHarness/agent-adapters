@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-10-20T15:41:22.416Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-claude-code-workspace-mcp-server-not-registered",
+  "status": "active",
+  "tags": [
+    "a01",
+    "m04"
+  ],
+  "title": "On claude-code, a consumer MCP server keyed `workspace` is not registered with the SDK.",
+  "updatedAt": "2026-10-20T15:41:22.416Z",
+  "verifies": []
+}

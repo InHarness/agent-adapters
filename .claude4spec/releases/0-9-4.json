@@ -1,0 +1,10 @@
+{
+  "name": "0.9.4",
+  "slug": "0-9-4",
+  "description": "sdk local testing bump",
+  "createdAt": "2026-07-28 15:33:08",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

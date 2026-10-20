@@ -1,0 +1,10 @@
+{
+  "name": "0.0.7",
+  "slug": "0-0-7",
+  "description": "dziwne zmiany ? jakby wczesniejsze",
+  "createdAt": "2026-07-15 09:27:02",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

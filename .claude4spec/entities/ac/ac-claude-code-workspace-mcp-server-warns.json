@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-10-20T15:41:22.420Z",
+  "kind": "edge-case",
+  "payloadVersion": 3,
+  "slug": "ac-claude-code-workspace-mcp-server-warns",
+  "status": "active",
+  "tags": [
+    "a01",
+    "m04"
+  ],
+  "title": "On claude-code, a run whose `mcpServers` contains the key `workspace` emits one warning naming that server.",
+  "updatedAt": "2026-10-20T15:41:22.420Z",
+  "verifies": []
+}

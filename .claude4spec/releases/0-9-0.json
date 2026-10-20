@@ -1,0 +1,10 @@
+{
+  "name": "0.9.0",
+  "slug": "0-9-0",
+  "description": "bump",
+  "createdAt": "2026-07-15 15:36:56",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

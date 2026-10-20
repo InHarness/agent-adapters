@@ -1,0 +1,10 @@
+{
+  "name": "0.0.8",
+  "slug": "0-0-8",
+  "description": "todo i task fixes, fail versions",
+  "createdAt": "2026-07-15 09:54:35",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

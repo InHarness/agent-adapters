@@ -1,0 +1,10 @@
+{
+  "createdAt": "2026-10-20T15:50:48.001Z",
+  "createdBy": "agent",
+  "description": "Soft path-scope keeps consumer MCP tools (claude-code). M04's invariant (a run can call every MCP tool it was given) extends to M15: the soft default-deny allow set names the file built-ins and the consumer's mcpServers; MCP file reach is not path-bounded. A01: one mcp__<normalized key>__* rule per server, never mcp__*; key `workspace` reserved (skipped + warning). M06 points at M15. e2e path-scope leg gains the MCP check. 3 new AC, 1 updated.",
+  "name": "0.10.0",
+  "roots": [
+    "pages"
+  ],
+  "slug": "0-10-0"
+}

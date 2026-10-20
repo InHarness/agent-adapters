@@ -1,0 +1,10 @@
+{
+  "name": "0.9.8",
+  "slug": "0-9-8",
+  "description": "subagent fixes",
+  "createdAt": "2026-08-27 09:22:18",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

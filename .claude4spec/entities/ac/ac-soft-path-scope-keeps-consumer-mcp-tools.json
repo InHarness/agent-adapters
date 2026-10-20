@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-10-20T15:41:22.387Z",
+  "kind": "requirement",
+  "payloadVersion": 3,
+  "slug": "ac-soft-path-scope-keeps-consumer-mcp-tools",
+  "status": "active",
+  "tags": [
+    "a01",
+    "m15"
+  ],
+  "title": "On claude-code under soft path-scope with no autoApproveTools set, a tool of a consumer-supplied MCP server is callable.",
+  "updatedAt": "2026-10-20T15:41:22.387Z",
+  "verifies": []
+}

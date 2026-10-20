@@ -1,0 +1,10 @@
+{
+  "name": "0.9.6",
+  "slug": "0-9-6",
+  "description": "tool gating",
+  "createdAt": "2026-08-25 12:07:44",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

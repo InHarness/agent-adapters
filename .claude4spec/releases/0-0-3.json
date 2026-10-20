@@ -1,0 +1,10 @@
+{
+  "name": "0.0.3",
+  "slug": "0-0-3",
+  "description": "sonnet 5",
+  "createdAt": "2026-06-30 19:26:02",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

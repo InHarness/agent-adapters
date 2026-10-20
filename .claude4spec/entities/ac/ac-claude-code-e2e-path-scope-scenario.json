@@ -7,11 +7,15 @@
   "tags": [
     "m15"
   ],
-  "title": "The claude-code e2e path-scope scenario confines reads and writes to cwd union allowedPaths against a live model, and a path outside scope is blocked.",
-  "updatedAt": "2026-07-15T11:55:13.000Z",
+  "title": "The claude-code e2e path-scope scenario confines reads and writes to cwd union allowedPaths against a live model, a path outside scope is blocked, and a consumer in-process MCP tool stays callable.",
+  "updatedAt": "2026-10-20T15:41:24.109Z",
   "verifies": [
     {
       "slug": "ac-path-scope-precedence-holds-disallowedp",
+      "type": "ac"
+    },
+    {
+      "slug": "ac-soft-path-scope-keeps-consumer-mcp-tools",
       "type": "ac"
     },
     {

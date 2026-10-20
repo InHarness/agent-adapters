@@ -1,0 +1,10 @@
+{
+  "name": "0.0.6",
+  "slug": "0-0-6",
+  "description": "todo claude fix",
+  "createdAt": "2026-07-14 11:11:05",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

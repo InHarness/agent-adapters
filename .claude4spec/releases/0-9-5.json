@@ -1,0 +1,10 @@
+{
+  "name": "0.9.5",
+  "slug": "0-9-5",
+  "description": "spec fixes",
+  "createdAt": "2026-08-25 08:42:40",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

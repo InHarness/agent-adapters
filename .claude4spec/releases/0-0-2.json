@@ -1,0 +1,10 @@
+{
+  "name": "0.0.2",
+  "slug": "0-0-2",
+  "description": "allowed / disallowed paths",
+  "createdAt": "2026-06-29 14:47:19",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

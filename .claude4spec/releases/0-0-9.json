@@ -1,0 +1,10 @@
+{
+  "name": "0.0.9",
+  "slug": "0-0-9",
+  "description": "e2e tests",
+  "createdAt": "2026-07-15 12:03:26",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

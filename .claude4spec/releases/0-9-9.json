@@ -1,0 +1,10 @@
+{
+  "name": "0.9.9",
+  "slug": "0-9-9",
+  "description": "fable 5.1",
+  "createdAt": "2026-09-07 09:13:11",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

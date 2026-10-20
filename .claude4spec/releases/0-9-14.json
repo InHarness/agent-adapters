@@ -1,0 +1,10 @@
+{
+  "createdAt": "2026-09-23 15:08:09",
+  "createdBy": "agent",
+  "description": "Hold cap re-arms on tracked-subagent lifecycle. Removal of a contradiction the spec already carried: the control-channel hold tracks two kinds of unit, but its hard cap's stated re-arm vocabulary named only the background family — while M17's own re-entry sentence and A01's edge case both already moved it on a subagent. A held subagent emitting subagent_progress was cut at the cap with a terminal hold-expiry error while visibly working (real consumer incident at claude_backgroundHoldCapMs=300000). M17 q9u5sbot becomes the canonical home of the vocabulary: the cap is re-armed by the lifecycle events of any unit the hold tracks — background_task_started/_progress/_completed of a tracked task, and subagent_started/_progress/_completed of a tracked subagent, a re-entry's resumed: true start included. Two families, one rule; a silent held subagent is still cut, exactly like a backgrounded sleep 3600, and subagentTimeoutMs stays the per-subagent cap. M01 8do90d06, M06 4b8iv50p and A01 sw3cwrsm stop enumerating the families and point at M17 instead, keeping only what is theirs (the clock taxonomy, the sibling cap, the SDK-frame routing and the 90s constant) — three of the four edits shrink text. M17 52ymvppn levers now say \"silence from the tracked unit\". Error prose narrowed in M13 8q9q7ty7 and A01 677rc2wh from \"the engine's background work\" to \"the engine's tracked work — a background task or a held subagent\"; AdapterBackgroundHoldExpiredError is unchanged. M13's Dependencies table gains the M17 row it was missing. M12 agvf1tok classifies the change: minor with an explicit CHANGELOG note naming the widened vocabulary, since a held subagent that used to be cut now runs on. 3 new ac criteria (the progress twin, the silence twin, and the conjunction of one silent unit beside one reporting) — the existing background-task pair stays as written. check_consistency: 0 errors. Style review: no deviations.",
+  "name": "0.9.14",
+  "roots": [
+    "pages"
+  ],
+  "slug": "0-9-14"
+}

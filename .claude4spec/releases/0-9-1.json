@@ -1,0 +1,10 @@
+{
+  "name": "0.9.1",
+  "slug": "0-9-1",
+  "description": "opus 5",
+  "createdAt": "2026-07-27 22:04:49",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

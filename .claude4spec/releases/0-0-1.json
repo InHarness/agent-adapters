@@ -1,0 +1,10 @@
+{
+  "name": "0.0.1",
+  "slug": "0-0-1",
+  "description": "initial",
+  "createdAt": "2026-06-29 13:42:15",
+  "createdBy": "user",
+  "roots": [
+    "pages"
+  ]
+}

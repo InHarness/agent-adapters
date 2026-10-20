@@ -1,0 +1,43 @@
+{
+  "$schemaVersion": 4,
+  "name": "LIB - @inharness-ai/agent-adapters",
+  "roots": [
+    {
+      "id": "pages",
+      "name": "Pages",
+      "dir": "spec",
+      "builtin": true,
+      "releasable": true,
+      "sectionIndexed": true,
+      "referenceValidated": true,
+      "linkTargets": [],
+      "sidebar": "accordion",
+      "briefTarget": true
+    }
+  ],
+  "briefsDir": ".claude4spec/briefs",
+  "patchesDir": ".claude4spec/patches",
+  "plansDir": ".claude4spec/plans",
+  "entitiesDir": ".claude4spec/entities",
+  "releasesDir": ".claude4spec/releases",
+  "writingStyle": "layered-vertical-slices",
+  "language": "English",
+  "description": "Specyfikacja biblioteki @inharness-ai/agent-adapters. ",
+  "onboardingCompleted": true,
+  "entities": [
+    "ac",
+    "module-dependency",
+    "spreadsheet",
+    "code-snippet"
+  ],
+  "agent": {
+    "claudeUsePreset": false,
+    "disableDirectFilesystemAccess": false,
+    "conversationalLanguage": "Polski"
+  },
+  "remoteApiUrl": null,
+  "remoteProjectId": null,
+  "git": {
+    "enabled": true
+  }
+}
