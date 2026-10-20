@@ -1715,6 +1715,47 @@ describe.skipIf(SKIP)(`claude-code e2e [${MODEL}]`, () => {
         cleanup();
       }
     }, 120_000);
+
+    // M04/M15/A01 — soft path-scope must not withhold the consumer's MCP servers.
+    // `dontAsk` refuses every tool without an allow rule, so before the fix a consumer
+    // MCP tool was refused here while it worked under `bypassPermissions`. A refused
+    // call still emits `tool_use`, so the assertion keys on the `tool_result` carrying
+    // the server's own output and not being an error.
+    it('a consumer in-process MCP tool stays callable under soft path-scope (no autoApproveTools)', async () => {
+      const { cwd, extraDir, cleanup } = createPathScopeDirs();
+      const { config } = createE2eMcpServer();
+      try {
+        const adapter = createAdapter('claude-code');
+        const events = await collectE2E(
+          adapter.execute({
+            prompt: TOOL_PROMPT,
+            systemPrompt: TOOL_SYSTEM_PROMPT,
+            model: MODEL,
+            maxTurns: 3,
+            cwd,
+            allowedPaths: [extraDir],
+            mcpServers: { 'e2e-test': config },
+          }),
+        );
+        const ready = events.find(
+          (e): e is Extract<UnifiedEvent, { type: 'adapter_ready' }> => e.type === 'adapter_ready',
+        );
+        expect(ready?.pathScope?.strength).toBe('soft');
+
+        const echoUse = (
+          events.filter((e) => e.type === 'tool_use') as Extract<UnifiedEvent, { type: 'tool_use' }>[]
+        ).find((tu) => tu.toolName.includes('echo'));
+        expect(echoUse, 'No tool_use for the echo MCP tool').toBeDefined();
+        const echoResult = (
+          events.filter((e) => e.type === 'tool_result') as Extract<UnifiedEvent, { type: 'tool_result' }>[]
+        ).find((tr) => tr.toolUseId === echoUse!.toolUseId);
+        expect(echoResult, 'No tool_result for the echo MCP call').toBeDefined();
+        expect(echoResult!.isError ?? false, `MCP call refused: ${echoResult!.summary}`).toBe(false);
+        expect(echoResult!.summary).toContain('echo:');
+      } finally {
+        cleanup();
+      }
+    }, 120_000);
   });
 
   // --- M12 scenario: usage (billing tokens vs contextSize + cache buckets) ---
